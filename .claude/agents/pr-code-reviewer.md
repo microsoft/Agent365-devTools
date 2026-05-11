@@ -240,6 +240,31 @@ For each changed file, analyze:
    - Flag **MEDIUM** for inaccurate scope coverage claims in comments — these mislead future reviewers and generate follow-up PR comments
    - **Real example (PR #409)**: XML comment said `AgentIdentityBlueprint.ReadWrite.All` "includes SP creation" but the same PR requires `AgentIdentityBlueprintPrincipal.Create` separately for SP creation
 
+   **H. JWT claim decoded → verify the token was issued by the app registration that has the claim configured**
+   When the diff adds code that decodes a JWT and reads a claim that is configured *per app registration*
+   (e.g., `wids`, `roles`, `groups`, any custom optional claim from Entra Token Configuration):
+   - Trace backward from the decoder to the token-acquisition call. Identify which clientId issues the token.
+   - If acquisition goes through `AuthenticationService.GetAccessTokenAsync(...)` without an explicit
+     `clientId` argument, the token is from the PowerShell well-known clientId
+     (`AuthenticationConstants.PowershellClientId`) — **not** the custom client app. Optional claims
+     configured on the custom client app's manifest will NOT be in this token.
+   - The correct path for tokens that must carry custom-app optional claims is
+     `IMicrosoftGraphTokenProvider.GetMgGraphAccessTokenAsync(..., clientAppId: CustomClientAppId, ...)`.
+   - Flag **HIGH** when the decoder relies on a claim that the issuing app doesn't have configured.
+     The bug is silent: the decoder returns "claim absent → Unknown / DoesNotHaveRole", and the caller
+     proceeds with the conservative path (e.g., admin treated as non-admin → admin URL printed even
+     for actual admins). Functional but degraded UX, easy to miss in passing tests because mocks
+     usually return a hand-crafted JWT regardless of which auth path is used.
+   - Also apply this rule to **empty static scope arrays** (related to Rule E): when an empty
+     `IEnumerable<string>` is passed to a helper that routes "no scopes" through the legacy
+     `AuthenticationService` path, the token will be from the PowerShell clientId. If any downstream
+     code reads custom-app optional claims, the routing is wrong.
+   - **Real example (PR #409)**: `CheckDirectoryRoleAsync` decoded `wids` from a token acquired via
+     `GetGraphAccessTokenAsync` → `AuthenticationService` → PowerShell clientId. `wids` was
+     configured on the custom client app only, so the JWT never carried it and the method always
+     returned `Unknown`. Fix: route through `_tokenProvider` with `CustomClientAppId` and a minimal
+     scope (`User.Read`).
+
    **D2. Cross-method "catch-returns-null / caller-sets-ExitCode" pattern — same exit-code problem, harder to spot**
    Rule 9-D catches *inline* catch blocks. This variant spans two methods and is easy to miss:
    ```csharp

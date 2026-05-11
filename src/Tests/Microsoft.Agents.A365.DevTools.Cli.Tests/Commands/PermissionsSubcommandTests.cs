@@ -656,8 +656,8 @@ public class PermissionsSubcommandTests
         botSubcommand.Should().NotBeNull();
         botSubcommand!.Description.Should().NotContain("a365 setup endpoint",
             "the 'a365 setup endpoint' command does not exist - endpoint is registered as part of blueprint setup");
-        botSubcommand.Description.Should().Contain("a365 deploy",
-            "after permissions setup, users should deploy their agent code");
+        botSubcommand.Description.Should().Contain("a365 publish",
+            "after permissions setup, the next a365 command in the workflow is 'publish' to package the agent for the Microsoft 365 Admin Center");
     }
 
     [Fact]

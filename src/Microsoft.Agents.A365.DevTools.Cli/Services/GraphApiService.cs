@@ -157,38 +157,68 @@ public class GraphApiService
 
     private async Task<bool> EnsureGraphHeadersAsync(string tenantId, bool forceRefresh = false, IEnumerable<string>? scopes = null, CancellationToken ct = default)
     {
-        // Authentication Strategy:
-        // 1. If specific scopes required AND token provider configured: Use MSAL with delegated scopes (WAM/browser/device-code)
-        // 2. Otherwise: Use MSAL via AuthenticationService (WAM/browser/device-code, persistent cache)
+        // Authentication strategy:
+        //
+        // 1. Token provider with CustomClientAppId resolved (steady-state): route through
+        //    `_tokenProvider.GetMgGraphAccessTokenAsync(..., CustomClientAppId, ...)` so the
+        //    JWT carries per-app-registration optional claims (like `wids`) configured on the
+        //    custom client app. Default the scope to User.Read when the caller didn't pass any
+        //    (some callers pass an empty array as a "no extra scopes" signal — they still need
+        //    a custom-app token, not a PowerShell well-known token).
+        //
+        // 2. Token provider but CustomClientAppId not yet resolved (bootstrap phase, before
+        //    config is loaded): fall through to the legacy AuthenticationService path. The
+        //    bootstrap config resolver uses this to look up the custom client app by display
+        //    name before its ID is known. Routing through `_tokenProvider` with a null clientId
+        //    would prompt PowerShell `Connect-MgGraph` and hang on user input.
+        //
+        // 3. No token provider (test/legacy scenarios only): same legacy fallback. Operations
+        //    that need claims from the custom-app JWT (e.g. CheckDirectoryRoleAsync) must guard
+        //    for both `_tokenProvider == null` and an empty `CustomClientAppId` themselves.
+        //
         // All paths go through MSAL — no az CLI subprocess involved.
 
         string? token;
-
         bool hasScopes = scopes?.Any() == true;
-        if (hasScopes && _tokenProvider != null)
+        bool hasCustomApp = !string.IsNullOrWhiteSpace(CustomClientAppId);
+
+        // Use the token provider when the caller passed explicit scopes (the call site is asking
+        // for a scoped token — clientId can be null until config resolves; production callers that
+        // pass scopes do so post-bootstrap) OR when CustomClientAppId is set (the only condition
+        // that makes a default-scope token meaningful — without it the token would have no link to
+        // the custom app's optional claims). The remaining case (no scopes AND no CustomClientAppId
+        // — the bootstrap phase config-resolver lookup) falls through to the legacy path below.
+        if (_tokenProvider != null && (hasScopes || hasCustomApp))
         {
-            // Use token provider with delegated scopes (interactive browser auth with caching)
-            _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes!));
+            var effectiveScopes = hasScopes ? scopes! : [AuthenticationConstants.UserReadScope];
+            _logger.LogDebug(
+                "Acquiring Graph token via token provider (clientId: {AppId}, scopes: {Scopes})",
+                CustomClientAppId, string.Join(", ", effectiveScopes));
             var loginHint = await ResolveLoginHintAsync();
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes!, false, CustomClientAppId, ct, loginHint, forceRefresh);
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, effectiveScopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
 
             if (string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogError("Failed to acquire Graph token with scopes: {Scopes}", string.Join(", ", scopes!));
+                _logger.LogError("Failed to acquire Graph token from token provider (scopes: {Scopes})",
+                    string.Join(", ", effectiveScopes));
                 return false;
             }
 
-            _logger.LogDebug("Successfully acquired Graph token with specific scopes (cached or new)");
+            _logger.LogDebug("Successfully acquired Graph token from token provider (cached or new)");
         }
         else if (hasScopes && _tokenProvider == null)
         {
-            // Scopes required but no token provider - this is a configuration issue
+            // Specific scopes required but no token provider — configuration issue.
             _logger.LogError("Token provider is not configured, but specific scopes are required: {Scopes}", string.Join(", ", scopes!));
             return false;
         }
         else
         {
-            // Default path: acquire via AuthenticationService (MSAL, persistent disk cache).
+            // Bootstrap or legacy fallback: token comes from the PowerShell well-known clientId
+            // via AuthenticationService. Reached when CustomClientAppId hasn't been resolved
+            // yet (initial app lookup) or when no token provider is configured (tests). Token
+            // does NOT carry custom-app optional claims — callers that depend on those must
+            // not reach this branch.
             token = await GetGraphAccessTokenAsync(tenantId, forceRefresh: forceRefresh, ct: ct);
 
             if (string.IsNullOrWhiteSpace(token))
@@ -1118,7 +1148,35 @@ public class GraphApiService
         // we return Unknown and the caller proceeds without role validation.
         try
         {
-            var token = await GetGraphAccessTokenAsync(tenantId, ct: ct);
+            // CRITICAL: token MUST be issued for the custom client app (CustomClientAppId),
+            // not the PowerShell well-known clientId that GetGraphAccessTokenAsync would use.
+            // The `wids` optional claim is configured per-app-registration on the access token —
+            // the custom client app has it (see custom-client-app-registration.md, Step 5);
+            // the PowerShell well-known app does not. A token from the PowerShell app would never
+            // include `wids`, and this method would always return Unknown, which would in turn
+            // cause BatchPermissionsOrchestrator to treat real Global Admins as non-admins.
+            //
+            // We request User.Read here purely to satisfy the token request — the scopes grant
+            // is irrelevant for the role check; the claim set on the issued token is what matters.
+            if (_tokenProvider == null)
+            {
+                _logger.LogDebug("Role check skipped — no token provider configured (cannot acquire a custom-app token that would carry wids).");
+                return Models.RoleCheckResult.Unknown;
+            }
+            // We don't guard on CustomClientAppId being null here. Production callers
+            // (BatchPermissionsOrchestrator, BlueprintSubcommand, SetupHelpers) all invoke role
+            // checks AFTER the bootstrap phase has resolved CustomClientAppId. Tests pass the
+            // token provider directly and don't always set CustomClientAppId — that's fine
+            // because the mocked provider returns a hand-crafted JWT regardless of clientId.
+            var loginHint = await ResolveLoginHintAsync();
+            var token = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId,
+                [AuthenticationConstants.UserReadScope],
+                useDeviceCode: false,
+                clientAppId: CustomClientAppId,
+                ct: ct,
+                loginHint: loginHint,
+                forceRefresh: false);
             if (string.IsNullOrWhiteSpace(token))
                 return Models.RoleCheckResult.Unknown;
 

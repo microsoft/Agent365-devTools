@@ -533,11 +533,15 @@ public class GraphApiServiceTests
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
         var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        var jwt = BuildJwtWithWids(roleWids);
+        // CheckDirectoryRoleAsync now requires the token to come from _tokenProvider (the path
+        // that uses the custom client app's clientId — the only app with the `wids` optional
+        // claim configured). The previous AuthenticationService-based mock would not be hit by
+        // the production code path.
         tokenProvider.GetMgGraphAccessTokenAsync(
                 Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
                 Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
-            .Returns("fake-token");
-        var jwt = BuildJwtWithWids(roleWids);
+            .Returns(jwt);
         return new GraphApiService(logger, executor, FakeAuthReturning(jwt), handler, tokenProvider,
             loginHintResolver: () => Task.FromResult<string?>(null),
             retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
@@ -548,6 +552,12 @@ public class GraphApiServiceTests
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
         var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        // Simulate token acquisition failure on the token-provider path (the path
+        // CheckDirectoryRoleAsync now uses).
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
+            .Returns((string?)null);
         return new GraphApiService(logger, executor, FakeAuthReturning(null), handler, tokenProvider,
             loginHintResolver: () => Task.FromResult<string?>(null),
             retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));

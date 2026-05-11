@@ -57,6 +57,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `setup all` now skips agent registration with a clear warning when the agent identity ID is not available, instead of silently sending an invalid request. Retry with `a365 setup all --agent-registration-only` once the identity is ready.
 - `setup permissions bot` now returns a non-zero exit code when an S2S app role assignment fails, so callers and scripts can detect the failure.
 - `setup all --agent-registration-only` reliability fixes: stored IDs are now correctly read in bootstrap (`--agent-name`) mode; falls back to a Graph API lookup when `agenticAppId` is missing; skips identity, permission, and project-settings steps that don't apply.
+- `setup permissions bot` help text and final "Next step" log no longer suggest the non-existent `a365 deploy` command; both now point at `a365 publish` (the actual next command in the workflow).
 
 ### Removed
 - `a365 config` command family (`config init`, `config display`, `config permissions`) — replaced by `a365 setup all --agent-name` and `a365 setup permissions custom`.

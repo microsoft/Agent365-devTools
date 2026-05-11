@@ -15,7 +15,6 @@ Microsoft.Agents.A365.DevTools.Cli/
 │   ├── ConfigCommand.cs          # a365 config (init, display)
 │   ├── SetupCommand.cs           # a365 setup (blueprint + messaging endpoint)
 │   ├── CreateInstanceCommand.cs  # a365 create-instance (identity, licenses, notifications)
-│   ├── DeployCommand.cs          # a365 deploy
 │   ├── CleanupCommand.cs         # a365 cleanup (delete resources)
 │   ├── QueryEntraCommand.cs      # a365 query-entra (blueprint-scopes, instance-scopes)
 │   ├── DevelopCommand.cs         # a365 develop (development utilities)
@@ -24,12 +23,7 @@ Microsoft.Agents.A365.DevTools.Cli/
 │   └── SetupSubcommands/         # Setup workflow components
 ├── Services/                     # Business logic services
 │   ├── ConfigService.cs          # Configuration management
-│   ├── DeploymentService.cs      # Multiplatform Azure deployment
-│   ├── PlatformDetector.cs       # Automatic platform detection
-│   ├── IPlatformBuilder.cs       # Platform builder interface
-│   ├── DotNetBuilder.cs          # .NET project builder
-│   ├── NodeBuilder.cs            # Node.js project builder
-│   ├── PythonBuilder.cs          # Python project builder
+│   ├── PlatformDetector.cs       # Automatic platform detection (used by publish)
 │   ├── TeamsGraphBackendConfigurator.cs  # Messaging endpoint (Teams Graph backend config)
 │   ├── GraphApiService.cs        # Graph API interactions
 │   ├── AuthenticationService.cs  # MSAL.NET authentication
@@ -340,11 +334,13 @@ Commands supporting `--dry-run` skip checks entirely — the `RunChecksOrExitAsy
 
 ---
 
-## Multiplatform Deployment Architecture
+## Multiplatform Project Detection
 
-### Platform Detection
-
-The `PlatformDetector` service auto-detects project type from files:
+The `PlatformDetector` service auto-detects project type from files. Used by
+`a365 publish` and friends to drive platform-specific behavior. (Azure App Service
+deployment was previously handled by a now-removed `a365 deploy` command — agent
+hosting is now external to the CLI; the developer ships their agent to whatever
+host they choose and points `messagingEndpoint` at it.)
 
 ```csharp
 public enum ProjectPlatform
@@ -360,47 +356,6 @@ public enum ProjectPlatform
 | Python | `requirements.txt`, `setup.py`, `pyproject.toml`, `*.py` |
 
 Detection priority: .NET > Node.js > Python > Unknown
-
-### Platform Builder Interface
-
-```csharp
-public interface IPlatformBuilder
-{
-    Task<bool> ValidateEnvironmentAsync();      // Check required tools installed
-    Task CleanAsync(string projectDir);         // Clean build artifacts
-    Task<string> BuildAsync(string projectDir, string outputPath, bool verbose);
-    Task<OryxManifest> CreateManifestAsync(string projectDir, string publishPath);
-}
-```
-
-### Deployment Pipeline
-
-```mermaid
-flowchart TD
-    A[Platform Detection] --> B[Environment Validation]
-    B --> C[Clean Build Artifacts]
-    C --> D[Platform-Specific Build]
-    D --> E[Create Oryx Manifest]
-    E --> F[Package ZIP]
-    F --> G[Deploy to Azure App Service]
-```
-
-1. **Platform Detection** - Auto-detect project type from files
-2. **Environment Validation** - Check required tools (dotnet/node/python)
-3. **Clean** - Remove previous build artifacts
-4. **Build** - Platform-specific build process
-5. **Manifest Creation** - Generate Azure Oryx manifest
-6. **Package** - Create deployment ZIP
-7. **Deploy** - Upload to Azure App Service
-
-### Restart Mode (`--restart` flag)
-
-For quick iteration after manual changes to the `publish/` folder:
-
-```bash
-a365 deploy           # Full pipeline: steps 1-7
-a365 deploy --restart # Quick mode: steps 6-7 only (packaging + deploy)
-```
 
 ---
 
@@ -465,7 +420,7 @@ var graphApiService = new GraphApiService(...);
 
 var rootCommand = new RootCommand("a365 — Microsoft Agent 365 CLI");
 rootCommand.AddCommand(SetupCommand.CreateCommand(logger, configService, ...));
-rootCommand.AddCommand(DeployCommand.CreateCommand(logger, configService, ...));
+rootCommand.AddCommand(PublishCommand.CreateCommand(logger, configService, ...));
 // ... more commands
 
 return await new CommandLineBuilder(rootCommand)
