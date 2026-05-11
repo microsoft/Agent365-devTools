@@ -41,10 +41,14 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `--m365` opt-in flag on `a365 setup blueprint`, `a365 cleanup blueprint`, and `a365 setup all` — when set, the CLI registers or clears the agent blueprint's messaging endpoint via the Teams Graph backend configuration endpoint on MCP Platform. Default is **off**: without `--m365`, endpoint registration is skipped and the CLI points users at the Teams Developer Portal (https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal) for manual configuration. Intended for M365 agents; opt-in because the Teams Graph rollout on MCP Platform is ongoing.
 - Messaging endpoint row added to `a365 setup all` summary output, with "registered"/"reused"/"skipped (non-M365)"/"manual config required"/"failed" states. When registration can't complete, the summary surfaces an "Action Required" entry with the Teams Developer Portal URL so the user knows exactly what to do next.
 - Defensive fallback when the server rejects the new request with a known contract-mismatch signature — the CLI logs `"Automated messaging endpoint registration is not available for this tenant yet. You'll need to configure it manually."` and directs the user to the Teams Developer Portal. Same user-facing path is reused when registration fails because the signed-in user is not a blueprint owner.
+- `--yes` / `-y` option on `cleanup blueprint`, `cleanup azure`, and `cleanup instance` — skips confirmation prompts.
+- `--dry-run` option on top-level `a365 cleanup` — previews resources that would be deleted across blueprint, Azure, and instance steps without making changes.
 
 ### Changed
 - Agent identity creation now uses Blueprint app-only credentials (`AgentIdentity.CreateAsManager`, auto-granted to all Blueprint apps). The custom CLI app no longer requires `AgentIdentity.Create.All` or `DelegatedPermissionGrant.ReadWrite.All`. Administrators can remove these permissions from the CLI app registration. See [Custom client app registration](https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration) for the updated permission list.
 - `setup all` now retries agent identity creation and blueprint token acquisition with exponential back-off (delay doubles up to a 60-second cap; agent identity retries up to 5 times, blueprint token up to 12 times — worst case is several minutes per call when Entra replication lag is severe) when Entra replication lag causes transient 401/AADSTS errors on fresh blueprint setups. Retry progress is logged at `Debug` level only.
+- `setup blueprint --m365` now prints a note when passed alone — the flag only takes effect with `--endpoint-only` or `--update-endpoint`; otherwise use `setup all --m365`.
+- Graph error bodies in `[DBG]` logs compressed to `{code}: {message}` instead of the full JSON envelope.
 
 ### Fixed
 - `setup blueprint` / `setup all` on macOS: `agentBlueprintClientSecret` was written to the wrong file when symlinks were present in the working directory path. `Environment.CurrentDirectory` (getcwd, symlink-resolved) diverged from `config.DirectoryName` (unresolved), causing the secret save to target a different file than `LoadAsync` reads back — resulting in `agentBlueprintClientSecret: null` on subsequent runs. Fixed by threading the resolved `generatedConfigPath` explicitly through `CreateBlueprintClientSecretAsync`.
@@ -61,6 +65,14 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `setup permissions bot` now returns a non-zero exit code when an S2S app role assignment fails, so callers and scripts can detect the failure.
 - `setup all --agent-registration-only` reliability fixes: stored IDs are now correctly read in bootstrap (`--agent-name`) mode; falls back to a Graph API lookup when `agenticAppId` is missing; skips identity, permission, and project-settings steps that don't apply.
 - `setup permissions bot` help text and final "Next step" log no longer suggest the non-existent `a365 deploy` command; both now point at `a365 publish` (the actual next command in the workflow).
+- `setup permissions mcp/bot/custom` now print the admin consent URL when tenant-wide consent is missing.
+- `setup permissions custom --resource-app-id <guid> --scopes <scopes>` exits 1 with admin-consent guidance on 403 instead of logging the raw Graph error and exiting silently.
+- `query-entra instance-scopes` no longer claims "admin consent has not been granted" when `oauth2PermissionGrants` is unreadable by the caller; redirects to the Entra portal instead.
+- "Grant admin consent now?" prompt in `setup all` (non-DW) is skipped for non-admin developers; admin consent URL is printed for hand-off.
+- `JsonDocument` returned by `GraphGetWithResponseAsync` is now disposed on every path in `setup blueprint` SP-propagation retry and `ClientAppValidator.GetConsentedPermissionsAsync`.
+- `logs export` header `# Original:` line now redacts emails, GUIDs, and JWT tokens (not just usernames).
+- `cleanup --agent-name <typo>` no longer silently deletes via a stale local generated config; the CLI errors with clear guidance when the Entra-resolved blueprint doesn't match the local `a365.generated.config.json`.
+- `setup permissions custom --resource-app-id <guid> --scopes <scopes>` now validates the inline arguments before loading config — a bad GUID or empty scopes produces a precise error instead of the confusing "Agent name required" from the resolver.
 
 ### Removed
 - `a365 config` command family (`config init`, `config display`, `config permissions`) — replaced by `a365 setup all --agent-name` and `a365 setup permissions custom`.

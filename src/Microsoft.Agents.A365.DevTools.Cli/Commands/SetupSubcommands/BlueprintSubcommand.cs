@@ -164,8 +164,9 @@ internal static class BlueprintSubcommand
 
         var m365Option = new Option<bool>(
             "--m365",
-            description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint " +
-                        "via MCP Platform. Default is false (opt-in); omit this flag for non-M365 agents.");
+            description: "Treat this agent as an M365 agent. Only affects --endpoint-only and --update-endpoint " +
+                        "on this command. To configure the messaging endpoint as part of full setup, use " +
+                        "'a365 setup all --m365'.");
 
         var showSecretOption = new Option<bool>(
             "--show-secret",
@@ -358,6 +359,15 @@ internal static class BlueprintSubcommand
             }
 
             logger.LogInformation("Starting blueprint setup... (TraceId: {TraceId})", correlationId);
+
+            // --m365 only affects --endpoint-only / --update-endpoint paths. Surface a one-line note when the flag
+            // was passed in isolation so the user does not assume it triggered messaging endpoint registration.
+            if (isM365 && !endpointOnly && string.IsNullOrWhiteSpace(updateEndpoint))
+            {
+                logger.LogInformation(
+                    "Note: --m365 has no effect on 'setup blueprint' by itself. Use 'a365 setup all --m365' to register the messaging endpoint, " +
+                    "or 'a365 setup blueprint --endpoint-only --m365' after the blueprint exists.");
+            }
 
             // Handle --endpoint-only flag — only wired up for --m365 agents.
             if (endpointOnly)
@@ -1239,12 +1249,19 @@ internal static class BlueprintSubcommand
                             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{servicePrincipalId}'",
                             scopes: AuthenticationConstants.RequiredPermissionGrantScopes,
                             ct: ct);
-                        if (resp.StatusCode == 403)
+                        try
                         {
-                            propagationAuthDenied = true;
-                            return true;
+                            if (resp.StatusCode == 403)
+                            {
+                                propagationAuthDenied = true;
+                                return true;
+                            }
+                            return resp.IsSuccess;
                         }
-                        return resp.IsSuccess;
+                        finally
+                        {
+                            resp.Json?.Dispose();
+                        }
                     },
                     result => !result,
                     maxRetries: 12,

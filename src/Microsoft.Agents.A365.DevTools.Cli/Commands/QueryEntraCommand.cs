@@ -323,11 +323,16 @@ public class QueryEntraCommand
                 logger.LogInformation("============================================");
                 
                 // Use Microsoft Graph API through Azure CLI to get OAuth2 permission grants
-                var grantsResult = await executor.ExecuteAsync("az", 
+                var grantsResult = await executor.ExecuteAsync("az",
                     $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{agenticAppId}'\" --output json");
 
+                // Distinguish "API call failed" (can't read) from "API succeeded but returned no grants".
+                // Non-admin developers lack DelegatedPermissionGrant.Read.All and always get a failure here —
+                // claiming "admin consent has not been granted" is a false negative in that case.
+                bool grantsReadable = grantsResult.Success && !string.IsNullOrWhiteSpace(grantsResult.StandardOutput);
+
                 bool hasGrants = false;
-                if (grantsResult.Success && !string.IsNullOrWhiteSpace(grantsResult.StandardOutput))
+                if (grantsReadable)
                 {
                     try
                     {
@@ -395,14 +400,24 @@ public class QueryEntraCommand
 
                 if (!hasGrants)
                 {
-                    logger.LogInformation("    No OAuth2 permission grants found");
-                    logger.LogInformation("    This means admin consent has not been granted for any API permissions");
-                    logger.LogInformation("");
-                    logger.LogInformation("To grant admin consent:");
-                    logger.LogInformation("  1. Visit the Azure portal: https://portal.azure.com");
-                    logger.LogInformation("  2. Go to Entra ID > App registrations");
-                    logger.LogInformation("  3. Find your application: {DisplayName}", displayName);
-                    logger.LogInformation("  4. Go to API permissions and click 'Grant admin consent'");
+                    if (!grantsReadable)
+                    {
+                        logger.LogInformation("    Cannot read tenant-wide OAuth2 permission grants from the current credentials.");
+                        logger.LogInformation("    (Reading grants requires the admin-only DelegatedPermissionGrant.Read.All scope; the other information shown above does not.)");
+                        logger.LogInformation("    To verify consent status, sign in as a tenant administrator and re-run, or inspect the app in the Entra portal:");
+                        logger.LogInformation("    https://portal.azure.com -> Entra ID -> App registrations -> {DisplayName} -> API permissions", displayName);
+                    }
+                    else
+                    {
+                        logger.LogInformation("    No OAuth2 permission grants found");
+                        logger.LogInformation("    This means admin consent has not been granted for any API permissions");
+                        logger.LogInformation("");
+                        logger.LogInformation("To grant admin consent:");
+                        logger.LogInformation("  1. Visit the Azure portal: https://portal.azure.com");
+                        logger.LogInformation("  2. Go to Entra ID > App registrations");
+                        logger.LogInformation("  3. Find your application: {DisplayName}", displayName);
+                        logger.LogInformation("  4. Go to API permissions and click 'Grant admin consent'");
+                    }
                 }
             }
             catch (Exception ex)

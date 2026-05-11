@@ -51,15 +51,41 @@ public sealed class LogRedactionService : ILogRedactionService
         var usernameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int tokenCount = 0;
 
-        // 1. Redact JWT tokens first (they contain dots that could confuse other patterns)
-        var content = JwtPattern.Replace(logContent, _ =>
+        // The header line and the log body must run through the same redaction pipeline so that
+        // emails, GUIDs, or tokens embedded in the source path (e.g. OneDrive workspace paths,
+        // tenant-scoped folder names) don't leak in the header that claims to be redacted.
+        var content = RedactAll(logContent, emailMap, guidMap, usernameMap, ref tokenCount);
+        var redactedSourcePath = RedactAll(sourceFilePath, emailMap, guidMap, usernameMap, ref tokenCount);
+
+        var header = BuildHeader(redactedSourcePath, emailMap.Count, guidMap.Count, tokenCount, usernameMap.Count);
+        return new LogRedactionResult(
+            RedactedContent: header + content,
+            EmailsRedacted: emailMap.Count,
+            IdsRedacted: guidMap.Count,
+            TokensRedacted: tokenCount,
+            UsernamesRedacted: usernameMap.Count);
+    }
+
+    private static string RedactAll(
+        string input,
+        Dictionary<string, string> emailMap,
+        Dictionary<string, string> guidMap,
+        Dictionary<string, string> usernameMap,
+        ref int tokenCount)
+    {
+        // 1. JWT tokens first — they contain dots that could otherwise confuse other patterns.
+        // C# lambdas cannot capture ref parameters, so the count is mirrored into a local for
+        // the lambda's lifetime and written back to the ref parameter afterwards.
+        int localTokenCount = tokenCount;
+        var output = JwtPattern.Replace(input, _ =>
         {
-            tokenCount++;
+            localTokenCount++;
             return "<JWT-TOKEN>";
         });
+        tokenCount = localTokenCount;
 
-        // 2. Redact email addresses with consistent aliases
-        content = EmailPattern.Replace(content, m =>
+        // 2. Emails with consistent aliases.
+        output = EmailPattern.Replace(output, m =>
         {
             var key = m.Value.ToLowerInvariant();
             if (!emailMap.TryGetValue(key, out var alias))
@@ -70,8 +96,8 @@ public sealed class LogRedactionService : ILogRedactionService
             return alias;
         });
 
-        // 3. Redact GUIDs with consistent aliases
-        content = GuidPattern.Replace(content, m =>
+        // 3. GUIDs with consistent aliases.
+        output = GuidPattern.Replace(output, m =>
         {
             var key = m.Value.ToLowerInvariant();
             if (!guidMap.TryGetValue(key, out var alias))
@@ -82,8 +108,8 @@ public sealed class LogRedactionService : ILogRedactionService
             return alias;
         });
 
-        // 4. Redact OS path usernames; preserve the rest of the path for debugging context
-        content = PathUsernamePattern.Replace(content, m =>
+        // 4. OS path usernames; preserve the rest of the path for debugging context.
+        output = PathUsernamePattern.Replace(output, m =>
         {
             var prefix = m.Groups[1].Value;
             var key = m.Groups[2].Value.ToLowerInvariant();
@@ -95,27 +121,7 @@ public sealed class LogRedactionService : ILogRedactionService
             return prefix + alias;
         });
 
-        // Apply path username redaction to the source path written in the header (same alias map
-        // as content so the same username gets the same alias if it appears in both places).
-        var redactedSourcePath = PathUsernamePattern.Replace(sourceFilePath, m =>
-        {
-            var prefix = m.Groups[1].Value;
-            var key = m.Groups[2].Value.ToLowerInvariant();
-            if (!usernameMap.TryGetValue(key, out var alias))
-            {
-                alias = $"<username-{usernameMap.Count + 1}>";
-                usernameMap[key] = alias;
-            }
-            return prefix + alias;
-        });
-
-        var header = BuildHeader(redactedSourcePath, emailMap.Count, guidMap.Count, tokenCount, usernameMap.Count);
-        return new LogRedactionResult(
-            RedactedContent: header + content,
-            EmailsRedacted: emailMap.Count,
-            IdsRedacted: guidMap.Count,
-            TokensRedacted: tokenCount,
-            UsernamesRedacted: usernameMap.Count);
+        return output;
     }
 
     private static string BuildHeader(string sourceFilePath, int emails, int ids, int tokens, int usernames)

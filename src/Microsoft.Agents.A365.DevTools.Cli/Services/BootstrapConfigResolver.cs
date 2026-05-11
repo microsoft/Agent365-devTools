@@ -345,14 +345,21 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
                         "Generated config blueprint ID ({ConfigId}) does not match Entra-resolved ID ({ResolvedId}). Skipping resource IDs from file.",
                         configBlueprintId, resolvedBlueprintId);
                 }
-                else if (string.IsNullOrWhiteSpace(resolvedBlueprintId))
+                else if (string.IsNullOrWhiteSpace(resolvedBlueprintId) && !string.IsNullOrWhiteSpace(configBlueprintId))
                 {
-                    // Entra lookup failed — fall back to file values for all IDs.
-                    agentRegistrationId = SetupHelpers.GetJsonString(root, "agentRegistrationId");
-                    agenticAppId = SetupHelpers.GetJsonString(root, "AgenticAppId");
-                    agentBlueprintSpObjectId = SetupHelpers.GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
-                    _logger.LogInformation(
-                        "Loaded resource IDs from {Path} (Entra lookup unavailable)", generatedConfigPath);
+                    // Entra returned no match for '{agentName} Blueprint' but the local generated
+                    // config has a different blueprint ID. This is the typo case — a typo'd
+                    // --agent-name would otherwise silently delete the previous agent's resources.
+                    // Refuse to proceed and require the user to be explicit.
+                    _logger.LogError(
+                        "Blueprint '{Name}' not found in Entra, and the local a365.generated.config.json references a different blueprint ({ConfigId}).",
+                        blueprintDisplayName, configBlueprintId);
+                    _logger.LogInformation("");
+                    _logger.LogInformation("To clean up the blueprint referenced by the local config, run without --agent-name:");
+                    _logger.LogInformation("  a365 cleanup");
+                    _logger.LogInformation("");
+                    _logger.LogInformation("To clean up a specific agent by name, ensure --agent-name matches an existing Entra blueprint, or delete a365.generated.config.json first.");
+                    return null;
                 }
             }
             catch (Exception ex)

@@ -196,8 +196,24 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("The following required permissions are not yet consented for your client app ({ClientAppId}):", clientAppId);
         foreach (var p in unconsented)
             ctx.Logger.LogInformation("  - {Permission}", p);
-
         ctx.Logger.LogInformation("");
+
+        // The PATCH on oauth2PermissionGrants requires DelegatedPermissionGrant.ReadWrite.All
+        // (admin-only). Skip the prompt for non-admins so we don't ask the user to confirm
+        // an operation they cannot complete; print the admin consent URL for hand-off instead.
+        var roleCheck = await ctx.GraphApiService.IsCurrentUserAdminAsync(tenantId, ctx.CancellationToken);
+        if (roleCheck == Models.RoleCheckResult.DoesNotHaveRole)
+        {
+            ctx.Logger.LogWarning("Granting tenant-wide consent requires a tenant administrator. Setup will continue and may fail if these permissions are required at runtime.");
+            var url = Exceptions.ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                ctx.Logger.LogInformation("Share the following URL with a tenant administrator so they can grant consent:");
+                ctx.Logger.LogInformation("  {Url}", url);
+            }
+            return;
+        }
+
         var confirmed = await ctx.ConfirmationProvider.ConfirmAsync("Grant admin consent for these permissions now? [y/N]: ");
         ctx.CancellationToken.ThrowIfCancellationRequested();
 

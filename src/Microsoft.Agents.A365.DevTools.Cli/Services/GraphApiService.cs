@@ -300,7 +300,8 @@ public class GraphApiService
             if (!resp.IsSuccessStatusCode)
             {
                 var errorBody = await resp.Content.ReadAsStringAsync(ct);
-                _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, errorBody);
+                _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}",
+                    url, (int)resp.StatusCode, resp.ReasonPhrase, FormatGraphErrorBody(errorBody));
                 return null;
             }
             var json = await resp.Content.ReadAsStringAsync(ct);
@@ -342,7 +343,8 @@ public class GraphApiService
                 }
 
                 if (!resp.IsSuccessStatusCode)
-                    _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}", url, (int)resp.StatusCode, resp.ReasonPhrase, body);
+                    _logger.LogDebug("Graph GET {Url} failed {Code} {Reason}: {Body}",
+                        url, (int)resp.StatusCode, resp.ReasonPhrase, FormatGraphErrorBody(body));
 
                 return new GraphResponse
                 {
@@ -1943,6 +1945,26 @@ public class GraphApiService
         }
         catch { /* ignore parse errors */ }
         return null;
+    }
+
+    // Compresses a Graph error body to {code}: {message} for debug logs, so verbose
+    // output stays scannable. Falls back to the raw body when the JSON shape is unexpected.
+    private static string FormatGraphErrorBody(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error))
+            {
+                var code = error.TryGetProperty("code", out var c) ? c.GetString() : null;
+                var message = error.TryGetProperty("message", out var m) ? m.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(code) || !string.IsNullOrWhiteSpace(message))
+                    return $"{code ?? "(no code)"}: {message ?? "(no message)"}";
+            }
+        }
+        catch { /* fall through to raw body */ }
+        return body;
     }
 
     private void LogJwtClaims(string token, string label)

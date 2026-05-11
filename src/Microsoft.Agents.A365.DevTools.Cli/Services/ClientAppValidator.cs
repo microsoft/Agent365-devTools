@@ -1097,6 +1097,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             // the grants table by design).
             var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
                 $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
+            using var grantsDoc = grantsResp.Json;
 
             if (grantsResp.StatusCode == 403)
             {
@@ -1106,13 +1107,13 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return consentedPermissions;
             }
 
-            if (grantsResp.Json == null)
+            if (grantsDoc == null)
             {
                 _logger.LogDebug("Could not query oauth2PermissionGrants (status: {Status})", grantsResp.StatusCode);
                 return consentedPermissions;
             }
 
-            var grantsJson = JsonNode.Parse(grantsResp.Json.RootElement.GetRawText());
+            var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
             var grants = grantsJson?["value"]?.AsArray();
 
             if (grants == null || grants.Count == 0)
