@@ -167,25 +167,12 @@ public static class AuthenticationConstants
     public const string AgentIdentityBlueprintPrincipalCreateScope = "AgentIdentityBlueprintPrincipal.Create";
 
     /// <summary>
-    /// Delegated scope required to delete an Agent Blueprint.
-    /// Per the Agent ID permissions reference, this is the correct scope for Delete operations.
-    /// </summary>
-    public const string AgentIdentityBlueprintDeleteRestoreAllScope = "AgentIdentityBlueprint.DeleteRestore.All";
-
-    /// <summary>
     /// Delegated scope required to delete an Agent Identity (service principal).
     /// Per the Agent ID permissions reference, DELETE /beta/servicePrincipals/{id} for agent identities
-    /// requires this scope — NOT AgentIdentityBlueprint.DeleteRestore.All, which is blueprint-only.
+    /// requires this scope — blueprint deletion is covered by the AgentIdentityBlueprint.ReadWrite.All
+    /// umbrella so no separate blueprint-delete scope is defined here.
     /// </summary>
     public const string AgentIdentityDeleteRestoreAllScope = "AgentIdentity.DeleteRestore.All";
-
-    /// <summary>
-    /// Delegated scope required to add or remove federated identity credentials and password credentials
-    /// on an Agent Blueprint. Per the Agent ID permissions reference, covers keyCredentials,
-    /// passwordCredentials, and federatedIdentityCredentials. Requires Global Administrator or
-    /// Agent ID Administrator role.
-    /// </summary>
-    public const string AgentIdentityBlueprintAddRemoveCredsAllScope = "AgentIdentityBlueprint.AddRemoveCreds.All";
 
     /// <summary>
     /// Delegated scope for full read/write access to an Agent Blueprint.

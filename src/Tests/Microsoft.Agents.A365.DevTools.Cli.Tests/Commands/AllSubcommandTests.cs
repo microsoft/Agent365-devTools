@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -220,7 +221,7 @@ public class AllSubcommandTests : IDisposable
             EndpointRegistrationResult.Failed,
             because: "the step must record a distinct failure state so the summary doesn't misreport it as 'skipped (non-M365 agent)' — null is reserved for non-M365");
         ctx.Results.MessagingEndpointFailureReason.Should().Be(
-            "BlueprintMissing",
+            MessagingEndpointFailureReasons.BlueprintMissing,
             because: "a dedicated reason code lets the summary point the user at the blueprint step rather than generic retry guidance");
         ctx.Results.Warnings.Should().ContainSingle(
             w => w.Contains("agent blueprint ID is missing", StringComparison.OrdinalIgnoreCase),
@@ -276,14 +277,14 @@ public class AllSubcommandTests : IDisposable
             "blueprint-id",
             "https://example.com/api/messages",
             "test-correlation-id")
-            .Returns((EndpointRegistrationResult.Failed, (string?)"NotOwner"));
+            .Returns((EndpointRegistrationResult.Failed, (string?)MessagingEndpointFailureReasons.NotOwner));
 
         var ctx = BuildMessagingEndpointContext(backend, isM365: true);
 
         await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
 
         ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.Failed);
-        ctx.Results.MessagingEndpointFailureReason.Should().Be("NotOwner");
+        ctx.Results.MessagingEndpointFailureReason.Should().Be(MessagingEndpointFailureReasons.NotOwner);
         ctx.Results.MessagingEndpointRegistered.Should().BeFalse();
     }
 
@@ -295,14 +296,14 @@ public class AllSubcommandTests : IDisposable
             "blueprint-id",
             "https://example.com/api/messages",
             "test-correlation-id")
-            .Returns((EndpointRegistrationResult.Failed, (string?)"Other"));
+            .Returns((EndpointRegistrationResult.Failed, (string?)MessagingEndpointFailureReasons.Other));
 
         var ctx = BuildMessagingEndpointContext(backend, isM365: true);
 
         await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
 
         ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.Failed);
-        ctx.Results.MessagingEndpointFailureReason.Should().Be("Other");
+        ctx.Results.MessagingEndpointFailureReason.Should().Be(MessagingEndpointFailureReasons.Other);
         ctx.Results.MessagingEndpointRegistered.Should().BeFalse();
     }
 }

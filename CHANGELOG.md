@@ -43,7 +43,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 ### Changed
 - Agent identity creation now uses Blueprint app-only credentials (`AgentIdentity.CreateAsManager`, auto-granted to all Blueprint apps). The custom CLI app no longer requires `AgentIdentity.Create.All` or `DelegatedPermissionGrant.ReadWrite.All`. Administrators can remove these permissions from the CLI app registration. See [Custom client app registration](https://learn.microsoft.com/microsoft-agent-365/developer/custom-client-app-registration) for the updated permission list.
-- `setup all` now retries agent identity creation and blueprint token acquisition with exponential back-off (up to ~60 s total) when Entra replication lag causes transient 401/AADSTS errors on fresh blueprint setups. Retry progress is logged at `Debug` level only.
+- `setup all` now retries agent identity creation and blueprint token acquisition with exponential back-off (delay doubles up to a 60-second cap; agent identity retries up to 5 times, blueprint token up to 12 times — worst case is several minutes per call when Entra replication lag is severe) when Entra replication lag causes transient 401/AADSTS errors on fresh blueprint setups. Retry progress is logged at `Debug` level only.
 
 ### Fixed
 - `setup all` with `--authmode obo --aiteammate` no longer exits with an error. `obo` is the default for AI Teammate agents and is accepted with a warning; `--authmode s2s` and `--authmode both` remain incompatible with `--aiteammate`.

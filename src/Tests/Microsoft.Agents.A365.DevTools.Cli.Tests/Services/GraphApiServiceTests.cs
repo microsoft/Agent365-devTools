@@ -582,9 +582,11 @@ public class GraphApiServiceTests
     }
 
     [Fact]
-    public async Task IsCurrentUserAdminAsync_GraphFails_ReturnsUnknown()
+    public async Task IsCurrentUserAdminAsync_TokenAcquisitionFails_ReturnsUnknown()
     {
-        // Arrange — token acquisition returns null (auth failure)
+        // Arrange — token acquisition returns null (auth failure). The role check now decodes
+        // wids from the access token, so a failed acquisition (rather than a Graph 500) is the
+        // realistic failure mode.
         using var handler = new TestHttpMessageHandler();
         var service = CreateServiceWithNullAuth(handler);
 
@@ -771,9 +773,11 @@ public class GraphApiServiceTests
     }
 
     [Fact]
-    public async Task IsCurrentUserAgentIdAdminAsync_GraphReturnsNull_ReturnsUnknown()
+    public async Task IsCurrentUserAgentIdAdminAsync_TokenAcquisitionFails_ReturnsUnknown()
     {
-        // Arrange — token acquisition returns null (auth failure)
+        // Arrange — token acquisition returns null (auth failure). The role check now decodes
+        // wids from the access token, so a failed acquisition (rather than a Graph 500) is the
+        // realistic failure mode.
         using var handler = new TestHttpMessageHandler();
         var service = CreateServiceWithNullAuth(handler);
 

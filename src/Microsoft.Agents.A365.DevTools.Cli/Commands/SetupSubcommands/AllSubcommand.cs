@@ -789,7 +789,7 @@ internal static class AllSubcommand
         {
             ctx.Logger.LogWarning("Messaging endpoint registration skipped: agent blueprint ID is missing (the blueprint step likely failed).");
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
-            ctx.Results.MessagingEndpointFailureReason = "BlueprintMissing";
+            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.BlueprintMissing;
             ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
             ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only --m365'.");
             return;
@@ -823,7 +823,7 @@ internal static class AllSubcommand
             // setup should continue; surface the failure in the summary as a warning.
             ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
-            ctx.Results.MessagingEndpointFailureReason = "Other";
+            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.Other;
             ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
             ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
         }

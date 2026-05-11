@@ -1064,8 +1064,10 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Global Administrator role,
     /// which is required to grant tenant-wide admin consent interactively.
-    /// Uses only <see cref="AuthenticationConstants.UserReadScope"/> — works for both admin and non-admin users.
-    /// Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking) if the check cannot be completed.
+    /// Role detection is performed by decoding the <c>wids</c> claim from the MSAL access token
+    /// (see <see cref="CheckDirectoryRoleAsync"/>), so this does not call Graph and works without
+    /// any directory-read scope. Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking)
+    /// when the claim is absent or token acquisition fails.
     /// </summary>
     public virtual async Task<Models.RoleCheckResult> IsCurrentUserAdminAsync(
         string tenantId,
@@ -1077,8 +1079,10 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Agent ID Administrator role,
     /// which is required to create or update inheritable permissions on agent blueprints.
-    /// Uses only <see cref="AuthenticationConstants.UserReadScope"/> — works for both admin and non-admin users.
-    /// Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking) if the check cannot be completed.
+    /// Role detection is performed by decoding the <c>wids</c> claim from the MSAL access token
+    /// (see <see cref="CheckDirectoryRoleAsync"/>), so this does not call Graph and works without
+    /// any directory-read scope. Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking)
+    /// when the claim is absent or token acquisition fails.
     /// </summary>
     public virtual async Task<Models.RoleCheckResult> IsCurrentUserAgentIdAdminAsync(
         string tenantId,
@@ -1090,12 +1094,20 @@ public class GraphApiService
     /// <summary>
     /// Returns <see cref="Models.RoleCheckResult.HasRole"/> if the role is confirmed active,
     /// <see cref="Models.RoleCheckResult.DoesNotHaveRole"/> if confirmed absent, or
-    /// <see cref="Models.RoleCheckResult.Unknown"/> if the check itself failed (e.g. network error,
-    /// throttling, auth failure) — in which case the caller should attempt the operation
-    /// anyway and let the API surface the real error.
-    /// Queries /me/transitiveMemberOf/microsoft.graph.directoryRole, which requires only
-    /// User.Read and succeeds for both admin and non-admin users.
-    /// Note: PIM-eligible-but-not-activated assignments are not considered active.
+    /// <see cref="Models.RoleCheckResult.Unknown"/> if the check could not be completed — in
+    /// which case the caller should attempt the operation anyway and let the API surface the
+    /// real error.
+    ///
+    /// Implementation decodes the <c>wids</c> claim from the MSAL access token (no Graph call).
+    /// <c>wids</c> is a JWT array of role template GUIDs for the directly-assigned directory roles
+    /// the user holds. The optional claim must be configured on the app registration's access
+    /// token; when absent we return <see cref="Models.RoleCheckResult.Unknown"/>.
+    ///
+    /// Limitations:
+    ///   - Only directly-assigned roles appear in <c>wids</c>. Roles assigned via Entra
+    ///     role-assignable groups are NOT reflected and will return DoesNotHaveRole.
+    ///   - PIM-eligible-but-not-activated assignments are not active and are correctly excluded.
+    ///     PIM-active assignments do appear in <c>wids</c>.
     /// </summary>
     private async Task<Models.RoleCheckResult> CheckDirectoryRoleAsync(string tenantId, string roleTemplateId, CancellationToken ct)
     {
