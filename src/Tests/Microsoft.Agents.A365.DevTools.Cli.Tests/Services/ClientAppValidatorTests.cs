@@ -920,6 +920,22 @@ public class ClientAppValidatorTests
             Arg.Any<CancellationToken>(),
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(grantsJson)));
+        // Also mock GraphGetWithResponseAsync for the same grants endpoint — production code now
+        // uses this method to detect 403 (caller lacks DelegatedPermissionGrant.Read.All) without
+        // burying the status code. Returning a 200 with parsed JSON preserves the original
+        // consent-resolution behavior these tests rely on.
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(ConsentSpObjId)),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDocument.Parse(grantsJson)
+            }));
     }
 
     /// <summary>
@@ -957,6 +973,19 @@ public class ClientAppValidatorTests
             Arg.Any<CancellationToken>(),
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse("""{"value": []}""")));
+        // Mirror for GraphGetWithResponseAsync (used by GetConsentedPermissionsAsync to detect 403).
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(spObjectId)),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDocument.Parse("""{"value": []}""")
+            }));
     }
 
     /// <summary>
