@@ -1172,19 +1172,13 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         if (grantsDoc == null)
         {
-            _logger.LogDebug("Could not verify admin consent status");
-            _logger.LogWarning(
-                "Admin consent status could not be verified — insufficient permissions to read consent grants.");
-            _logger.LogWarning(
-                "If you see 'Need admin approval' during blueprint creation, admin consent has not been granted.");
-            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
-            if (consentUrl != null)
-            {
-                _logger.LogWarning("A Global Administrator must either:");
-                _logger.LogWarning("  1. Run 'a365 setup requirements' with an admin account to auto-grant consent, OR");
-                _logger.LogWarning("  2. Open this URL to grant consent: {ConsentUrl}", consentUrl);
-            }
-            return true; // Best-effort — still allow developer to proceed
+            // The grants-read 403 only signals the caller lacks DelegatedPermissionGrant.Read.All —
+            // it tells us nothing about whether tenant-wide consent is actually granted. Don't
+            // emit a user-visible warning here: it would be a false positive on every developer
+            // run (developers don't have that scope by design). Real consent failures surface
+            // with actionable errors from the operations that need them.
+            _logger.LogDebug("Skipping tenant-wide consent verification — caller lacks DelegatedPermissionGrant.Read.All. Downstream operations will surface any actual consent issues.");
+            return true;
         }
 
         var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
