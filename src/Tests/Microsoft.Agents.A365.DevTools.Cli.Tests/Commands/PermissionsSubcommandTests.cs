@@ -38,6 +38,20 @@ public class PermissionsSubcommandTests
         _mockGraphApiService = Substitute.ForPartsOf<GraphApiService>();
         _mockBlueprintService = Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), _mockGraphApiService);
         _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
+
+        // Short-circuit any virtual GraphApiService methods that would otherwise fall through to
+        // the real MSAL/az-CLI authentication pipeline on a partial mock. Without this, tests
+        // that drive ConfigureMcpPermissionsAsync into BatchPermissionsOrchestrator hang on
+        // Linux CI (no cached creds, no interactive auth available). The orchestrator handles
+        // a null pre-warm response by skipping Phase 1, which is what every test in this class
+        // wants because none of them exercise real Graph calls.
+        _mockGraphApiService.GraphGetAsync(Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns((JsonDocument?)null);
+        _mockGraphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Microsoft.Agents.A365.DevTools.Cli.Models.RoleCheckResult.Unknown);
+        _mockGraphApiService.IsCurrentUserAgentIdAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Microsoft.Agents.A365.DevTools.Cli.Models.RoleCheckResult.Unknown);
     }
 
     #region Command Structure Tests
