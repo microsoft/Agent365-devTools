@@ -428,12 +428,24 @@ internal static class NonDwBlueprintSetupOrchestrator
                 }
                 else
                 {
-                    // Agent identity creation via delegated flow (AgentIdentity.Create.All).
-                    // Agent ID Developer role is sufficient — client credentials are not required.
+                    // Agent identity creation via blueprint client credentials (app-only).
+                    // AgentIdentity.CreateAsManager is auto-granted to Blueprint apps — no custom app permission required.
                     ctx.Logger.LogInformation("Creating agent identity...");
-                    var agentId = await ctx.GraphApiService.CreateAgentIdentityDelegatedAsync(
+                    if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
+                    {
+                        ctx.Results.AgentIdentityFailed = true;
+                        ctx.Logger.LogError("Blueprint client secret is not available. Re-run 'a365 setup blueprint' to create it.");
+                        return;
+                    }
+
+                    var plainSecret = SecretProtectionHelper.UnprotectSecret(
+                        ctx.Config.AgentBlueprintClientSecret,
+                        ctx.Config.AgentBlueprintClientSecretProtected,
+                        ctx.Logger);
+                    var agentId = await ctx.GraphApiService.CreateAgentIdentityAsync(
                         ctx.Config.TenantId!,
                         ctx.Config.AgentBlueprintId!,
+                        plainSecret,
                         agentIdentityDisplayName,
                         ctx.CancellationToken);
 
@@ -451,8 +463,8 @@ internal static class NonDwBlueprintSetupOrchestrator
                     else if (!ctx.Results.AgentIdentityFailed)
                     {
                         ctx.Results.AgentIdentityFailed = true;
-                        ctx.Results.Warnings.Add("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
-                        ctx.Logger.LogWarning("Agent identity creation failed. Ensure you have the Agent ID Developer or Agent ID Administrator role in this tenant.");
+                        ctx.Results.Warnings.Add("Agent identity creation failed. Ensure blueprint setup completed and the client secret is available.");
+                        ctx.Logger.LogWarning("Agent identity creation failed. Ensure blueprint setup completed and the client secret is available.");
                     }
                 }
             }
@@ -628,18 +640,14 @@ internal static class NonDwBlueprintSetupOrchestrator
             return;
         }
 
-        var agentIdentitySpObjectId = await ctx.GraphApiService.EnsureServicePrincipalForAppIdAsync(
-            ctx.Config.TenantId!,
-            ctx.Config.AgenticAppId!,
-            ctx.CancellationToken,
-            Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
+        // AgenticAppId is the SP object ID returned by CreateAgentIdentityAsync and stored in config.
+        var agentIdentitySpObjectId = ctx.Config.AgenticAppId;
 
         if (string.IsNullOrWhiteSpace(agentIdentitySpObjectId))
         {
             ctx.Logger.LogWarning(
-                "Could not resolve service principal for agent identity ({AgentId}). " +
-                "Permissions must be granted manually in the Entra portal.",
-                ctx.Config.AgenticAppId);
+                "Agent identity ID not found in config. " +
+                "Permissions must be granted manually in the Entra portal.");
             return;
         }
 

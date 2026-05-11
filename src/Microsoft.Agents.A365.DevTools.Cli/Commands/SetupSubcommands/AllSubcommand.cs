@@ -179,9 +179,16 @@ internal static class AllSubcommand
             }
             if (authMode is not null && aiTeammateFlag == true)
             {
-                logger.LogError("--authmode is not supported with --aiteammate — AI Teammate agents automatically use OBO via agent user identity.");
-                context.ExitCode = 1;
-                return;
+                if (authMode == "obo")
+                {
+                    logger.LogWarning("--authmode obo is redundant with --aiteammate — AI Teammate agents always use OBO. Flag ignored.");
+                }
+                else
+                {
+                    logger.LogError("--authmode {AuthMode} is not supported with --aiteammate — AI Teammate agents always use OBO via agent user identity.", authMode);
+                    context.ExitCode = 1;
+                    return;
+                }
             }
 
             // Generate correlation ID at workflow entry point
@@ -782,7 +789,7 @@ internal static class AllSubcommand
         {
             ctx.Logger.LogWarning("Messaging endpoint registration skipped: agent blueprint ID is missing (the blueprint step likely failed).");
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
-            ctx.Results.MessagingEndpointFailureReason = "BlueprintMissing";
+            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.BlueprintMissing;
             ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
             ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only --m365'.");
             return;
@@ -816,7 +823,7 @@ internal static class AllSubcommand
             // setup should continue; surface the failure in the summary as a warning.
             ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
-            ctx.Results.MessagingEndpointFailureReason = "Other";
+            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.Other;
             ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
             ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
         }

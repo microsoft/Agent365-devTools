@@ -87,9 +87,9 @@ public class AgentBlueprintService
         {
             _logger.LogInformation("Deleting agent blueprint application: {BlueprintId}", blueprintId);
 
-            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintDeleteRestoreAllScope };
+            var requiredScopes = new[] { AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope };
 
-            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.DeleteRestore.All scope...");
+            _logger.LogInformation("Acquiring access token with AgentIdentityBlueprint.ReadWrite.All scope...");
             _logger.LogInformation("An authentication dialog will appear to complete sign-in.");
 
             var deletePath = $"/beta/applications/{blueprintId}/microsoft.graph.agentIdentityBlueprint";
@@ -176,21 +176,34 @@ public class AgentBlueprintService
         string blueprintId,
         CancellationToken cancellationToken = default)
     {
-        var requiredScopes = new[] { AuthenticationConstants.AgentIdentityReadAllScope };
+        var spScopes = new[] { AuthenticationConstants.AgentIdentityReadAllScope };
         var encodedId = Uri.EscapeDataString(blueprintId);
 
         // Fetch agent identity SPs and agent users for this blueprint sequentially to avoid races on shared HTTP headers
         var spItems = await FetchAllPagesAsync(
             tenantId,
             $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,displayName",
-            requiredScopes,
+            spScopes,
             cancellationToken);
 
-        var userItems = await FetchAllPagesAsync(
-            tenantId,
-            $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,identityParentId",
-            requiredScopes,
-            cancellationToken);
+        // Agent user query requires AgentIdUser.ReadWrite.All, which is intentionally absent from
+        // RequiredClientAppPermissions until create-instance is re-enabled. This means agent user
+        // cleanup is also disabled — no agent users exist while create-instance is off, so this is safe.
+        List<JsonElement> userItems;
+        if (AuthenticationConstants.RequiredClientAppPermissions.Contains(AuthenticationConstants.AgentIdUserReadWriteAllScope))
+        {
+            var userScopes = new[] { AuthenticationConstants.AgentIdUserReadWriteAllScope };
+            userItems = await FetchAllPagesAsync(
+                tenantId,
+                $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,identityParentId",
+                userScopes,
+                cancellationToken);
+        }
+        else
+        {
+            _logger.LogDebug("Skipping agent user query — AgentIdUser.ReadWrite.All not in required permissions (create-instance not enabled)");
+            userItems = new List<JsonElement>();
+        }
         // Build lookup: identityParentId (SP object ID) -> user object ID
         var userBySpId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var user in userItems)

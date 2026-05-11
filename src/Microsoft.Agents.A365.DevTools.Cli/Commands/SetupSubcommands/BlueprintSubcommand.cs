@@ -792,7 +792,7 @@ internal static class BlueprintSubcommand
         {
             logger.LogError(ex, "Error during delegated consent: {Message}", ex.Message);
             logger.LogError("Common causes:");
-            logger.LogError("  1. Insufficient permissions - You need Application.ReadWrite.All and DelegatedPermissionGrant.ReadWrite.All");
+            logger.LogError("  1. Insufficient permissions - You need AgentIdentityBlueprint.ReadWrite.All consented on your client app");
             logger.LogError("  2. Not a Global Administrator or similar privileged role");
             logger.LogError("  3. Azure CLI authentication expired - Run 'az login' and retry");
             logger.LogError("  4. Network connectivity issues");
@@ -1023,7 +1023,9 @@ internal static class BlueprintSubcommand
             // Explicit scopes — NOT .default. Using .default bundles all consented scopes including
             // AgentIdentityBlueprint.*, which Entra rejects for POST /v1.0/servicePrincipals
             // ("backing application must be in the local tenant").
-            // AgentIdentityBlueprintPrincipal.Create is the correct scope per Agent ID team (Kyle Marsh).
+            // AgentIdentityBlueprintPrincipal.Create is required for POST /v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal.
+            // AgentIdentityBlueprint.ReadWrite.All is the umbrella for blueprint app operations but does NOT cover
+            // blueprint SP creation — that is a separate resource requiring Principal.Create (confirmed Run 1, 2026-05-08).
             logger.LogDebug("Acquiring blueprint httpClient token — scope: AgentIdentityBlueprintPrincipal.Create, loginHint: {LoginHint}", blueprintLoginHint ?? "(none)");
             var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct,
                 scope: AuthenticationConstants.AgentIdentityBlueprintPrincipalCreateScope,
@@ -1514,7 +1516,7 @@ internal static class BlueprintSubcommand
                 ficError = ficCreateResult?.ErrorMessage
                     ?? "Federated Identity Credential creation failed";
                 logger.LogWarning("[WARN] Federated Identity Credential creation failed - you may need to create it manually in Entra ID");
-                logger.LogWarning("  Ensure the client app has 'AgentIdentityBlueprint.UpdateAuthProperties.All' permission consented.");
+                logger.LogWarning("  Ensure the client app has 'AgentIdentityBlueprint.ReadWrite.All' permission consented.");
             }
         }
         else if (!useManagedIdentity)

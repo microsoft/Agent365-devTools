@@ -53,7 +53,7 @@ public class FederatedCredentialService
                 tenantId,
                 $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials",
                 cancellationToken,
-                scopes: [AuthenticationConstants.AgentIdentityBlueprintAddRemoveCredsAllScope]);
+                scopes: [AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope]);
 
             JsonDocument? doc;
             if (primaryDoc != null && primaryDoc.RootElement.TryGetProperty("value", out var valueCheck) && valueCheck.GetArrayLength() > 0)
@@ -69,7 +69,7 @@ public class FederatedCredentialService
                     tenantId,
                     $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/federatedIdentityCredentials",
                     cancellationToken,
-                    scopes: [AuthenticationConstants.AgentIdentityBlueprintAddRemoveCredsAllScope]);
+                    scopes: [AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope]);
             }
 
             if (doc == null)
@@ -267,7 +267,7 @@ public class FederatedCredentialService
                     endpoint,
                     payload,
                     cancellationToken,
-                    scopes: [AuthenticationConstants.AgentIdentityBlueprintAddRemoveCredsAllScope]);
+                    scopes: [AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope]);
 
                 if (response.IsSuccess)
                 {
@@ -401,7 +401,7 @@ public class FederatedCredentialService
             _logger.LogDebug("Deleting federated credential: {CredentialId} from blueprint: {ObjectId}", 
                 credentialId, blueprintObjectId);
 
-            var ficScope = AuthenticationConstants.AgentIdentityBlueprintAddRemoveCredsAllScope;
+            var ficScope = AuthenticationConstants.AgentIdentityBlueprintReadWriteAllScope;
 
             // Try the standard endpoint first
             var endpoint = $"/beta/applications/{blueprintObjectId}/federatedIdentityCredentials/{credentialId}";

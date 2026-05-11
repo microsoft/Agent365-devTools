@@ -315,6 +315,58 @@ public class Agent365ConfigServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task SaveStateAsync_NullStringProperty_IsOmittedFromJson()
+    {
+        // Arrange — agentBlueprintClientSecret is null (the state before the secret is created).
+        // SaveStateAsync must NOT write "agentBlueprintClientSecret": null because:
+        //   (a) DefaultIgnoreCondition.WhenWritingNull does not apply to dictionary values
+        //       (dotnet/runtime#30690), so the filter must be applied in ExtractDynamicProperties, and
+        //   (b) an explicit null in the file causes MergeDynamicProperties to overwrite any previously
+        //       written secret with null on the next LoadAsync — the self-reinforcing null cycle.
+        var statePath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        var config = new Agent365Config { AgentBlueprintId = "aaa-111" };
+        // AgentBlueprintClientSecret is intentionally left null
+
+        // Act
+        await _service.SaveStateAsync(config, statePath);
+
+        // Assert — key must be absent, not present with a null value.
+        // Note: parse the JSON object and check keys directly rather than doing a substring search,
+        // because "agentBlueprintClientSecretProtected" also contains "agentBlueprintClientSecret"
+        // as a prefix and would produce a false positive on a raw string check.
+        var json = await File.ReadAllTextAsync(statePath);
+        var node = System.Text.Json.Nodes.JsonNode.Parse(json)?.AsObject();
+        Assert.NotNull(node);
+        Assert.False(node!.ContainsKey("agentBlueprintClientSecret"),
+            "agentBlueprintClientSecret must be omitted when null to prevent the self-reinforcing null cycle on re-run");
+        Assert.Contains("aaa-111", json); // sanity: non-null values still written
+    }
+
+    [Fact]
+    public async Task SaveStateAsync_NonNullStringProperty_IsWrittenToJson()
+    {
+        // Arrange — after CreateBlueprintClientSecretAsync sets the secret, SaveStateAsync must
+        // persist it so the file contains the real value (fixes the macOS null-secret bug, issue #408).
+        var statePath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        var config = new Agent365Config
+        {
+            AgentBlueprintId = "aaa-111",
+            AgentBlueprintClientSecret = "super-secret-value",
+            AgentBlueprintClientSecretProtected = false
+        };
+
+        // Act
+        await _service.SaveStateAsync(config, statePath);
+
+        // Assert — parse JSON to avoid dependence on serializer whitespace/ordering.
+        var json = await File.ReadAllTextAsync(statePath);
+        var node = System.Text.Json.Nodes.JsonNode.Parse(json)?.AsObject();
+        Assert.NotNull(node);
+        Assert.Equal("super-secret-value", node!["agentBlueprintClientSecret"]?.GetValue<string>());
+        Assert.Equal(false, node["agentBlueprintClientSecretProtected"]?.GetValue<bool>());
+    }
+
     #endregion
 
     #region ValidateAsync Tests

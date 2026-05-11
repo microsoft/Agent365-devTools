@@ -432,15 +432,8 @@ public class AgentBlueprintServiceTests
                 }))
             });
 
-            // Response 2: GET /beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '...'
-            // Bulk query returns all agent users for the blueprint; correlated via identityParentId
-            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(new
-                {
-                    value = new[] { new { id = "user-obj-1", identityParentId = "sp-obj-1" } }
-                }))
-            });
+            // Note: No Response 2 for agent users — AgentIdUser.ReadWrite.All is not in RequiredClientAppPermissions
+            // (create-instance is not enabled), so the user query is intentionally skipped and AgentUserId is null.
 
             // Act
             var instances = await service.GetAgentInstancesForBlueprintAsync("tenant-id", blueprintId);
@@ -449,7 +442,7 @@ public class AgentBlueprintServiceTests
             instances.Should().HaveCount(1);
             instances[0].IdentitySpId.Should().Be("sp-obj-1");
             instances[0].DisplayName.Should().Be("Instance A");
-            instances[0].AgentUserId.Should().Be("user-obj-1");
+            instances[0].AgentUserId.Should().BeNull("AgentIdUser.ReadWrite.All is not in RequiredClientAppPermissions when create-instance is disabled");
         }
     }
 

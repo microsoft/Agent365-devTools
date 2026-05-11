@@ -260,10 +260,10 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
         catch (Exception ex)
         {
-            // Cache registration failure is non-fatal - authentication will still work,
-            // but users may see more prompts during multi-step operations
-            logger?.LogDebug(ex, "Failed to register persistent token cache");
-            logger?.LogWarning("Failed to register persistent token cache. Authentication prompts may be repeated.");
+            // Cache registration failure is non-fatal — authentication still works and
+            // the user can do nothing to remediate (no D-Bus/Keychain on headless Linux is
+            // the common cause), so this stays at Debug rather than surfacing as a warning.
+            logger?.LogDebug(ex, "Failed to register persistent token cache; auth prompts may be repeated within this session.");
         }
     }
 

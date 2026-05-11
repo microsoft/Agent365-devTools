@@ -553,12 +553,12 @@ internal static class SetupHelpers
             else
             {
                 var oboAlso = isBothMode && results.AgentIdentityPermissionsGranted;
-                var label = oboAlso ? "granted  S2S app roles + developer-scoped delegated" : "granted  S2S app roles";
+                var label = oboAlso ? "granted  S2S app roles + developer-scoped delegated on agent identity" : "granted  S2S app roles";
                 logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + label);
             }
         }
         else if (results.AgentIdentityPermissionsGranted)
-            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "granted  developer-scoped delegated");
+            logger.LogInformation(DryRunRow(permGrantStep, "Permission Grants") + "granted  developer-scoped delegated on agent identity");
         else if (pendingDelegatedAction)
             logger.LogWarning(DryRunRow(permGrantStep, "Permission Grants") + "PENDING — see Action Required");
         else if (results.BatchPermissionsPhase2Completed)
@@ -612,13 +612,17 @@ internal static class SetupHelpers
                     break;
                 case Models.EndpointRegistrationResult.Failed:
                 default:
-                    if (string.Equals(results.MessagingEndpointFailureReason, "NotOwner", StringComparison.Ordinal))
+                    if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotOwner, StringComparison.Ordinal))
                     {
                         logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed (not blueprint owner) — see Action Required");
                     }
-                    else if (string.Equals(results.MessagingEndpointFailureReason, "BlueprintMissing", StringComparison.Ordinal))
+                    else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.BlueprintMissing, StringComparison.Ordinal))
                     {
                         logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not attempted (blueprint creation failed) — see Action Required");
+                    }
+                    else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotConfigured, StringComparison.Ordinal))
+                    {
+                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not configured — register manually in the Teams Developer Portal");
                     }
                     else
                     {
@@ -745,7 +749,7 @@ internal static class SetupHelpers
             if (messagingEndpointFailureRequired)
             {
                 actionCount++;
-                if (string.Equals(results.MessagingEndpointFailureReason, "NotOwner", StringComparison.Ordinal))
+                if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotOwner, StringComparison.Ordinal))
                 {
                     logger.LogInformation("  {N}. Messaging endpoint — you are not an owner of the blueprint, so automated", actionCount);
                     logger.LogInformation("     registration was refused by the server. To complete this step, either:");
@@ -758,12 +762,17 @@ internal static class SetupHelpers
                     logger.LogInformation("        the endpoint step (no need to re-run the full setup):");
                     logger.LogInformation("          a365 setup blueprint --endpoint-only --m365");
                 }
-                else if (string.Equals(results.MessagingEndpointFailureReason, "BlueprintMissing", StringComparison.Ordinal))
+                else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.BlueprintMissing, StringComparison.Ordinal))
                 {
                     logger.LogInformation("  {N}. Messaging endpoint — not attempted because agent blueprint creation did not", actionCount);
                     logger.LogInformation("     complete. Resolve the blueprint step (see errors above), then re-run just");
                     logger.LogInformation("     the endpoint step:");
                     logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
+                }
+                else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotConfigured, StringComparison.Ordinal))
+                {
+                    logger.LogInformation("  {N}. Messaging endpoint — register manually in the Teams Developer Portal:", actionCount);
+                    logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
                 }
                 else
                 {
@@ -826,7 +835,7 @@ internal static class SetupHelpers
             {
                 nextStepLines.Add(() =>
                 {
-                    logger.LogInformation("  Ensure 'AgentIdentityBlueprint.UpdateAuthProperties.All' is consented, then:");
+                    logger.LogInformation("  Ensure 'AgentIdentityBlueprint.ReadWrite.All' is consented, then:");
                     logger.LogInformation("    a365 setup blueprint");
                 });
             }
@@ -1180,7 +1189,7 @@ internal static class SetupHelpers
         {
             throw new SetupValidationException(
                 $"Failed to create/update OAuth2 permission grant from blueprint {config.AgentBlueprintId} to {resourceName} {resourceAppId}. " +
-                "This may be due to insufficient permissions. Ensure you have DelegatedPermissionGrant.ReadWrite.All permission.");
+                "This may be due to insufficient permissions. Ensure you have AgentIdentityBlueprint.ReadWrite.All permission consented on your client app.");
         }
 
         // 3. Set inheritable permissions (for agent blueprints)
@@ -1193,16 +1202,20 @@ internal static class SetupHelpers
             logger.LogInformation("   - Configuring inheritable permissions: blueprint {Blueprint} to resourceAppId {ResourceAppId} scopes [{Scopes}]",
                 config.AgentBlueprintId, resourceAppId, string.Join(' ', scopes));
 
-            // Use custom client app auth for inheritable permissions - Azure CLI doesn't support this operation.
-            // Reuse permissionGrantScopes (which already includes AgentIdentityBlueprint.UpdateAuthProperties.All)
-            // so all Graph PowerShell calls in this method share a single Connect-MgGraph session/cache entry.
+            // Use custom client app auth for inheritable permissions — Azure CLI doesn't support this operation.
+            // permissionGrantScopes is intentionally empty in the current permission set (the operation that
+            // previously required AgentIdentityBlueprint.UpdateAuthProperties.All is now covered by the
+            // AgentIdentityBlueprint.ReadWrite.All umbrella in RequiredClientAppPermissions). When the scope
+            // collection is empty, SetInheritablePermissionsAsync falls through to the standard token path
+            // which already carries every required scope; passing the array here keeps a single call shape
+            // regardless of whether the set is empty or repopulated in a future revision.
             var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
                 config.TenantId, config.AgentBlueprintId, resourceAppId, scopes, requiredScopes: permissionGrantScopes, ct);
 
             if (!ok && !alreadyExists)
             {
                 throw new SetupValidationException($"Failed to set inheritable permissions: {err}. " +
-                    "Ensure you have AgentIdentityBlueprint.UpdateAuthProperties.All permission in your custom client app.");
+                    "Ensure you have AgentIdentityBlueprint.ReadWrite.All permission consented on your custom client app.");
             }
 
             if (alreadyExists)
@@ -1391,8 +1404,7 @@ internal static class SetupHelpers
             if (string.IsNullOrWhiteSpace(setupConfig.MessagingEndpoint))
             {
                 logger.LogWarning("MessagingEndpoint not configured. Skipping endpoint registration.");
-                logger.LogWarning("Configure 'messagingEndpoint' in a365.config.json and re-run 'a365 setup blueprint' to register the endpoint.");
-                return (Models.EndpointRegistrationResult.Failed, "Other");
+                return (Models.EndpointRegistrationResult.Failed, MessagingEndpointFailureReasons.NotConfigured);
             }
 
             if (!Uri.TryCreate(setupConfig.MessagingEndpoint, UriKind.Absolute, out var messagingEndpointUri) ||

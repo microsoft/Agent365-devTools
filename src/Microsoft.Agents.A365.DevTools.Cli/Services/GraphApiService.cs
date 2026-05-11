@@ -157,37 +157,68 @@ public class GraphApiService
 
     private async Task<bool> EnsureGraphHeadersAsync(string tenantId, bool forceRefresh = false, IEnumerable<string>? scopes = null, CancellationToken ct = default)
     {
-        // Authentication Strategy:
-        // 1. If specific scopes required AND token provider configured: Use MSAL with delegated scopes (WAM/browser/device-code)
-        // 2. Otherwise: Use MSAL via AuthenticationService (WAM/browser/device-code, persistent cache)
+        // Authentication strategy:
+        //
+        // 1. Token provider with CustomClientAppId resolved (steady-state): route through
+        //    `_tokenProvider.GetMgGraphAccessTokenAsync(..., CustomClientAppId, ...)` so the
+        //    JWT carries per-app-registration optional claims (like `wids`) configured on the
+        //    custom client app. Default the scope to User.Read when the caller didn't pass any
+        //    (some callers pass an empty array as a "no extra scopes" signal — they still need
+        //    a custom-app token, not a PowerShell well-known token).
+        //
+        // 2. Token provider but CustomClientAppId not yet resolved (bootstrap phase, before
+        //    config is loaded): fall through to the legacy AuthenticationService path. The
+        //    bootstrap config resolver uses this to look up the custom client app by display
+        //    name before its ID is known. Routing through `_tokenProvider` with a null clientId
+        //    would prompt PowerShell `Connect-MgGraph` and hang on user input.
+        //
+        // 3. No token provider (test/legacy scenarios only): same legacy fallback. Operations
+        //    that need claims from the custom-app JWT (e.g. CheckDirectoryRoleAsync) must guard
+        //    for both `_tokenProvider == null` and an empty `CustomClientAppId` themselves.
+        //
         // All paths go through MSAL — no az CLI subprocess involved.
 
         string? token;
+        bool hasScopes = scopes?.Any() == true;
+        bool hasCustomApp = !string.IsNullOrWhiteSpace(CustomClientAppId);
 
-        if (scopes != null && _tokenProvider != null)
+        // Use the token provider when the caller passed explicit scopes (the call site is asking
+        // for a scoped token — clientId can be null until config resolves; production callers that
+        // pass scopes do so post-bootstrap) OR when CustomClientAppId is set (the only condition
+        // that makes a default-scope token meaningful — without it the token would have no link to
+        // the custom app's optional claims). The remaining case (no scopes AND no CustomClientAppId
+        // — the bootstrap phase config-resolver lookup) falls through to the legacy path below.
+        if (_tokenProvider != null && (hasScopes || hasCustomApp))
         {
-            // Use token provider with delegated scopes (interactive browser auth with caching)
-            _logger.LogDebug("Acquiring Graph token with specific scopes via token provider: {Scopes}", string.Join(", ", scopes));
+            var effectiveScopes = hasScopes ? scopes! : [AuthenticationConstants.UserReadScope];
+            _logger.LogDebug(
+                "Acquiring Graph token via token provider (clientId: {AppId}, scopes: {Scopes})",
+                CustomClientAppId, string.Join(", ", effectiveScopes));
             var loginHint = await ResolveLoginHintAsync();
-            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(tenantId, effectiveScopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
 
             if (string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogError("Failed to acquire Graph token with scopes: {Scopes}", string.Join(", ", scopes));
+                _logger.LogError("Failed to acquire Graph token from token provider (scopes: {Scopes})",
+                    string.Join(", ", effectiveScopes));
                 return false;
             }
 
-            _logger.LogDebug("Successfully acquired Graph token with specific scopes (cached or new)");
+            _logger.LogDebug("Successfully acquired Graph token from token provider (cached or new)");
         }
-        else if (scopes != null && _tokenProvider == null)
+        else if (hasScopes && _tokenProvider == null)
         {
-            // Scopes required but no token provider - this is a configuration issue
-            _logger.LogError("Token provider is not configured, but specific scopes are required: {Scopes}", string.Join(", ", scopes));
+            // Specific scopes required but no token provider — configuration issue.
+            _logger.LogError("Token provider is not configured, but specific scopes are required: {Scopes}", string.Join(", ", scopes!));
             return false;
         }
         else
         {
-            // Default path: acquire via AuthenticationService (MSAL, persistent disk cache).
+            // Bootstrap or legacy fallback: token comes from the PowerShell well-known clientId
+            // via AuthenticationService. Reached when CustomClientAppId hasn't been resolved
+            // yet (initial app lookup) or when no token provider is configured (tests). Token
+            // does NOT carry custom-app optional claims — callers that depend on those must
+            // not reach this branch.
             token = await GetGraphAccessTokenAsync(tenantId, forceRefresh: forceRefresh, ct: ct);
 
             if (string.IsNullOrWhiteSpace(token))
@@ -839,9 +870,9 @@ public class GraphApiService
                 if (attempt < maxRetries - 1)
                 {
                     var delaySecs = (int)Math.Min(baseDelaySeconds * Math.Pow(2, attempt), 60);
-                    _logger.LogWarning(
+                    _logger.LogDebug(
                         "Service principal not yet replicated to grants endpoint — retrying in {Delay}s (attempt {Attempt}/{Max})...",
-                        delaySecs, attempt + 1, maxRetries - 1);
+                        delaySecs, attempt + 1, maxRetries);
                     await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
                 }
             }
@@ -1063,8 +1094,10 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Global Administrator role,
     /// which is required to grant tenant-wide admin consent interactively.
-    /// Uses only <see cref="AuthenticationConstants.UserReadScope"/> — works for both admin and non-admin users.
-    /// Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking) if the check cannot be completed.
+    /// Role detection is performed by decoding the <c>wids</c> claim from the MSAL access token
+    /// (see <see cref="CheckDirectoryRoleAsync"/>), so this does not call Graph and works without
+    /// any directory-read scope. Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking)
+    /// when the claim is absent or token acquisition fails.
     /// </summary>
     public virtual async Task<Models.RoleCheckResult> IsCurrentUserAdminAsync(
         string tenantId,
@@ -1076,8 +1109,10 @@ public class GraphApiService
     /// <summary>
     /// Checks whether the currently signed-in user holds the Agent ID Administrator role,
     /// which is required to create or update inheritable permissions on agent blueprints.
-    /// Uses only <see cref="AuthenticationConstants.UserReadScope"/> — works for both admin and non-admin users.
-    /// Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking) if the check cannot be completed.
+    /// Role detection is performed by decoding the <c>wids</c> claim from the MSAL access token
+    /// (see <see cref="CheckDirectoryRoleAsync"/>), so this does not call Graph and works without
+    /// any directory-read scope. Returns <see cref="Models.RoleCheckResult.Unknown"/> (non-blocking)
+    /// when the claim is absent or token acquisition fails.
     /// </summary>
     public virtual async Task<Models.RoleCheckResult> IsCurrentUserAgentIdAdminAsync(
         string tenantId,
@@ -1089,49 +1124,88 @@ public class GraphApiService
     /// <summary>
     /// Returns <see cref="Models.RoleCheckResult.HasRole"/> if the role is confirmed active,
     /// <see cref="Models.RoleCheckResult.DoesNotHaveRole"/> if confirmed absent, or
-    /// <see cref="Models.RoleCheckResult.Unknown"/> if the check itself failed (e.g. network error,
-    /// throttling, auth failure) — in which case the caller should attempt the operation
-    /// anyway and let the API surface the real error.
-    /// Queries /me/transitiveMemberOf/microsoft.graph.directoryRole, which requires only
-    /// User.Read and succeeds for both admin and non-admin users.
-    /// Note: PIM-eligible-but-not-activated assignments are not considered active.
+    /// <see cref="Models.RoleCheckResult.Unknown"/> if the check could not be completed — in
+    /// which case the caller should attempt the operation anyway and let the API surface the
+    /// real error.
+    ///
+    /// Implementation decodes the <c>wids</c> claim from the MSAL access token (no Graph call).
+    /// <c>wids</c> is a JWT array of role template GUIDs for the directly-assigned directory roles
+    /// the user holds. The optional claim must be configured on the app registration's access
+    /// token; when absent we return <see cref="Models.RoleCheckResult.Unknown"/>.
+    ///
+    /// Limitations:
+    ///   - Only directly-assigned roles appear in <c>wids</c>. Roles assigned via Entra
+    ///     role-assignable groups are NOT reflected and will return DoesNotHaveRole.
+    ///   - PIM-eligible-but-not-activated assignments are not active and are correctly excluded.
+    ///     PIM-active assignments do appear in <c>wids</c>.
     /// </summary>
     private async Task<Models.RoleCheckResult> CheckDirectoryRoleAsync(string tenantId, string roleTemplateId, CancellationToken ct)
     {
+        // Decode the wids claim from the MSAL access token instead of calling Graph.
+        // wids contains role template GUIDs for directory roles the user directly holds.
+        // Limitation: group-based role assignments are not reflected in wids.
+        // If wids is absent (optional claim not configured on the app registration),
+        // we return Unknown and the caller proceeds without role validation.
         try
         {
-            // /me/transitiveMemberOf is a directory query — Directory.Read.All is required.
-            // User.Read is insufficient and would return Unknown for most users.
-            IEnumerable<string>? scopes = _tokenProvider != null
-                ? [AuthenticationConstants.DirectoryReadAllScope]
-                : null;
-
-            string? nextUrl = "/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=roleTemplateId";
-
-            while (nextUrl != null)
+            // CRITICAL: token MUST be issued for the custom client app (CustomClientAppId),
+            // not the PowerShell well-known clientId that GetGraphAccessTokenAsync would use.
+            // The `wids` optional claim is configured per-app-registration on the access token —
+            // the custom client app has it (see custom-client-app-registration.md, Step 5);
+            // the PowerShell well-known app does not. A token from the PowerShell app would never
+            // include `wids`, and this method would always return Unknown, which would in turn
+            // cause BatchPermissionsOrchestrator to treat real Global Admins as non-admins.
+            //
+            // We request User.Read here purely to satisfy the token request — the scopes grant
+            // is irrelevant for the role check; the claim set on the issued token is what matters.
+            if (_tokenProvider == null)
             {
-                using var doc = await GraphGetAsync(tenantId, nextUrl, ct, scopes);
+                _logger.LogDebug("Role check skipped — no token provider configured (cannot acquire a custom-app token that would carry wids).");
+                return Models.RoleCheckResult.Unknown;
+            }
+            // We don't guard on CustomClientAppId being null here. Production callers
+            // (BatchPermissionsOrchestrator, BlueprintSubcommand, SetupHelpers) all invoke role
+            // checks AFTER the bootstrap phase has resolved CustomClientAppId. Tests pass the
+            // token provider directly and don't always set CustomClientAppId — that's fine
+            // because the mocked provider returns a hand-crafted JWT regardless of clientId.
+            var loginHint = await ResolveLoginHintAsync();
+            var token = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId,
+                [AuthenticationConstants.UserReadScope],
+                useDeviceCode: false,
+                clientAppId: CustomClientAppId,
+                ct: ct,
+                loginHint: loginHint,
+                forceRefresh: false);
+            if (string.IsNullOrWhiteSpace(token))
+                return Models.RoleCheckResult.Unknown;
 
-                if (doc == null)
-                    return Models.RoleCheckResult.Unknown;
+            var parts = token.Split('.');
+            if (parts.Length < 2)
+                return Models.RoleCheckResult.Unknown;
 
-                if (!doc.RootElement.TryGetProperty("value", out var roles))
-                {
-                    _logger.LogWarning("Unexpected Graph response shape — 'value' property missing from transitiveMemberOf response.");
-                    return Models.RoleCheckResult.Unknown;
-                }
+            var payload = parts[1];
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            payload = (payload.Length % 4) switch
+            {
+                2 => payload + "==",
+                3 => payload + "=",
+                _ => payload
+            };
 
-                if (roles.EnumerateArray().Any(r =>
-                        r.TryGetProperty("roleTemplateId", out var id) &&
-                        string.Equals(id.GetString(), roleTemplateId, StringComparison.OrdinalIgnoreCase)))
-                    return Models.RoleCheckResult.HasRole;
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = JsonDocument.Parse(json);
 
-                nextUrl = doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink)
-                    ? nextLink.GetString()
-                    : null;
+            if (!doc.RootElement.TryGetProperty("wids", out var wids))
+            {
+                _logger.LogDebug("wids claim absent from token — role check skipped (add wids as optional claim in Token Configuration on the app registration)");
+                return Models.RoleCheckResult.Unknown;
             }
 
-            return Models.RoleCheckResult.DoesNotHaveRole;
+            return wids.EnumerateArray().Any(w =>
+                string.Equals(w.GetString(), roleTemplateId, StringComparison.OrdinalIgnoreCase))
+                ? Models.RoleCheckResult.HasRole
+                : Models.RoleCheckResult.DoesNotHaveRole;
         }
         catch (Exception ex)
         {
@@ -1515,7 +1589,7 @@ public class GraphApiService
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
             var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
 
-            const int maxRetries = 5;
+            const int maxRetries = 12;
             const int baseDelaySeconds = 5;
 
             for (int attempt = 0; attempt < maxRetries; attempt++)
@@ -1540,10 +1614,13 @@ public class GraphApiService
 
                 var errorContent = await response.Content.ReadAsStringAsync(ct);
 
-                // AADSTS7000215 means the credential exists in AAD but is not yet visible on this
-                // replica — same eventual consistency window as object replication. Retry with backoff.
-                var isCredentialPropagationLag = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
-                    && errorContent.Contains("AADSTS7000215", StringComparison.OrdinalIgnoreCase);
+                // AADSTS7000215: credential exists but not yet visible on this STS replica.
+                // AADSTS700016: blueprint app itself not yet visible on this STS replica.
+                // Both are eventual-consistency propagation lag — retry with backoff.
+                // AADSTS700016 / AADSTS7000215 are returned as 400 or 401 depending on the STS replica.
+                var isCredentialPropagationLag =
+                    (errorContent.Contains("AADSTS7000215", StringComparison.OrdinalIgnoreCase)
+                        || errorContent.Contains("AADSTS700016", StringComparison.OrdinalIgnoreCase));
 
                 if (!isCredentialPropagationLag || attempt == maxRetries - 1)
                 {
@@ -1557,9 +1634,9 @@ public class GraphApiService
                 }
 
                 var delaySecs = Math.Min(baseDelaySeconds * (int)Math.Pow(2, attempt), 60);
-                _logger.LogInformation(
-                    "Blueprint credential not yet propagated (AADSTS7000215) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
-                    delaySecs, attempt + 1, maxRetries - 1);
+                _logger.LogDebug(
+                    "Blueprint app or credentials not yet propagated (AADSTS7000215/AADSTS700016) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
+                    delaySecs, attempt + 1, maxRetries);
                 await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
             }
 
@@ -1753,60 +1830,62 @@ public class GraphApiService
                 };
             }
 
-            using var content = new StringContent(
-                body.ToJsonString(),
-                System.Text.Encoding.UTF8,
-                "application/json");
+            const int maxAttempts = 5;
+            const int baseDelaySeconds = 5;
+            const string agentIdentityUrl = "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
 
-            using var response = await httpClient.PostAsync(
-                "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity",
-                content,
-                ct);
-
-            // Some tenants reject sponsor binding — retry without it.
-            if (!response.IsSuccessStatusCode && response.StatusCode == System.Net.HttpStatusCode.BadRequest
-                && !string.IsNullOrWhiteSpace(currentUserId))
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                _logger.LogDebug("Agent identity creation with sponsor failed (400); retrying without sponsor.");
-                body.Remove("sponsors@odata.bind");
-                using var content2 = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
-                using var response2 = await httpClient.PostAsync(
-                    "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity",
-                    content2,
-                    ct);
+                // StringContent is a one-shot stream — must be recreated each attempt.
+                using var content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+                using var response = await httpClient.PostAsync(agentIdentityUrl, content, ct);
 
-                if (!response2.IsSuccessStatusCode)
+                // Some tenants reject sponsor binding — remove and retry immediately.
+                if (!response.IsSuccessStatusCode && response.StatusCode == System.Net.HttpStatusCode.BadRequest
+                    && body.ContainsKey("sponsors@odata.bind"))
                 {
-                    var err = await response2.Content.ReadAsStringAsync(ct);
-                    _logger.LogError("Failed to create agent identity: {Status} - {Error}", response2.StatusCode, err);
+                    _logger.LogDebug("Agent identity creation with sponsor failed (400); retrying without sponsor.");
+                    body.Remove("sponsors@odata.bind");
+                    continue;
+                }
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync(ct);
+                    using var doc = JsonDocument.Parse(json);
+                    var id = doc.RootElement.GetProperty("id").GetString();
+                    _logger.LogInformation("Agent identity created (ID: {Id})", id);
+                    return id;
+                }
+
+                var err = await response.Content.ReadAsStringAsync(ct);
+
+                // Authorization_IdentityNotFound: blueprint SP not yet propagated to the agent identity
+                // service — same eventual consistency window as SP replication. Retry with backoff.
+                var isIdentityNotFound = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                    && err.Contains("Authorization_IdentityNotFound", StringComparison.OrdinalIgnoreCase);
+
+                if (!isIdentityNotFound || attempt == maxAttempts - 1)
+                {
+                    _logger.LogError("Failed to create agent identity: {Status} - {Error}", response.StatusCode, err);
+                    if (err.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
+                        err.Contains("calling identity type", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogError("Authorization denied. Ensure the blueprint application has the " +
+                            "AgentIdentity.CreateAsManager app role (auto-granted to Blueprint apps). " +
+                            "Re-run 'a365 setup blueprint' to recreate the blueprint if setup was incomplete.");
+                    }
                     return null;
                 }
 
-                var json2 = await response2.Content.ReadAsStringAsync(ct);
-                using var doc2 = JsonDocument.Parse(json2);
-                var id2 = doc2.RootElement.GetProperty("id").GetString();
-                _logger.LogInformation("Agent identity created (ID: {Id})", id2);
-                return id2;
+                var delaySecs = Math.Min(baseDelaySeconds * (int)Math.Pow(2, attempt), 60);
+                _logger.LogDebug(
+                    "Blueprint identity not yet propagated (Authorization_IdentityNotFound) — retrying in {Delay}s (attempt {Attempt} of {Max})...",
+                    delaySecs, attempt + 1, maxAttempts);
+                await Task.Delay(TimeSpan.FromSeconds(delaySecs), ct);
             }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                var err = await response.Content.ReadAsStringAsync(ct);
-                _logger.LogError("Failed to create agent identity: {Status} - {Error}", response.StatusCode, err);
-                if (err.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase) ||
-                    err.Contains("calling identity type", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogError("Authorization denied. Ensure the blueprint application has " +
-                        "Application.ReadWrite.All and AgentIdentity.Create.OwnedBy application permissions.");
-                }
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-            var id = doc.RootElement.GetProperty("id").GetString();
-            _logger.LogInformation("Agent identity created (ID: {Id})", id);
-            return id;
+            return null;
         }
         catch (Exception ex)
         {

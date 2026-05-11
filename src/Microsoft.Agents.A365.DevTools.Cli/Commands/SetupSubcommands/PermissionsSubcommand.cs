@@ -245,7 +245,7 @@ internal static class PermissionsSubcommand
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
             "Minimum required permissions: Global Administrator\n\n" +
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
-            "Next step: Deploy your agent (run 'a365 deploy' if hosting on Azure)");
+            "Next step: Run 'a365 publish' to package your agent for upload to the Microsoft 365 Admin Center");
 
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
@@ -699,7 +699,7 @@ internal static class PermissionsSubcommand
             logger.LogInformation("");
             if (!iSetupAll)
             {
-                logger.LogInformation("Next step: Deploy your agent (run 'a365 deploy' if hosting on Azure)");
+                logger.LogInformation("Next step: Run 'a365 publish' to package your agent for upload to the Microsoft 365 Admin Center.");
             }
             return consentGranted && !s2sFailed;
         }

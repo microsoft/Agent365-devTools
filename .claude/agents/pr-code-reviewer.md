@@ -215,6 +215,56 @@ For each changed file, analyze:
    - **Fix pattern**: replace `context.ExitCode = 1;` with `context.ExitCode = ex.ExitCode;` so the exit code is always authoritative from the exception definition
    - **Real example (PR #406, Comments 5 & 6)**: `ConfigFileNotFoundException.ExitCode => 2`, but two catch blocks in `AllSubcommand.cs` hardcoded `context.ExitCode = 1`. Scripts expecting exit code 2 on configuration errors received 1 instead.
 
+   **E. Static scope array emptied or scopes removed → verify callers and document intent**
+   When the diff sets a static `string[]` scope array to `[]` or removes entries from it (e.g., `RequiredPermissionGrantScopes`, `RequiredS2SGrantScopes`):
+   - Run `Grep` for every reference to the array across non-test source files
+   - For each call site that passes the array as `scopes` to `EnsureGraphHeadersAsync` or equivalent:
+     - Read the `hasScopes = scopes?.Any() == true` guard logic — confirm the empty-array fallback path still acquires a valid token via `GetGraphAccessTokenAsync` (the standard `AuthenticationService` path)
+     - Confirm the operations that previously needed those scopes are still covered by `RequiredClientAppPermissions` or by a PowerShell fallback
+   - Check that the XML doc on the constant explains WHY it is empty and names the fallback behavior
+   - Severity: **MEDIUM** if XML doc doesn't explain empty state; **HIGH** if fallback path would fail in practice
+
+   **F. Runtime `Contains()` on a static compile-time array → verify element IS in the array**
+   When the diff adds `SomeStaticArray.Contains(SomeConstant)` as a guard condition:
+   - Read `SomeStaticArray`'s initializer — confirm whether `SomeConstant` is actually present
+   - If `SomeConstant` is intentionally absent (disabled feature, future path), the condition is always `false`:
+     - Verify the `else` branch handles the always-false case correctly and critical functionality is not silently skipped
+     - Require a comment that makes the always-false state explicit AND states the consequence (e.g., "this means agent user cleanup is always skipped until create-instance is re-enabled")
+   - Severity: **MEDIUM** if consequence is limited scope; **HIGH** if critical functionality (e.g., cleanup of real resources) is silently disabled with no user-visible warning
+   - **Real example (PR #409)**: `RequiredClientAppPermissions.Contains(AgentIdUserReadWriteAllScope)` is always `false` because that scope is intentionally absent — agent user queries and cleanup always skip silently
+
+   **G. XML/inline comments claiming permission scope semantics → verify against actual scope requirements**
+   When the diff adds or modifies `///` XML comments (especially in test files) that describe what a permission scope covers (e.g., "umbrella — includes SP creation", "covers X, Y, Z"):
+   - Cross-check the claim against `RequiredClientAppPermissions` and the PR's own changes
+   - Specifically: if the PR adds a *separate* scope for an operation (e.g., `AgentIdentityBlueprintPrincipal.Create` for SP creation), any comment claiming that operation is "covered by the umbrella" is now wrong
+   - Flag **MEDIUM** for inaccurate scope coverage claims in comments — these mislead future reviewers and generate follow-up PR comments
+   - **Real example (PR #409)**: XML comment said `AgentIdentityBlueprint.ReadWrite.All` "includes SP creation" but the same PR requires `AgentIdentityBlueprintPrincipal.Create` separately for SP creation
+
+   **H. JWT claim decoded → verify the token was issued by the app registration that has the claim configured**
+   When the diff adds code that decodes a JWT and reads a claim that is configured *per app registration*
+   (e.g., `wids`, `roles`, `groups`, any custom optional claim from Entra Token Configuration):
+   - Trace backward from the decoder to the token-acquisition call. Identify which clientId issues the token.
+   - If acquisition goes through `AuthenticationService.GetAccessTokenAsync(...)` without an explicit
+     `clientId` argument, the token is from the PowerShell well-known clientId
+     (`AuthenticationConstants.PowershellClientId`) — **not** the custom client app. Optional claims
+     configured on the custom client app's manifest will NOT be in this token.
+   - The correct path for tokens that must carry custom-app optional claims is
+     `IMicrosoftGraphTokenProvider.GetMgGraphAccessTokenAsync(..., clientAppId: CustomClientAppId, ...)`.
+   - Flag **HIGH** when the decoder relies on a claim that the issuing app doesn't have configured.
+     The bug is silent: the decoder returns "claim absent → Unknown / DoesNotHaveRole", and the caller
+     proceeds with the conservative path (e.g., admin treated as non-admin → admin URL printed even
+     for actual admins). Functional but degraded UX, easy to miss in passing tests because mocks
+     usually return a hand-crafted JWT regardless of which auth path is used.
+   - Also apply this rule to **empty static scope arrays** (related to Rule E): when an empty
+     `IEnumerable<string>` is passed to a helper that routes "no scopes" through the legacy
+     `AuthenticationService` path, the token will be from the PowerShell clientId. If any downstream
+     code reads custom-app optional claims, the routing is wrong.
+   - **Real example (PR #409)**: `CheckDirectoryRoleAsync` decoded `wids` from a token acquired via
+     `GetGraphAccessTokenAsync` → `AuthenticationService` → PowerShell clientId. `wids` was
+     configured on the custom client app only, so the JWT never carried it and the method always
+     returned `Unknown`. Fix: route through `_tokenProvider` with `CustomClientAppId` and a minimal
+     scope (`User.Read`).
+
    **D2. Cross-method "catch-returns-null / caller-sets-ExitCode" pattern — same exit-code problem, harder to spot**
    Rule 9-D catches *inline* catch blocks. This variant spans two methods and is easy to miss:
    ```csharp

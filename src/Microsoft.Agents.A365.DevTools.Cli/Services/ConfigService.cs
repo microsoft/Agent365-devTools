@@ -720,7 +720,12 @@ public class ConfigService : IConfigService
 
             var jsonName = GetJsonPropertyName(prop);
             var value = prop.GetValue(config);
-            result[jsonName] = value;
+            // Omit null values: JsonIgnoreCondition.WhenWritingNull in DefaultIgnoreCondition does NOT
+            // apply to dictionary values (dotnet/runtime#30690), so we filter here to avoid writing
+            // "agentBlueprintClientSecret": null and similar fields that would then re-merge as null
+            // on the next LoadAsync, silently losing previously-written values.
+            if (value != null)
+                result[jsonName] = value;
         }
 
         return result;
