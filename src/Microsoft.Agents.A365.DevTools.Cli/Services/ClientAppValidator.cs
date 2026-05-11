@@ -1090,17 +1090,29 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return consentedPermissions;
             }
 
-            // Get oauth2PermissionGrants
-            using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+            // Get oauth2PermissionGrants. When the caller lacks DelegatedPermissionGrant.Read.All
+            // the GET returns 403 permanently — fail-open and assume all required permissions
+            // are consented rather than reporting an empty set (which would trigger a false
+            // "permissions not consented" prompt for non-admin developers who can never read
+            // the grants table by design).
+            var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
 
-            if (grantsDoc == null)
+            if (grantsResp.StatusCode == 403)
             {
-                _logger.LogDebug("Could not query oauth2PermissionGrants");
+                _logger.LogDebug("Cannot read oauth2PermissionGrants (caller lacks DelegatedPermissionGrant.Read.All). Treating all required permissions as consented to avoid false prompts. Real consent failures will surface from downstream operations.");
+                foreach (var p in AuthenticationConstants.RequiredClientAppPermissions)
+                    consentedPermissions.Add(p);
                 return consentedPermissions;
             }
 
-            var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
+            if (grantsResp.Json == null)
+            {
+                _logger.LogDebug("Could not query oauth2PermissionGrants (status: {Status})", grantsResp.StatusCode);
+                return consentedPermissions;
+            }
+
+            var grantsJson = JsonNode.Parse(grantsResp.Json.RootElement.GetRawText());
             var grants = grantsJson?["value"]?.AsArray();
 
             if (grants == null || grants.Count == 0)
