@@ -1179,11 +1179,15 @@ public sealed class ClientAppValidator : IClientAppValidator
             return true; // Best-effort check
         }
 
-        // Check OAuth2 permission grants
-        using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+        // Check OAuth2 permission grants. Use GraphGetWithResponseAsync so we can distinguish
+        // "caller lacks DelegatedPermissionGrant.Read.All" (403) from other failure modes
+        // (token acquisition, network, 5xx) — the user-facing message differs and lumping them
+        // together would either misattribute the cause or hide real failures.
+        var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
+            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
+        using var grantsDoc = grantsResp.Json;
 
-        if (grantsDoc == null)
+        if (grantsResp.StatusCode == 403)
         {
             // The grants-read 403 only signals the caller lacks DelegatedPermissionGrant.Read.All —
             // it tells us nothing about whether tenant-wide consent is actually granted. Don't
@@ -1191,6 +1195,17 @@ public sealed class ClientAppValidator : IClientAppValidator
             // run (developers don't have that scope by design). Real consent failures surface
             // with actionable errors from the operations that need them.
             _logger.LogDebug("Skipping tenant-wide consent verification — caller lacks DelegatedPermissionGrant.Read.All. Downstream operations will surface any actual consent issues.");
+            return true;
+        }
+
+        if (grantsDoc == null)
+        {
+            // Best-effort skip on transient/auth/network failures other than 403. Treat as
+            // "cannot verify, assume consented" — the same operation will retry with its own
+            // error handling. Logging both the status and reason helps diagnose real failures.
+            _logger.LogDebug(
+                "Skipping tenant-wide consent verification — grants read returned no data (status: {Status} {Reason}). Downstream operations will surface any actual consent issues.",
+                grantsResp.StatusCode, grantsResp.ReasonPhrase);
             return true;
         }
 
