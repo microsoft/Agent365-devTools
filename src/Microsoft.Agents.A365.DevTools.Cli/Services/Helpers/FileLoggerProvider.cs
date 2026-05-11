@@ -21,10 +21,13 @@ public sealed class FileLoggerProvider : ILoggerProvider
     public FileLoggerProvider(string filePath)
     {
         _filePath = filePath;
-        // File logger accepts Trace and above. The effective floor is Debug because
-        // Program.cs sets SetMinimumLevel(Debug) globally — Trace messages are filtered
-        // by the framework before reaching this provider. To capture Trace, add
-        // builder.AddFilter<FileLoggerProvider>(null, LogLevel.Trace) in ConfigureServices.
+        // File logger accepts Trace and above once events reach this provider.
+        // The effective minimum is bounded by the global SetMinimumLevel configured
+        // by the application. If Program.cs sets SetMinimumLevel(Debug), Trace
+        // messages are filtered out before they reach this provider — provider-specific
+        // filters cannot lower the floor below the global minimum. To capture Trace
+        // in the log file, the global minimum must be Trace, and other providers
+        // (such as the console) should be filtered up to the desired minimum level.
         _minimumLevel = LogLevel.Trace;
 
         // Ensure directory exists

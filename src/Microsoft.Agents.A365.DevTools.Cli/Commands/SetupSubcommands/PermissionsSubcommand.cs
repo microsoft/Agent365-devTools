@@ -539,16 +539,17 @@ internal static class PermissionsSubcommand
                 catch (SetupValidationException ex)
                 {
                     // The OAuth2 grant POST requires DelegatedPermissionGrant.ReadWrite.All (admin scope).
-                    // Non-admin developers hit a 403 / Authorization_RequestDenied here. The wrapped
-                    // exception message from SetupHelpers.EnsureResourcePermissionsAsync uses the
-                    // phrase "insufficient permissions"; the raw Graph error code is logged at WRN
-                    // upstream but does not reach this exception. Match all three signals so the
-                    // "tenant admin action" guidance fires when an admin really is required, while
-                    // other failures (network, wrong appId, SP not found) fall through to a generic
-                    // error.
+                    // Non-admin developers hit a 403 / Authorization_RequestDenied here.
+                    // Prefer the structured failure info that EnsureResourcePermissionsAsync attaches
+                    // to ex.Context (graphStatusCode, graphErrorCode) — branching on a parsed status
+                    // code or error code is precise. Fall back to substring matching for safety in
+                    // case Context isn't populated (legacy throw paths or future changes).
                     logger.LogInformation("");
                     bool looksLikeAuthDenied =
-                        ex.Message.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase)
+                        (ex.Context.TryGetValue("graphStatusCode", out var graphStatus) && graphStatus == "403")
+                        || (ex.Context.TryGetValue("graphErrorCode", out var graphErrorCode)
+                            && string.Equals(graphErrorCode, "Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase))
+                        || ex.Message.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase)
                         || ex.Message.Contains("Insufficient privileges", StringComparison.OrdinalIgnoreCase)
                         || ex.Message.Contains("insufficient permissions", StringComparison.OrdinalIgnoreCase);
 

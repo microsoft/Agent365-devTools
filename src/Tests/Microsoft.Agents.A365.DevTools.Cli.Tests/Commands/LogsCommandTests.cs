@@ -84,17 +84,21 @@ public class LogsCommandTests : IDisposable
     [Fact]
     public async Task Export_SuccessfulExport_WritesRedactedFileWithExpectedName()
     {
-        var logPath = ConfigService.GetCommandLogPath("test-cmd");
+        // Unique command name per test run so the log file written into the developer's
+        // real logs directory (ConfigService.GetCommandLogPath() resolves there) cannot
+        // collide with an existing log or with a concurrent test run.
+        var commandName = $"test-cmd-{Guid.NewGuid():N}";
+        var logPath = ConfigService.GetCommandLogPath(commandName);
         await File.WriteAllTextAsync(logPath, "[INF] Test log content");
         _createdLogFiles.Add(logPath);
 
         var command = LogsCommand.CreateCommand(_logger, _redactionService);
 
-        var result = await command.InvokeAsync(["export", "test-cmd", "--output", _outputDir]);
+        var result = await command.InvokeAsync(["export", commandName, "--output", _outputDir]);
 
         result.Should().Be(0,
             because: "a successful export must exit 0");
-        var expectedFile = Path.Combine(_outputDir, "a365.test-cmd.redacted.log");
+        var expectedFile = Path.Combine(_outputDir, $"a365.{commandName}.redacted.log");
         File.Exists(expectedFile).Should().BeTrue(
             because: "the exported file must be written as a365.{command}.redacted.log in the output directory");
     }
@@ -102,9 +106,13 @@ public class LogsCommandTests : IDisposable
     [Fact]
     public async Task Export_RedactedFilesExcludedFromAutoDiscovery_NotReExported()
     {
+        // Unique command name per test run — the fixed filenames previously used here risked
+        // overwriting a developer's existing local logs and made the test flaky if multiple
+        // test runs overlapped.
+        var commandSuffix = $"auto-test-{Guid.NewGuid():N}";
         var logsDir = ConfigService.GetLogsDirectory();
-        var realLog = Path.Combine(logsDir, "a365.auto-test.log");
-        var redactedLog = Path.Combine(logsDir, "a365.auto-test.redacted.log");
+        var realLog = Path.Combine(logsDir, $"a365.{commandSuffix}.log");
+        var redactedLog = Path.Combine(logsDir, $"a365.{commandSuffix}.redacted.log");
         await File.WriteAllTextAsync(realLog, "[INF] Real log");
         await File.WriteAllTextAsync(redactedLog, "# already redacted");
         _createdLogFiles.Add(realLog);
@@ -113,8 +121,8 @@ public class LogsCommandTests : IDisposable
         var command = LogsCommand.CreateCommand(_logger, _redactionService);
         await command.InvokeAsync(["export", "--output", _outputDir]);
 
-        _redactionService.Received(1).Redact(Arg.Any<string>(), Arg.Is<string>(p => p.Contains("auto-test.log")));
-        _redactionService.DidNotReceive().Redact(Arg.Any<string>(), Arg.Is<string>(p => p.Contains("redacted.log")));
+        _redactionService.Received(1).Redact(Arg.Any<string>(), Arg.Is<string>(p => p.Contains($"{commandSuffix}.log") && !p.Contains("redacted.log")));
+        _redactionService.DidNotReceive().Redact(Arg.Any<string>(), Arg.Is<string>(p => p.Contains($"{commandSuffix}.redacted.log")));
     }
 
     public void Dispose()

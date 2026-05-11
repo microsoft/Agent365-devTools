@@ -1182,14 +1182,25 @@ internal static class SetupHelpers
         logger.LogDebug("   - OAuth2 grant: client {ClientId} to resource {ResourceId} scopes [{Scopes}]",
             blueprintSpObjectId, resourceSpObjectId, string.Join(' ', scopes));
 
-        var response = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
+        var grantResult = await graph.CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
             config.TenantId, blueprintSpObjectId, resourceSpObjectId, scopes, ct, permissionGrantScopes);
 
-        if (!response)
+        if (!grantResult.Success)
         {
+            // Surface the underlying HTTP status and Graph error code in the exception context
+            // so callers can branch on the failure reason (for example, distinguishing 403 /
+            // Authorization_RequestDenied from network or other failures) without parsing the
+            // exception message text.
+            var failureContext = new Dictionary<string, string>();
+            if (grantResult.StatusCode > 0)
+                failureContext["graphStatusCode"] = grantResult.StatusCode.ToString();
+            if (!string.IsNullOrEmpty(grantResult.ErrorCode))
+                failureContext["graphErrorCode"] = grantResult.ErrorCode;
+
             throw new SetupValidationException(
                 $"Failed to create/update OAuth2 permission grant from blueprint {config.AgentBlueprintId} to {resourceName} {resourceAppId}. " +
-                "This may be due to insufficient permissions. Ensure you have AgentIdentityBlueprint.ReadWrite.All permission consented on your client app.");
+                "This may be due to insufficient permissions. Ensure you have AgentIdentityBlueprint.ReadWrite.All permission consented on your client app.",
+                context: failureContext.Count > 0 ? failureContext : null);
         }
 
         // 3. Set inheritable permissions (for agent blueprints)

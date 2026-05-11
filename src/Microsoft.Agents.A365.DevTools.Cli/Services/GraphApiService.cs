@@ -717,6 +717,33 @@ public class GraphApiService
         CancellationToken ct = default,
         IEnumerable<string>? permissionGrantScopes = null)
     {
+        var (success, _, _) = await CreateOrUpdateOauth2PermissionGrantCoreAsync(
+            tenantId,
+            clientSpObjectId,
+            resourceSpObjectId,
+            principalId: null,
+            consentType: "AllPrincipals",
+            scopes,
+            ct,
+            permissionGrantScopes);
+        return success;
+    }
+
+    /// <summary>
+    /// Variant of <see cref="CreateOrUpdateOauth2PermissionGrantAsync"/> that exposes the last
+    /// Graph HTTP status code and the parsed error code from the response body. Callers that
+    /// need to branch on the failure reason (for example, to distinguish admin-consent-required
+    /// 403 from other failures) should use this overload instead of relying on the substring
+    /// content of the wrapping exception.
+    /// </summary>
+    public virtual async Task<(bool Success, int StatusCode, string? ErrorCode)> CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
+        string tenantId,
+        string clientSpObjectId,
+        string resourceSpObjectId,
+        IEnumerable<string> scopes,
+        CancellationToken ct = default,
+        IEnumerable<string>? permissionGrantScopes = null)
+    {
         return await CreateOrUpdateOauth2PermissionGrantCoreAsync(
             tenantId,
             clientSpObjectId,
@@ -750,7 +777,7 @@ public class GraphApiService
         CancellationToken ct = default,
         IEnumerable<string>? permissionGrantScopes = null)
     {
-        return await CreateOrUpdateOauth2PermissionGrantCoreAsync(
+        var (success, _, _) = await CreateOrUpdateOauth2PermissionGrantCoreAsync(
             tenantId,
             clientSpObjectId,
             resourceSpObjectId,
@@ -759,6 +786,7 @@ public class GraphApiService
             scopes,
             ct,
             permissionGrantScopes);
+        return success;
     }
 
     /// <summary>
@@ -767,7 +795,7 @@ public class GraphApiService
     /// query → create-or-merge flow. The only differences are the OData filter, the payload
     /// shape (Principal includes principalId), and the in-code matching for Principal grants.
     /// </summary>
-    private async Task<bool> CreateOrUpdateOauth2PermissionGrantCoreAsync(
+    private async Task<(bool Success, int StatusCode, string? ErrorCode)> CreateOrUpdateOauth2PermissionGrantCoreAsync(
         string tenantId,
         string clientSpObjectId,
         string resourceSpObjectId,
@@ -777,6 +805,8 @@ public class GraphApiService
         CancellationToken ct,
         IEnumerable<string>? permissionGrantScopes)
     {
+        int lastStatusCode = 0;
+        string? lastErrorCode = null;
         var desiredScopeString = string.Join(' ', scopes);
         var isPrincipal = string.Equals(consentType, "Principal", StringComparison.OrdinalIgnoreCase);
 
@@ -848,9 +878,11 @@ public class GraphApiService
                 var grantResponse = await GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes);
                 // Dispose the error JSON immediately — only IsSuccess and Body are needed below.
                 grantResponse.Json?.Dispose();
+                lastStatusCode = grantResponse.StatusCode;
+                lastErrorCode = TryExtractGraphErrorCode(grantResponse.Body);
 
                 if (grantResponse.IsSuccess)
-                    return true;
+                    return (true, grantResponse.StatusCode, null);
 
                 // "Permission entry already exists" means the grant is already in place — treat as success.
                 if (grantResponse.Body.Contains("Permission entry already exists", StringComparison.OrdinalIgnoreCase))
@@ -858,7 +890,7 @@ public class GraphApiService
                     _logger.LogDebug(
                         "OAuth2 permission grant already exists for resource {ResourceSpId} — treating as success (idempotent).",
                         resourceSpObjectId);
-                    return true;
+                    return (true, grantResponse.StatusCode, null);
                 }
 
                 if (!grantResponse.Body.Contains("Directory_ObjectNotFound", StringComparison.OrdinalIgnoreCase))
@@ -866,7 +898,7 @@ public class GraphApiService
                     _logger.LogWarning(
                         "OAuth2 permission grant failed (non-transient) for resource {ResourceSpId} with scopes [{Scopes}]. Graph response: {Body}",
                         resourceSpObjectId, desiredScopeString, grantResponse.Body);
-                    return false; // non-transient error, do not retry
+                    return (false, grantResponse.StatusCode, lastErrorCode); // non-transient error, do not retry
                 }
 
                 if (attempt < maxRetries - 1)
@@ -883,19 +915,20 @@ public class GraphApiService
                 "OAuth2 permission grant ({ConsentType}) failed after {MaxRetries} retries — service principal may still be propagating. " +
                 "Re-run the command to retry.",
                 consentType, maxRetries);
-            return false;
+            return (false, lastStatusCode, lastErrorCode);
         }
 
         // Merge scopes if needed
         var currentSet = new HashSet<string>(existingScopes.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
         var desiredSet = new HashSet<string>(desiredScopeString.Split(' ', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
 
-        if (desiredSet.IsSubsetOf(currentSet)) return true;
+        if (desiredSet.IsSubsetOf(currentSet)) return (true, 0, null);
 
         currentSet.UnionWith(desiredSet);
         var merged = string.Join(' ', currentSet);
 
-        return await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes);
+        var patchOk = await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes);
+        return (patchOk, 0, null);
     }
 
     /// <summary>
@@ -1941,6 +1974,24 @@ public class GraphApiService
                 error.TryGetProperty("message", out var msg))
             {
                 return msg.GetString();
+            }
+        }
+        catch { /* ignore parse errors */ }
+        return null;
+    }
+
+    // Extracts the Graph error.code value (e.g. "Authorization_RequestDenied") so callers
+    // can branch on a structured signal rather than substring-matching the message text.
+    private static string? TryExtractGraphErrorCode(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error) &&
+                error.TryGetProperty("code", out var code))
+            {
+                return code.GetString();
             }
         }
         catch { /* ignore parse errors */ }
