@@ -313,4 +313,104 @@ public class LogRedactionServiceTests
         result.UsernamesRedacted.Should().Be(2,
             because: "two distinct usernames were present and both must be counted");
     }
+
+    [Fact]
+    public void Redact_CorrelationIdGuid_PreservedVerbatim()
+    {
+        var traceGuid = "3b3c813b-b994-46e8-a276-1d6d2233bafd";
+        var log = $"[DBG] Starting setup all (CorrelationId: {traceGuid})";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(traceGuid,
+            because: "CorrelationId values are session-local debug identifiers — they aren't sensitive and Microsoft support needs them to correlate with server-side logs");
+        result.IdsRedacted.Should().Be(0,
+            because: "preserved diagnostic IDs must not be counted as redactions in the header summary");
+    }
+
+    [Fact]
+    public void Redact_TraceIdGuid_PreservedVerbatim()
+    {
+        var traceGuid = "3b3c813b-b994-46e8-a276-1d6d2233bafd";
+        var log = $"[DBG] TraceId: {traceGuid}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(traceGuid,
+            because: "TraceId values pair the CLI log with server-side traces for diagnosis — preserving them keeps the log useful for support");
+    }
+
+    [Fact]
+    public void Redact_GraphRequestId_PreservedVerbatim()
+    {
+        var requestId = "68d4be1a-a52a-4303-a013-95879cbab3a4";
+        var log = $"[WRN] OAuth2 grant failed. Graph response: {{\"error\":{{\"code\":\"Authorization_RequestDenied\",\"innerError\":{{\"request-id\":\"{requestId}\"}}}}}}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(requestId,
+            because: "Microsoft Graph request-id values are needed by support to look up the exact server-side request — preserving them is safe (they're random per call) and essential for escalation");
+    }
+
+    [Fact]
+    public void Redact_ClientRequestIdInQuotes_PreservedVerbatim()
+    {
+        var clientRequestId = "8b1d308d-a322-4fff-a778-c6f8cac85642";
+        var log = $"[DBG] response: {{\"client-request-id\":\"{clientRequestId}\"}}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(clientRequestId,
+            because: "client-request-id appears inside JSON error bodies and is equally useful for support escalation — the redactor must handle the quoted JSON form");
+    }
+
+    [Fact]
+    public void Redact_MicrosoftGraphAppId_PreservedVerbatim()
+    {
+        var graphAppId = "00000003-0000-0000-c000-000000000000";
+        var log = $"[INF] Successfully added required resource access for {graphAppId} to application abc12345-1234-1234-1234-123456789012";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(graphAppId,
+            because: "the Microsoft Graph well-known appId is a public constant in product documentation — preserving it makes the log readable while tenant-specific GUIDs remain redacted");
+        result.RedactedContent.Should().NotContain("abc12345-1234-1234-1234-123456789012",
+            because: "tenant-specific application IDs must still be redacted even when other GUIDs on the same line are preserved");
+    }
+
+    [Fact]
+    public void Redact_TenantSpecificGuidWithSameValueAsCorrelationId_PreservedByContext()
+    {
+        // Edge case: if a tenant ID happens to equal a session CorrelationId (highly unlikely),
+        // preservation by context wins over redaction. This keeps the redactor predictable.
+        var sharedGuid = "3b3c813b-b994-46e8-a276-1d6d2233bafd";
+        var log = $"[DBG] CorrelationId: {sharedGuid}\n[DBG] Tenant: {sharedGuid}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().NotContain("<id-",
+            because: "when a GUID appears anywhere in a diagnostic-ID context, all occurrences are preserved — collisions between CorrelationId and tenant ID are vanishingly rare in practice");
+    }
+
+    [Fact]
+    public void Redact_DiagnosticIdsAndSensitiveGuids_OnlySensitiveAreAliased()
+    {
+        var correlationId = "3b3c813b-b994-46e8-a276-1d6d2233bafd";
+        var tenantId = "bc51ddf2-9c8b-45e7-8e08-c7ac238f6520";
+        var blueprintSpId = "06f722e1-3d94-471e-8758-d965ef268d5d";
+        var log = $"[DBG] CorrelationId: {correlationId}\n" +
+                  $"[DBG] Tenant: {tenantId}\n" +
+                  $"[DBG] Blueprint SP: {blueprintSpId}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(correlationId,
+            because: "the CorrelationId must be preserved for diagnosis");
+        result.RedactedContent.Should().NotContain(tenantId,
+            because: "the tenant ID identifies the customer org and must remain redacted");
+        result.RedactedContent.Should().NotContain(blueprintSpId,
+            because: "tenant-specific service principal object IDs must remain redacted");
+        result.IdsRedacted.Should().Be(2,
+            because: "the tenant ID and blueprint SP ID are the only IDs that should be counted as redactions");
+    }
 }
