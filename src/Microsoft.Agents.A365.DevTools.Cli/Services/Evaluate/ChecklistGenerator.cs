@@ -629,14 +629,8 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 CheckCategory.ParamName, "Only one parameter, casing consistent by default.");
         }
 
-        var conventions = allParamNames.Select(DetectCasing).ToList();
-        string dominant = conventions
-            .GroupBy(c => c)
-            .OrderByDescending(g => g.Count())
-            .First()
-            .Key;
-        string thisConvention = DetectCasing(paramName);
-        bool passed = thisConvention == dominant;
+        string dominant = PickDominantCasing(allParamNames);
+        bool passed = GetCompatibleCasings(paramName).Contains(dominant);
 
         return new ChecklistItem
         {
@@ -645,8 +639,8 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Prompt = $"Parameter '{paramName}' follows the dominant naming convention used by other parameters.",
             Score = passed,
             Reason = passed
-                ? $"Parameter uses {thisConvention} (dominant: {dominant})."
-                : $"Parameter '{paramName}' uses {thisConvention} but other params use {dominant}.",
+                ? $"Parameter compatible with the {dominant} convention."
+                : $"Parameter '{paramName}' is not compatible with the {dominant} convention used by other parameters.",
             Severity = Priority.P3,
             Category = CheckCategory.ParamName,
             IssueIds = [17],
@@ -847,15 +841,10 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
                 CheckCategory.ToolsetDesign, "Fewer than 2 tools.");
         }
 
-        var conventions = tools.Select(t => DetectCasing(t.Name ?? string.Empty)).ToList();
-        string dominant = conventions
-            .GroupBy(c => c)
-            .OrderByDescending(g => g.Count())
-            .First()
-            .Key;
-        var outliers = tools
-            .Where((t, i) => conventions[i] != dominant)
-            .Select(t => t.Name ?? string.Empty)
+        var names = tools.Select(t => t.Name ?? string.Empty).ToList();
+        string dominant = PickDominantCasing(names);
+        var outliers = names
+            .Where(n => !GetCompatibleCasings(n).Contains(dominant))
             .Take(5)
             .ToList();
 
@@ -867,8 +856,8 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             Prompt = "All tool names follow the same naming convention.",
             Score = passed,
             Reason = passed
-                ? $"All tools use {dominant}."
-                : $"Inconsistent naming: most use {dominant}, but outliers: {string.Join(", ", outliers)}",
+                ? $"All tools compatible with the {dominant} convention."
+                : $"Inconsistent naming: most compatible with {dominant}, but outliers: {string.Join(", ", outliers)}",
             Severity = Priority.P2,
             Category = CheckCategory.ToolsetDesign,
             IssueIds = [17],
@@ -1039,38 +1028,67 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Detects the naming convention used by a string.
+    /// Returns the set of naming conventions a single identifier is compatible with.
+    /// A single-word lowercase identifier like "currency" satisfies snake_case,
+    /// kebab-case, and camelCase by formal definition (zero separators required),
+    /// so it can be consistent with any toolset using any of those conventions.
+    /// PascalCase is excluded because it requires an uppercase first letter.
     /// </summary>
-    private static string DetectCasing(string name)
+    private static HashSet<string> GetCompatibleCasings(string name)
     {
+        var result = new HashSet<string>();
         if (string.IsNullOrEmpty(name))
         {
-            return "empty";
+            return result;
         }
 
-        // Single-word lowercase identifiers (e.g. "currency") are valid snake_case
-        // by formal definition; `*` (zero-or-more underscores) is correct, not `+`.
         if (Regex.IsMatch(name, @"^[a-z][a-z0-9]*(_[a-z0-9]+)*$"))
         {
-            return "snake_case";
+            result.Add("snake_case");
         }
-
-        if (Regex.IsMatch(name, @"^[a-z][a-z0-9]*(-[a-z0-9]+)+$"))
+        if (Regex.IsMatch(name, @"^[a-z][a-z0-9]*(-[a-z0-9]+)*$"))
         {
-            return "kebab-case";
+            result.Add("kebab-case");
         }
-
-        if (Regex.IsMatch(name, @"^[a-z][a-zA-Z0-9]*$") && name.Any(char.IsUpper))
+        if (Regex.IsMatch(name, @"^[a-z][a-zA-Z0-9]*$"))
         {
-            return "camelCase";
+            result.Add("camelCase");
         }
-
         if (Regex.IsMatch(name, @"^[A-Z][a-zA-Z0-9]*$"))
         {
-            return "PascalCase";
+            result.Add("PascalCase");
         }
 
-        return "mixed";
+        return result;
+    }
+
+    /// <summary>
+    /// Picks the dominant casing convention across a set of names by vote-tally:
+    /// every name contributes one vote per convention it is compatible with.
+    /// Ties broken alphabetically for deterministic output. Returns "mixed" if no
+    /// name is compatible with any known convention.
+    /// </summary>
+    private static string PickDominantCasing(IEnumerable<string> names)
+    {
+        var votes = new Dictionary<string, int>();
+        foreach (var name in names)
+        {
+            foreach (var convention in GetCompatibleCasings(name))
+            {
+                votes[convention] = votes.GetValueOrDefault(convention) + 1;
+            }
+        }
+
+        if (votes.Count == 0)
+        {
+            return "mixed";
+        }
+
+        return votes
+            .OrderByDescending(kv => kv.Value)
+            .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .First()
+            .Key;
     }
 
     /// <summary>
