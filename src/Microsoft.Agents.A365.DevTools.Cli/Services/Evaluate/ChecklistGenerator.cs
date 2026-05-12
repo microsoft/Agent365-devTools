@@ -1048,7 +1048,9 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
             return "empty";
         }
 
-        if (Regex.IsMatch(name, @"^[a-z][a-z0-9]*(_[a-z0-9]+)+$"))
+        // Single-word lowercase identifiers (e.g. "currency") are valid snake_case
+        // by formal definition; `*` (zero-or-more underscores) is correct, not `+`.
+        if (Regex.IsMatch(name, @"^[a-z][a-z0-9]*(_[a-z0-9]+)*$"))
         {
             return "snake_case";
         }
@@ -1066,11 +1068,6 @@ internal sealed class ChecklistGenerator : IChecklistGenerator
         if (Regex.IsMatch(name, @"^[A-Z][a-zA-Z0-9]*$"))
         {
             return "PascalCase";
-        }
-
-        if (Regex.IsMatch(name, @"^[a-z][a-z0-9]*$"))
-        {
-            return "lowercase";
         }
 
         return "mixed";
