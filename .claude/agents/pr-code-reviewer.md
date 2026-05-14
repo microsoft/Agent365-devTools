@@ -282,6 +282,63 @@ For each changed file, analyze:
    - Also check whether the PR already fixed this pattern in a *sibling* command (e.g., `AllSubcommand.cs` was fixed to use `ex.ExitCode`). If so, grep all files in `Commands/` for the same helper+null-check pattern — any remaining hardcoded literal is a miss.
    - **Fix pattern**: Change `return null;` to `throw;` in the helper; add `catch (ExceptionType ex) { context.ExitCode = ex.ExitCode; }` before the outer `catch (Exception ex)` at each call site. This matches the AllSubcommand.cs pattern.
 
+   **I. Log message tense vs. action timing — "creating X" before the write fires**
+
+   When a `LogInformation`/`LogWarning` call uses **present-continuous tense** (`"creating"`, `"writing"`, `"deleting"`, `"updating"`, `"saving"`, `"removing"`) and is placed **before** the corresponding I/O or state-mutation call:
+
+   - The log fires regardless of whether the action succeeds. If the next call throws (permission denied, disk full, network failure), users see "creating a new manifest" in the log with no manifest on disk and no obvious indication the action did not complete.
+   - **Detection**: For each new/changed `LogInformation` or `LogWarning` line in the diff, look at the next ~10 lines. If a `File.Write*`, `Directory.Create*`, `*.WriteAsync`, `*.SaveAsync`, HTTP `Post*`/`Put*`/`Delete*`, or similar mutating call follows in the same try-block, the log tense is suspect.
+   - **Severity**: **LOW** by default; **MEDIUM** if the failure mode is silent (no terminal `LogError` would distinguish "did nothing" from "did the thing"). Flag higher if the log is the *only* user-visible signal that the action ran.
+   - **Fix patterns** (in preference order):
+     1. Use future tense: `"creating a new manifest"` → `"will create a new manifest"`. Cheapest and clearest at the announcement point.
+     2. Move the log to after the successful write: `await File.WriteAllTextAsync(...); logger.LogInformation("Created new manifest at {Path}", ...);`. Stronger guarantee but loses the "starting" announcement.
+     3. Use both: announce in future tense before, confirm in past tense after.
+   - **Real example (this PR)**: `DevelopCommand.cs` logged `"{FileName} not found at {Path}; creating a new manifest."` before calling `WriteManifestAsync`. Copilot flagged it. Reworded to `"; will create a new manifest."`.
+
+   **J. `internal` member referenced from a test project — verify `InternalsVisibleTo` is wired**
+
+   When a test file references an `internal` const, method, type, or property defined in the production assembly:
+
+   - The test will only compile if the production csproj declares `<InternalsVisibleTo Include="<TestAssemblyName>" />` (either via MSBuild item or `[assembly: InternalsVisibleTo(...)]` attribute).
+   - **Detection**: When the diff includes a new `internal` declaration in `src/<ProjectName>/` AND that identifier appears in `src/Tests/<ProjectName>.Tests/`:
+     1. `Grep` the production csproj for `InternalsVisibleTo`. If the test assembly is listed, the code compiles — but a human or AI reviewer who skips the csproj will still flag this.
+     2. If `InternalsVisibleTo` is **missing**, flag as **HIGH** with severity `logic_error` — the code does not compile.
+     3. If `InternalsVisibleTo` is **present**, decide one of: (a) promote the member to `public` to eliminate future review noise (preferred for constants documenting an env var, config key, or other API-surface contract), or (b) leave it `internal` but add an inline comment referencing the `InternalsVisibleTo` line in the csproj.
+   - **Real example (this PR, Copilot Comment 1)**: `McpServerCatalogWriter.CatalogPathEnvVar` was `internal`. Copilot flagged a likely compile break. The repo *did* have `<InternalsVisibleTo>` wired, so the code compiled — but Copilot's reviewer did not check the csproj. Promoting the const to `public` removed the noise; the const is a documented external contract anyway.
+
+   **K. Environment variable consumed by a file API without normalization**
+
+   When `Environment.GetEnvironmentVariable("<NAME>")` is read and the returned string is passed (directly or after a single null/empty check) into `File.*`, `Directory.*`, `Path.Combine`, `Path.GetDirectoryName`, or used in a `Process.Start` argv:
+
+   - Real-world env vars often contain wrapping quotes (`set VAR="C:\path"` on Windows shells) or trailing whitespace (Group Policy, copy/paste, editor artifacts). Passing those verbatim to a file API yields `FileNotFoundException` / `DirectoryNotFoundException` with a confusing path that has a quote glyph in it.
+   - **Detection**: Look for `Environment.GetEnvironmentVariable(` reads. Trace the variable through assignments. If it reaches any file-system API without a `Trim()` and a `'"' / '\''` strip, flag.
+   - **Severity**: **LOW** for tests/internal tools; **MEDIUM** for production CLI commands; **HIGH** if the env var is part of a documented user-facing override contract.
+   - **Fix pattern**:
+     ```csharp
+     var raw = Environment.GetEnvironmentVariable(EnvVarName);
+     if (string.IsNullOrWhiteSpace(raw)) return defaultValue;
+     var trimmed = raw.Trim();
+     if (trimmed.Length >= 2 &&
+         ((trimmed[0] == '"'  && trimmed[^1] == '"') ||
+          (trimmed[0] == '\'' && trimmed[^1] == '\'')))
+     {
+         trimmed = trimmed[1..^1];
+     }
+     return trimmed;
+     ```
+   - **Real example (this PR, Copilot Comment 2)**: `McpServerCatalogWriter.GetCatalogPath` returned the `A365_MCP_CATALOG_PATH` env var verbatim. Copilot flagged the quote-handling gap; production reader was hardened in the fix.
+
+   **L. Test-fixture JSON / wire payload casing must match the production reader, not the project's typical schema**
+
+   When a test writes a JSON file or payload that exercises a code path under test:
+
+   - Each key's casing must match what the production reader looks up. `JsonElement.TryGetProperty(name, out _)` and `SetupHelpers.GetJsonString(root, "Name")` (any helper built on `TryGetProperty`) are **case-sensitive**. A camelCase fixture against a PascalCase reader (or vice-versa) makes the test silently pass even if the production path it claims to exercise is broken.
+   - **Detection**: For every JSON literal in a test file (in `await File.WriteAllTextAsync(... """{...}""")`, `JsonSerializer.Serialize(new { ... })`, etc.):
+     1. For each top-level key, search the production code for `TryGetProperty("<key>"` or `GetJsonString(<root>, "<key>"`. The exact-string match must succeed against the reader, not against a schema convention or attribute.
+     2. If the test casing does not match the reader's lookup string, the test does **not** exercise what it claims to. Flag **HIGH** with severity `missing_test`.
+     3. If the casing intentionally differs from the project's typical schema (e.g. the reader is legacy and reads a PascalCase key for back-compat), add a code comment in the test that names the production line being matched, so future reviewers do not re-flag it.
+   - **Real example (this PR, Copilot Comment 3)**: `GlobalConfigDirectoryCleanupTests` wrote `"AgenticAppId"` (PascalCase) into a poisoned JSON fixture. Copilot flagged it as inconsistent with camelCase. The production reader at `BootstrapConfigResolver.cs:336` deliberately reads `"AgenticAppId"` (legacy compat), so the test casing is correct — but the fix is to add an inline comment in the test explaining the intentional casing and pointing at the reader line, so the next reviewer (human or AI) does not raise the same flag again.
+
 ### Step 3: Generate Findings
 
 For each issue found, provide:

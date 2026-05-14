@@ -145,6 +145,12 @@ public class GlobalConfigDirectoryCleanupTests : IDisposable
         var globalGeneratedDir = ResolvedGlobalConfigDir();
         Directory.CreateDirectory(globalGeneratedDir);
         var globalGeneratedPath = Path.Combine(globalGeneratedDir, "a365.generated.config.json");
+        // Casing here mirrors exactly what BootstrapConfigResolver.BuildBootstrapConfigForCleanupAsync
+        // reads via SetupHelpers.GetJsonString (which is case-sensitive). Most fields are camelCase,
+        // but "AgenticAppId" is PascalCase because the production reader at BootstrapConfigResolver.cs
+        // line ~336 reads that exact key — legacy CLI versions wrote it that way and the reader
+        // preserves compatibility. If a future Copilot/reviewer flags this as inconsistent, the
+        // answer is: the casing is deliberate and must match the reader, not the typical config schema.
         await File.WriteAllTextAsync(globalGeneratedPath, $$"""
         {
           "agentBlueprintId": "{{poisonedBlueprintId}}",

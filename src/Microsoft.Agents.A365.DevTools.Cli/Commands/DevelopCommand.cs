@@ -529,7 +529,7 @@ public static class DevelopCommand
                     return;
                 }
 
-                logger.LogInformation("{FileName} not found at {Path}; creating a new manifest.",
+                logger.LogInformation("{FileName} not found at {Path}; will create a new manifest.",
                     McpConstants.ToolingManifestFileName, manifestPath);
             }
 
