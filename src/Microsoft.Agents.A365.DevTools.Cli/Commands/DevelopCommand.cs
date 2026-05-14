@@ -501,20 +501,11 @@ public static class DevelopCommand
                 return;
             }
 
-            // Dry run mode
-            if (dryRun)
-            {
-                logger.LogInformation("[DRY RUN] Would add the following MCP servers to configuration:");
-                foreach (var serverName in servers)
-                {
-                    logger.LogInformation("[DRY RUN]   - {Server}", serverName);
-                }
-                logger.LogInformation("[DRY RUN] Would update {FileName}", McpConstants.ToolingManifestFileName);
-                await Task.CompletedTask;
-                return;
-            }
-
-            // Resolve manifest path without requiring a365.config.json
+            // Resolve manifest path without requiring a365.config.json.
+            // Resolution and the --project-path typo-guard MUST run before the --dry-run
+            // short-circuit below: dry-run is a preview of what the real command would do,
+            // so a typo'd --project-path must fail dry-run too — otherwise users get a
+            // misleading exit-0 preview and a confusing exit-1 when they run for real.
             var manifestPath = await ResolveToolingManifestPath(projectPath, configService, logger);
 
             if (!File.Exists(manifestPath))
@@ -531,6 +522,20 @@ public static class DevelopCommand
 
                 logger.LogInformation("{FileName} not found at {Path}; will create a new manifest.",
                     McpConstants.ToolingManifestFileName, manifestPath);
+            }
+
+            // Dry run mode
+            if (dryRun)
+            {
+                logger.LogInformation("[DRY RUN] Would add the following MCP servers to configuration:");
+                foreach (var serverName in servers)
+                {
+                    logger.LogInformation("[DRY RUN]   - {Server}", serverName);
+                }
+                logger.LogInformation("[DRY RUN] Would update {FileName} at {Path}",
+                    McpConstants.ToolingManifestFileName, manifestPath);
+                await Task.CompletedTask;
+                return;
             }
 
             try

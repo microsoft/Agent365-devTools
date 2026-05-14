@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Reflection;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -206,5 +208,91 @@ public class GlobalConfigDirectoryCleanupTests : IDisposable
             because: "AgenticAppId must not leak in from outside CWD");
         result.AgentBlueprintServicePrincipalObjectId.Should().BeNull(
             because: "AgentBlueprintServicePrincipalObjectId must not leak in from outside CWD");
+    }
+
+    [Fact]
+    public async Task CleanupCommand_BuildBootstrapConfigForCleanupAsync_DoesNotInheritResourceIdsFromOutsideCwd()
+    {
+        // The global-fallback pattern the PR removed from
+        // BootstrapConfigResolver.BuildBootstrapConfigForCleanupAsync still exists as
+        // a near-identical duplicate in CleanupCommand.BuildBootstrapConfigForCleanupAsync
+        // (the fallback path used when resolver == null). The original PR fixed one of
+        // two copies; this test pins the same invariant on the duplicate so the fix
+        // can land symmetrically (or the duplicate can be deleted, in which case this
+        // test will fail with a clear "method not found" and can be removed too).
+        //
+        // Uses reflection because the method is `private static`. If the production code
+        // is refactored to delete or rename the method, the BindingFlags lookup will
+        // surface the change loudly rather than silently passing.
+        var poisonedBlueprintId = Guid.NewGuid().ToString();
+        const string poisonedRegistrationId = "REG_FROM_GLOBAL_SHOULD_NOT_LEAK_VIA_CLEANUP";
+        var globalGeneratedDir = ResolvedGlobalConfigDir();
+        Directory.CreateDirectory(globalGeneratedDir);
+        var globalGeneratedPath = Path.Combine(globalGeneratedDir, "a365.generated.config.json");
+        // Casing intentional: matches the duplicate reader's case-sensitive
+        // SetupHelpers.GetJsonString lookups. "AgenticAppId" is PascalCase by design
+        // — see the ResolveAsync_InCleanupMode test above for the full rationale.
+        await File.WriteAllTextAsync(globalGeneratedPath, $$"""
+        {
+          "agentBlueprintId": "{{poisonedBlueprintId}}",
+          "agentRegistrationId": "{{poisonedRegistrationId}}",
+          "AgenticAppId": "AGENTIC_FROM_GLOBAL_SHOULD_NOT_LEAK_VIA_CLEANUP",
+          "agentBlueprintServicePrincipalObjectId": "SP_FROM_GLOBAL_SHOULD_NOT_LEAK_VIA_CLEANUP"
+        }
+        """);
+        File.Exists(Path.Combine(_localCwd, "a365.generated.config.json")).Should().BeFalse(
+            because: "the CWD must be clean so the only available source of poison is the global file");
+
+        var executorLogger = Substitute.For<ILogger<CommandExecutor>>();
+        var executor = Substitute.For<CommandExecutor>(executorLogger);
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult
+            {
+                ExitCode = 0, StandardOutput = "explicit-tenant", StandardError = string.Empty
+            }));
+
+        var graphApiService = Substitute.ForPartsOf<GraphApiService>(
+            Substitute.For<ILogger<GraphApiService>>(),
+            executor,
+            (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
+        // The cleanup duplicate calls FindApplicationByDisplayNameAsync WITHOUT a
+        // CancellationToken argument (see CleanupCommand.cs ~line 1356-1357), so the
+        // 2-arg overload must be stubbed in addition to the 3-arg one for safety.
+        graphApiService.FindApplicationByDisplayNameAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(poisonedBlueprintId));
+        graphApiService.FindApplicationByDisplayNameAsync(
+                Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult<string?>(poisonedBlueprintId));
+
+        var cleanupLogger = Substitute.For<ILogger<CleanupCommand>>();
+
+        var method = typeof(CleanupCommand).GetMethod(
+            "BuildBootstrapConfigForCleanupAsync",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        method.Should().NotBeNull(
+            because: "the private static fallback duplicate must exist for this regression test to verify; if a later PR collapses or deletes the duplicate, delete this test too");
+
+        var task = (Task<Agent365Config?>)method!.Invoke(null, new object?[]
+        {
+            "CleanupAgent",
+            "explicit-tenant",
+            executor,
+            graphApiService,
+            cleanupLogger
+        })!;
+        var result = await task;
+
+        result.Should().NotBeNull(
+            because: "the fallback must still build a valid config from Entra even when no local generated file exists");
+        result!.AgentBlueprintId.Should().Be(poisonedBlueprintId,
+            because: "the blueprint ID is the authoritative Entra value, independent of any on-disk file");
+        result.AgentRegistrationId.Should().BeNull(
+            because: "AgentRegistrationId must not leak in from outside CWD via the cleanup duplicate — only the project-local generated config may be consulted");
+        result.AgenticAppId.Should().BeNull(
+            because: "AgenticAppId must not leak in from outside CWD via the cleanup duplicate");
+        result.AgentBlueprintServicePrincipalObjectId.Should().BeNull(
+            because: "AgentBlueprintServicePrincipalObjectId must not leak in from outside CWD via the cleanup duplicate");
     }
 }

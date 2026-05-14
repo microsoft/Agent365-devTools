@@ -200,6 +200,28 @@ public class AddMcpServersMissingManifestTests : IDisposable
     }
 
     [Fact]
+    public async Task AddMcpServers_DryRunWithBogusProjectPath_ReturnsExitCode1()
+    {
+        // DevelopCommand.cs:504-515 BEFORE the --project-path typo-guard at lines
+        // 520-530. A typo'd --project-path X --dry-run silently exits 0 — exactly
+        // the failure the guard is supposed to prevent.
+        var bogusDir = Path.Combine(Path.GetTempPath(),
+            "a365-issue412-doesnotexist-dryrun-" + Guid.NewGuid().ToString("N"));
+        Directory.Exists(bogusDir).Should().BeFalse(because: "the test pre-condition is a typo'd path");
+
+        var exitCode = await BuildRoot().InvokeAsync(new[]
+        {
+            "develop", "add-mcp-servers", "mcp_M365Copilot",
+            "--project-path", bogusDir, "--dry-run"
+        });
+
+        exitCode.Should().Be(1,
+            because: "--dry-run must validate --project-path the same way real-mode does; otherwise dry-run gives users false confidence that their command would succeed when run for real");
+        Directory.Exists(bogusDir).Should().BeFalse(
+            because: "--dry-run must never create directories, even by accident");
+    }
+
+    [Fact]
     public async Task AddMcpServers_ExistingManifest_UpsertsServer()
     {
         // Guardrail: the happy path (manifest already exists) must continue to work.

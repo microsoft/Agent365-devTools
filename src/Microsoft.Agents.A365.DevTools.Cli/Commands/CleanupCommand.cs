@@ -1362,9 +1362,12 @@ public class CleanupCommand
         // Step 4: Load generated config.
         // Only take agentRegistrationId from the file when the blueprint IDs match,
         // confirming the file belongs to this agent.
-        var localGeneratedPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
-        var globalGeneratedPath = Path.Combine(ConfigService.GetGlobalConfigDirectory(), "a365.generated.config.json");
-        var generatedConfigPath = File.Exists(localGeneratedPath) ? localGeneratedPath : globalGeneratedPath;
+        // Project-local only — the global-directory fallback was removed because it could
+        // pull resource IDs from a different project's leftover state. Mirrors the same
+        // policy applied to BootstrapConfigResolver.BuildBootstrapConfigForCleanupAsync.
+        // TODO: this method is a near-duplicate of the resolver copy; collapse into a single
+        // shared helper in a follow-up PR.
+        var generatedConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
 
         string? agentRegistrationId = null;
         string? agenticAppId = null;
