@@ -6,6 +6,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 public static class McpServerCatalogWriter
 {
     /// <summary>
+    /// Environment variable that overrides the catalog path. Set in tests to avoid the
+    /// machine-global default and prevent cross-test-class collisions.
+    /// </summary>
+    internal const string CatalogPathEnvVar = "A365_MCP_CATALOG_PATH";
+
+    /// <summary>
     /// Normalizes a discover-endpoint response to the wrapped <c>{"mcpServers":[...]}</c> format.
     /// V2 returns a bare JSON array; V1 returns the wrapped object. Both are accepted.
     /// </summary>
@@ -20,13 +26,16 @@ public static class McpServerCatalogWriter
 
     public static string WriteCatalog(string responseContent)
     {
-        var catalogPath = Path.Combine(Path.GetTempPath(), "mcpServerCatalog.json");
+        var catalogPath = GetCatalogPath();
         File.WriteAllText(catalogPath, Normalize(responseContent));
         return catalogPath;
     }
 
     public static string GetCatalogPath()
     {
-        return Path.Combine(Path.GetTempPath(), "mcpServerCatalog.json");
+        var overridePath = Environment.GetEnvironmentVariable(CatalogPathEnvVar);
+        return !string.IsNullOrEmpty(overridePath)
+            ? overridePath
+            : Path.Combine(Path.GetTempPath(), "mcpServerCatalog.json");
     }
 }

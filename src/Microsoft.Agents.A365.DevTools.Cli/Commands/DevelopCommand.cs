@@ -519,10 +519,18 @@ public static class DevelopCommand
 
             if (!File.Exists(manifestPath))
             {
-                logger.LogError(
-                    "ToolingManifest.json not found. Run with --project-path <path> to specify your agent project directory.");
-                context.ExitCode = 1;
-                return;
+                var manifestDir = Path.GetDirectoryName(manifestPath);
+                if (!string.IsNullOrEmpty(manifestDir) && !Directory.Exists(manifestDir))
+                {
+                    logger.LogError(
+                        "Directory '{Directory}' does not exist. Create it first or run with --project-path <existing path>.",
+                        manifestDir);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                logger.LogInformation("{FileName} not found at {Path}; creating a new manifest.",
+                    McpConstants.ToolingManifestFileName, manifestPath);
             }
 
             try

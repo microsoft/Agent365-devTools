@@ -313,9 +313,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         }
 
         // Step 4: Load generated config and cross-validate blueprint IDs.
-        var localGeneratedPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
-        var globalGeneratedPath = Path.Combine(ConfigService.GetGlobalConfigDirectory(), "a365.generated.config.json");
-        var generatedConfigPath = File.Exists(localGeneratedPath) ? localGeneratedPath : globalGeneratedPath;
+        var generatedConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
 
         string? agentRegistrationId = null;
         string? agenticAppId = null;

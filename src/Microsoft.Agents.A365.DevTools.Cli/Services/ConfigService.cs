@@ -93,107 +93,6 @@ public class ConfigService : IConfigService
         return Path.Combine(logsDir, $"a365.{commandName}.log");
     }
 
-    /// <summary>
-    /// Gets the full path to a config file in the global directory.
-    /// </summary>
-    private static string GetGlobalConfigPath(string fileName)
-    {
-        return Path.Combine(GetGlobalConfigDirectory(), fileName);
-    }
-
-    private static string GetGlobalGeneratedConfigPath()
-    {
-        return GetGlobalConfigPath("a365.generated.config.json");
-    }
-
-    /// <summary>
-    /// Syncs a config file to the global directory for portability.
-    /// This allows CLI commands to run from any directory.
-    /// </summary>
-    private async Task<bool> SyncConfigToGlobalDirectoryAsync(string fileName, string content, bool throwOnError = false)
-    {
-        try
-        {
-            var globalDir = GetGlobalConfigDirectory();
-            Directory.CreateDirectory(globalDir);
-            
-            var globalPath = GetGlobalConfigPath(fileName);
-            
-            // Write the config content to the global directory
-            await File.WriteAllTextAsync(globalPath, content);
-            
-            _logger?.LogDebug("Synced configuration to global directory: {Path}", globalPath);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogWarning(ex, "Failed to sync {FileName} to global directory. CLI may not work from other directories.", fileName);
-            if (throwOnError) throw;
-            return false;
-        }
-    }
-
-    public static void WarnIfLocalGeneratedConfigIsStale(string? localPath, ILogger? logger = null)
-    {
-        if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath)) return;
-        var globalPath = GetGlobalGeneratedConfigPath();
-        if (!File.Exists(globalPath)) return;
-        
-        try
-        {
-            // Compare the lastUpdated timestamps from INSIDE the JSON content, not file system timestamps
-            // This is because SaveStateAsync writes local first, then global, creating a small time difference
-            // in file system timestamps even though the content (and lastUpdated field) are identical
-            var localJson = File.ReadAllText(localPath);
-            var globalJson = File.ReadAllText(globalPath);
-            
-            using var localDoc = JsonDocument.Parse(localJson);
-            using var globalDoc = JsonDocument.Parse(globalJson);
-            
-            var localRoot = localDoc.RootElement;
-            var globalRoot = globalDoc.RootElement;
-            
-            // Get lastUpdated from both files
-            if (!localRoot.TryGetProperty("lastUpdated", out var localUpdated)) return;
-            if (!globalRoot.TryGetProperty("lastUpdated", out var globalUpdated)) return;
-            
-            // Compare the raw string values instead of DateTime objects to avoid timezone conversion issues
-            var localTimeStr = localUpdated.GetString();
-            var globalTimeStr = globalUpdated.GetString();
-            
-            // If the timestamps are identical as strings, they're from the same save operation
-            if (localTimeStr == globalTimeStr)
-            {
-                return; // Same save operation, no warning needed
-            }
-            
-            // If timestamps differ, parse and compare them
-            var localTime = localUpdated.GetDateTime();
-            var globalTime = globalUpdated.GetDateTime();
-            
-            // Warn when the local config is older — the user may have newer state in the global
-            // directory from a previous CLI version that still wrote there.
-            if (globalTime > localTime)
-            {
-                var msg = $"Warning: The local generated config (at {localPath}) is older than the global config (at {globalPath}). You may be using stale configuration. Consider syncing or running setup again.";
-                if (logger != null)
-                    logger.LogDebug(msg);
-                else
-                {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine(msg);
-                    Console.ResetColor();
-                }
-            }
-        }
-        catch (Exception)
-        {
-            // If we can't parse or compare, just skip the warning rather than crashing
-            // This method is a helpful check, not critical functionality
-            return;
-        }
-    }
-    
     private readonly ILogger<ConfigService>? _logger;
 
     private static readonly JsonSerializerOptions DefaultJsonOptions = new()
@@ -252,18 +151,6 @@ public class ConfigService : IConfigService
 
         _logger?.LogDebug("Loaded static configuration from: {ConfigPath}", resolvedConfigPath);
 
-        // Sync static config to global directory if loaded from current directory
-        // This ensures portability - user can run CLI commands from any directory
-        var currentDirConfigPath = Path.Combine(Environment.CurrentDirectory, configPath);
-        bool loadedFromCurrentDir = Path.GetFullPath(resolvedConfigPath).Equals(
-            Path.GetFullPath(currentDirConfigPath), 
-            StringComparison.OrdinalIgnoreCase);
-        
-        if (loadedFromCurrentDir)
-        {
-            await SyncConfigToGlobalDirectoryAsync(Path.GetFileName(configPath), staticJson, throwOnError: false);
-        }
-
         // Try to find state file (use resolved path first, then fallback to search)
         string? actualStatePath = null;
         
@@ -281,12 +168,6 @@ public class ConfigService : IConfigService
             {
                 _logger?.LogDebug("Found state file via search: {StatePath}", actualStatePath);
             }
-        }
-
-        // Warn if local generated config is stale (only if loading the default state file)
-        if (Path.GetFileName(resolvedStatePath).Equals("a365.generated.config.json", StringComparison.OrdinalIgnoreCase))
-        {
-            WarnIfLocalGeneratedConfigIsStale(actualStatePath, _logger);
         }
 
         // Load dynamic state if exists (optional)
