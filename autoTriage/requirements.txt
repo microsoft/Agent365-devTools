@@ -32,7 +32,7 @@ azure-devops==7.1.0b4
 openai==2.36.0
 
 # HTTP requests
-requests==2.33.1
+requests==2.34.2
 httpx==0.28.1
 
 # YAML config parsing
