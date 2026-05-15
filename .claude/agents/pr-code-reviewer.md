@@ -324,9 +324,12 @@ For each changed file, analyze:
      {
          trimmed = trimmed[1..^1];
      }
+     // Re-validate after normalization: `""` or `''` strips to empty.
+     if (string.IsNullOrWhiteSpace(trimmed)) return defaultValue;
      return trimmed;
      ```
-   - **Real example (this PR, Copilot Comment 2)**: `McpServerCatalogWriter.GetCatalogPath` returned the `A365_MCP_CATALOG_PATH` env var verbatim. Copilot flagged the quote-handling gap; production reader was hardened in the fix.
+   - **K-bis: Re-validate after ANY normalization.** When any normalization step (Trim, quote-strip, URL-decode, percent-decode, Unicode-normalize, regex-strip) is applied to a value, the post-normalization result MUST be checked against the same invariants as the raw input (non-empty, non-null, length bounds, well-formed). `""` and `''` are the canonical examples: they pass `IsNullOrEmpty(raw)=false` because the raw value has two chars, but after the quote strip they become `""`. Without a re-check the helper returns an empty string and downstream consumers throw with a confusing error far from the root cause. Severity: **MEDIUM** when the consumer is a file API or HTTP call; **LOW** when only used for display/logging.
+   - **Real example (this PR, Copilot Comments 2 & 5)**: `McpServerCatalogWriter.GetCatalogPath` first returned the `A365_MCP_CATALOG_PATH` env var verbatim (caught by Copilot Comment 2 — fix: trim + strip quotes). The trim-and-strip fix then introduced the empty-after-strip gap (caught by Copilot Comment 5 — fix: re-check `IsNullOrWhiteSpace(trimmed)` and fall back to default). Both passes of normalization needed the same re-validation discipline.
 
    **L. Test-fixture JSON / wire payload casing must match the production reader, not the project's typical schema**
 
@@ -338,6 +341,24 @@ For each changed file, analyze:
      2. If the test casing does not match the reader's lookup string, the test does **not** exercise what it claims to. Flag **HIGH** with severity `missing_test`.
      3. If the casing intentionally differs from the project's typical schema (e.g. the reader is legacy and reads a PascalCase key for back-compat), add a code comment in the test that names the production line being matched, so future reviewers do not re-flag it.
    - **Real example (this PR, Copilot Comment 3)**: `GlobalConfigDirectoryCleanupTests` wrote `"AgenticAppId"` (PascalCase) into a poisoned JSON fixture. Copilot flagged it as inconsistent with camelCase. The production reader at `BootstrapConfigResolver.cs:336` deliberately reads `"AgenticAppId"` (legacy compat), so the test casing is correct — but the fix is to add an inline comment in the test explaining the intentional casing and pointing at the reader line, so the next reviewer (human or AI) does not raise the same flag again.
+
+   **M. Time-relative comments must age forward with the diff**
+
+   When the diff changes code behavior, scan *every changed file* (production AND test) for comments that use time-relative wording. Comments that were accurate when written ("currently", "today", "this is the buggy path", "the current implementation does X") become misleading the moment the PR merges, and a future reader has no way to tell which tense is correct without doing the same investigation again.
+
+   - **Detection**: in the staged diff, grep code comments for the phrases:
+     - `today-buggy`, `today's behavior`, `today this does`
+     - `currently broken`, `currently buggy`, `current implementation`, `currently does X`
+     - `now broken`, `now does`, `right now`
+     - `this is the bug`, `this is buggy`, `the buggy code`
+     - Any reference to "the new code does X" or "the old code did Y" when the SAME PR is doing that switchover
+   - For each hit, ask: does this wording still match the post-merge state? If the diff is doing the very thing the comment describes, the comment must be rewritten in past tense OR removed.
+   - **Severity**: **LOW** by default (documentation rot, not a runtime bug). **MEDIUM** when the misleading comment lives in a regression test — readers may interpret a green assertion as "the bug is back" simply because the comment says "today this is broken".
+   - **Fix patterns**:
+     - `// (today-buggy) fallback` → `// pre-fix fallback (regression guard)` or `// the fallback the original PR removed`
+     - `// this is the buggy code path` (in a test that's now passing) → `// the code path this regression test guards against`
+     - `// the current implementation does X` (when X is exactly what the diff is changing) → `// before this change, the implementation did X` or simply remove
+   - **Real example (this PR, Copilot Comments 4 & 6)**: `GlobalConfigDirectoryCleanupTests` had two comments saying `"(today-buggy) fallback"` and `"(today-buggy) merge logic ... accepts the global file"`. Once the fix landed, both comments read as if the merge logic was still broken. Rephrased to `"pre-fix global fallback would have found"` and `"if the pre-fix merge logic were still active, it would accept the global file"` — same meaning, correct tense. `AddMcpServersMissingManifestTests.cs` had a CR-009 comment claiming `"--dry-run short-circuits before the manifest resolver runs"` that was true when written but became false in the same PR after the typo-guard was moved above the dry-run block.
 
 ### Step 3: Generate Findings
 

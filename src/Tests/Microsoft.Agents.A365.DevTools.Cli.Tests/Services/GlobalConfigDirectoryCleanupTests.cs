@@ -162,8 +162,9 @@ public class GlobalConfigDirectoryCleanupTests : IDisposable
         }
         """);
 
-        // Sanity: CWD must have no local generated config so the only file the (today-buggy)
-        // fallback could find is the poisoned global one.
+        // Sanity: CWD must have no local generated config so the only file the
+        // pre-fix global fallback would have found is the poisoned global one —
+        // if the fallback regresses, this is the file that would leak through.
         File.Exists(Path.Combine(_localCwd, "a365.generated.config.json")).Should().BeFalse();
 
         // Mock the resolver's dependencies so Mode 1 (agent-name + cleanup) reaches Step 4.
@@ -182,9 +183,11 @@ public class GlobalConfigDirectoryCleanupTests : IDisposable
             executor,
             (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
 
-        // Graph resolves the blueprint to the SAME ID as the poisoned global file would carry,
-        // so the (today-buggy) merge logic at BuildBootstrapConfigForCleanupAsync line 334
-        // accepts the global file and pulls its resource IDs into the returned config.
+        // Graph resolves the blueprint to the SAME ID as the poisoned global file would
+        // carry — so if the pre-fix merge logic at BuildBootstrapConfigForCleanupAsync
+        // were still active, it would accept the global file and pull its resource IDs
+        // into the returned config. The post-fix code never consults the global file at
+        // all; this assertion proves the regression cannot reappear silently.
         graphApiService.FindApplicationByDisplayNameAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(poisonedBlueprintId));

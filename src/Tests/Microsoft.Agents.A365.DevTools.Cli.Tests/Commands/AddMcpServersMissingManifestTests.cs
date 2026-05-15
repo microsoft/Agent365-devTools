@@ -183,8 +183,11 @@ public class AddMcpServersMissingManifestTests : IDisposable
     [Fact]
     public async Task AddMcpServers_DryRunWithNoManifest_DoesNotCreateManifest()
     {
-        // CR-009: --dry-run short-circuits before the manifest resolver runs (DevelopCommand.cs:504-515).
-        // For issue #412 the contract is "dry-run in a fresh dir must succeed without writing anything."
+        // CR-009 + Grant's PR #418 review fix: --dry-run still resolves and validates
+        // the manifest/project path (including the --project-path typo-guard) before
+        // returning. The contract for a fresh-but-valid directory is "dry-run must
+        // succeed without writing anything" — paths still get validated, but no
+        // manifest is created or modified on disk.
         var projectDir = CreateTempDir();
 
         var exitCode = await BuildRoot().InvokeAsync(new[]

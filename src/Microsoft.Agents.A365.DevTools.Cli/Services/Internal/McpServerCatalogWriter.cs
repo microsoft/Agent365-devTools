@@ -34,10 +34,11 @@ public static class McpServerCatalogWriter
 
     public static string GetCatalogPath()
     {
+        var defaultPath = Path.Combine(Path.GetTempPath(), "mcpServerCatalog.json");
         var overridePath = Environment.GetEnvironmentVariable(CatalogPathEnvVar);
         if (string.IsNullOrWhiteSpace(overridePath))
         {
-            return Path.Combine(Path.GetTempPath(), "mcpServerCatalog.json");
+            return defaultPath;
         }
 
         // Normalize: env vars are sometimes set with surrounding whitespace or wrapping
@@ -51,6 +52,10 @@ public static class McpServerCatalogWriter
             trimmed = trimmed[1..^1];
         }
 
-        return trimmed;
+        // Re-validate after normalization: an override of `""` or `''` (or `"   "`)
+        // strips to an empty string, which would make File.* throw with an unhelpful
+        // "path is empty" exception. Treat any post-normalization empty/whitespace
+        // value the same as a missing override and fall back to the default.
+        return string.IsNullOrWhiteSpace(trimmed) ? defaultPath : trimmed;
     }
 }
