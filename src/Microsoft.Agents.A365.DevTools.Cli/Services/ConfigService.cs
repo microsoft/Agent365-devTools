@@ -285,7 +285,7 @@ public class ConfigService : IConfigService
         if (File.Exists(targetPath))
         {
             var safeReason = SanitizeForFileName(reason);
-            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
             var dir = Path.GetDirectoryName(targetPath) ?? Environment.CurrentDirectory;
             backupPath = Path.Combine(dir, $"a365.generated.config.before-{safeReason}-{timestamp}.json");
 

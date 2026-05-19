@@ -240,7 +240,7 @@ public class SetupHelpersDisplaySetupSummaryTests
         SetupHelpers.DisplaySetupSummary(results, logger);
 
         logger.AllOutput.Should().Contain("Action Required",
-            because: "non-DW non-admin runs leave AdminConsentGranted=false and must surface the hand-off as an action item — pre-Slice 5b this branch was unreachable because pendingAdminAction gated on !isNonDw");
+            because: "non-DW non-admin runs leave TenantWideConsentOutcome=Failed and must surface the hand-off as an action item — pre-refactor this branch was unreachable because pendingAdminAction gated on !isNonDw");
         logger.AllOutput.Should().Contain(consentUrl,
             because: "Slice 5a generates a real combined consent URL for non-DW non-admin runs; the summary must print it so AID developers can hand it off directly instead of walking the admin through the Entra portal");
         logger.AllOutput.Should().NotContain("Option A — Entra portal",
@@ -275,7 +275,7 @@ public class SetupHelpersDisplaySetupSummaryTests
     /// <summary>
     /// B2 regression — non-admin AID developer running `setup all` as OBO must see the consent URL
     /// surfaced as an action item. Pre-refactor, the orchestrator wrote a misleading
-    /// S2SAppRoleGranted=false hint for non-admin runs that flipped isS2SFlow=true and suppressed
+    /// BlueprintS2SOutcome=Failed hint for non-admin runs that flipped isS2SFlow=true and suppressed
     /// the consent URL action item via the delegatedConsentApplicable gate. The refactor splits
     /// outcomes per grant type and derives applicability from EffectiveAuthMode instead.
     /// </summary>

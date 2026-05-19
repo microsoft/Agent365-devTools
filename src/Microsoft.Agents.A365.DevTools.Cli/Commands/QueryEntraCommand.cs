@@ -35,8 +35,9 @@ public class QueryEntraCommand
 
     /// <summary>
     /// Create inheritance subcommand to verify that inheritable permissions on the blueprint
-    /// use kind=allAllowed for both scopes and roles on every configured resource. This is the
-    /// configuration-level check; it does not acquire a token or inspect runtime claims.
+    /// use kind=allAllowed for both scopes and roles on every configured resource, and that the
+    /// blueprint SP has actual grants for each resource. Acquires a Graph token via the CLI's
+    /// normal auth path (az CLI credential or MSAL cache).
     /// </summary>
     private static Command CreateInheritanceSubcommand(
         ILogger<QueryEntraCommand> logger,

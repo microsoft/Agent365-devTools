@@ -41,7 +41,8 @@ This folder contains data models used throughout the CLI. Models are organized b
 | Model | File | Description |
 |-------|------|-------------|
 | **AllAllowedScopes / AllAllowedRoles** | `InheritablePermissionTypes.cs` | Wire-format models for the inheritablePermissions polymorphic properties on agent identity blueprints (kind=allAllowed). |
-| **DeclaredResourcePermissions** | `DeclaredResourcePermissions.cs` | Permissions declared on a blueprint application for a single resource, with permission GUIDs resolved to display names. Returned by `AgentBlueprintService.GetBlueprintDeclaredPermissionsAsync`. |
+| **AuthMode** | `AuthMode.cs` | Enum for agent identity grant type: `Obo`, `S2s`, `Both`. |
+| **GrantOutcome** | `GrantOutcome.cs` | Enum for per-grant result: `Granted`, `Failed`, `NotApplicable`. |
 
 ### Other Models
 
