@@ -8,6 +8,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
+using IConfirmationProvider = Microsoft.Agents.A365.DevTools.Cli.Services.IConfirmationProvider;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
@@ -26,11 +27,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 ///   b) OAuth2 permission grants (Global Administrator only):
 ///      Creates AllPrincipals (tenant-wide) oauth2PermissionGrants via Graph API.
 ///      Requires Global Administrator — skipped for non-admin users.
-///      Technical limitation: oauth2PermissionGrant creation via the API always requires
-///      DelegatedPermissionGrant.ReadWrite.All which is an admin-only scope. Additionally,
 ///      GA bypasses entitlement validation and can grant any scope; non-admin users get
 ///      HTTP 403 (insufficient privileges) or HTTP 400 (entitlement not found) for all
-///      five resource SPs. There is no self-service path for non-admin users via the API.
+///      resource SPs. There is no self-service path for non-admin users via the API.
 ///
 /// Phase 3 — Admin consent (Global Administrator only):
 ///   For GA: skipped entirely — Phase 2b grants satisfy consent.
@@ -71,7 +70,8 @@ internal static class BatchPermissionsOrchestrator
         ILogger logger,
         SetupResults? setupResults,
         CancellationToken ct,
-        string? knownBlueprintSpObjectId = null)
+        string? knownBlueprintSpObjectId = null,
+        IConfirmationProvider? confirmationProvider = null)
     {
         if (specs.Count == 0)
         {
@@ -161,10 +161,28 @@ internal static class BatchPermissionsOrchestrator
             }
 
             // Phase 2b: OAuth2 grants — Global Administrator only.
-            // Technical limitation: oauth2PermissionGrant creation via the Graph API requires
-            // DelegatedPermissionGrant.ReadWrite.All (admin-only scope). GA also bypasses
-            // entitlement validation. Non-admin users always get 403 or 400 for all resources.
-            if (isGlobalAdmin)
+            // GA bypasses entitlement validation and can grant any scope; non-admin users
+            // always get HTTP 403 (insufficient privileges) or HTTP 400 (entitlement not found).
+            var doPhase2b = isGlobalAdmin;
+            if (isGlobalAdmin && confirmationProvider != null)
+            {
+                var blueprintLabel = string.IsNullOrWhiteSpace(config.AgentBlueprintDisplayName)
+                    ? blueprintAppId
+                    : $"'{config.AgentBlueprintDisplayName}' ({blueprintAppId})";
+                logger.LogInformation("");
+                logger.LogInformation("This account has Global Administrator privileges. The following tenant-wide (AllPrincipals) OAuth2 permission grants will be created on blueprint {Blueprint}:", blueprintLabel);
+                foreach (var spec in specs)
+                    logger.LogInformation("  {ResourceName}: {Scopes}", spec.ResourceName, string.Join(' ', spec.Scopes));
+                logger.LogInformation("");
+                doPhase2b = await confirmationProvider.ConfirmAsync("Grant tenant-wide consent for these permissions now? [y/N]: ");
+                ct.ThrowIfCancellationRequested();
+                if (doPhase2b)
+                    logger.LogInformation("Tenant-wide consent confirmed by user. Proceeding with AllPrincipals OAuth2 permission grants.");
+                else
+                    logger.LogWarning("Tenant-wide consent declined. Skipping AllPrincipals OAuth2 permission grants. Run 'a365 setup permissions' as a Global Administrator to grant them later.");
+            }
+
+            if (doPhase2b)
             {
                 var grantsOk = await ConfigureOauth2GrantsAsync(
                     graph, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, ct);
@@ -197,6 +215,11 @@ internal static class BatchPermissionsOrchestrator
                     : null;
                 return (blueprintPermissionsUpdated, inheritedPermissionsConfigured, false, retryConsentUrl);
             }
+
+            // GA explicitly declined the confirmation prompt — skip Phase 3 entirely.
+            // The decline warning above already directed them to re-run with 'a365 setup permissions'.
+            if (isGlobalAdmin && confirmationProvider != null && !doPhase2b)
+                return (blueprintPermissionsUpdated, inheritedPermissionsConfigured, false, null);
         }
 
         // --- Admin consent ---
@@ -436,7 +459,7 @@ internal static class BatchPermissionsOrchestrator
                 "   - OAuth2 grant (AllPrincipals): blueprint -> {ResourceName} [{Scopes}]",
                 spec.ResourceName, string.Join(' ', spec.Scopes));
 
-            var grantResult = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
+            var (grantOk, statusCode, errorCode) = await graph.CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
                 tenantId,
                 phase1Result.BlueprintSpObjectId,
                 resourceSpId,
@@ -444,9 +467,11 @@ internal static class BatchPermissionsOrchestrator
                 ct,
                 permScopes);
 
-            if (!grantResult)
+            if (!grantOk)
             {
-                logger.LogWarning("   - Failed to create OAuth2 permission grant for {ResourceName}.", spec.ResourceName);
+                logger.LogWarning(
+                    "   - Failed to create OAuth2 permission grant for {ResourceName} (status {StatusCode}, error {ErrorCode}).",
+                    spec.ResourceName, statusCode, errorCode ?? "<none>");
                 allGrantsOk = false;
             }
             else
@@ -829,7 +854,7 @@ internal static class BatchPermissionsOrchestrator
                 "   - OAuth2 grant (AllPrincipals): blueprint -> {ResourceName} [{Scopes}]",
                 spec.ResourceName, string.Join(' ', spec.Scopes));
 
-            var grantResult = await graph.CreateOrUpdateOauth2PermissionGrantAsync(
+            var (grantOk, statusCode, errorCode) = await graph.CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
                 tenantId,
                 phase1Result.BlueprintSpObjectId,
                 resourceSpId,
@@ -837,10 +862,13 @@ internal static class BatchPermissionsOrchestrator
                 ct,
                 permScopes);
 
-            if (!grantResult)
+            if (!grantOk)
             {
-                logger.LogWarning("   - Failed to create OAuth2 permission grant for {ResourceName}.", spec.ResourceName);
-                setupResults.Warnings.Add($"OAuth2 grant failed for {spec.ResourceName}. Check GA permissions.");
+                logger.LogWarning(
+                    "   - Failed to create OAuth2 permission grant for {ResourceName} (status {StatusCode}, error {ErrorCode}).",
+                    spec.ResourceName, statusCode, errorCode ?? "<none>");
+                setupResults.Warnings.Add(
+                    $"OAuth2 grant failed for {spec.ResourceName} (status {statusCode}, error {errorCode ?? "<none>"}). Check GA permissions.");
                 allGrantsOk = false;
             }
             else

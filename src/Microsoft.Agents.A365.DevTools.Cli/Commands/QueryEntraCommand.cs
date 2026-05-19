@@ -556,7 +556,7 @@ public class QueryEntraCommand
                     if (!grantsReadable)
                     {
                         logger.LogInformation("    Cannot read tenant-wide OAuth2 permission grants from the current credentials.");
-                        logger.LogInformation("    (Reading grants requires the admin-only DelegatedPermissionGrant.Read.All scope; the other information shown above does not.)");
+                        logger.LogInformation("    (Reading grants requires a Global Administrator or Application Administrator account; the other information shown above does not.)");
                         logger.LogInformation("    To verify consent status, sign in as a tenant administrator and re-run, or inspect the app in the Entra portal:");
                         logger.LogInformation("    https://portal.azure.com -> Entra ID -> App registrations -> {DisplayName} -> API permissions", displayName);
                     }
@@ -646,6 +646,10 @@ public class QueryEntraCommand
         {
             var displayName = await graphService.GetServicePrincipalDisplayNameByAppIdAsync(tenantId, resourceAppId, ct);
             if (!string.IsNullOrWhiteSpace(displayName)) return displayName!;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

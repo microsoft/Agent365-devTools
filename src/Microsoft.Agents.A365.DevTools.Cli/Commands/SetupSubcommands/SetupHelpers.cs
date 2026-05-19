@@ -773,6 +773,7 @@ internal static class SetupHelpers
                 logger.LogInformation("  {N}. Agent identity delegated permissions (PowerShell):", actionCount);
                 logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.DelegatedGrantRequiredRoles);
                 logger.LogInformation("");
+                logger.LogInformation("     # Note: these scopes are for your PowerShell session only — they are NOT required on your CLI client app registration.");
                 logger.LogInformation("     Connect-MgGraph -TenantId '{TenantId}' -Scopes 'DelegatedPermissionGrant.ReadWrite.All', 'Directory.Read.All'", results.TenantId ?? "<tenant-id>");
                 logger.LogInformation("");
                 logger.LogInformation("     $agentSpId = '{AgentSpId}'", results.AgentIdentityId ?? "<agent-identity-sp-id>");

@@ -778,10 +778,10 @@ public class PermissionsSubcommandTests
             Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(RoleCheckResult.HasRole));
 
-        _mockGraphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+        _mockGraphApiService.CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult(true));
+            .Returns(Task.FromResult<(bool Success, int StatusCode, string? ErrorCode)>((true, 201, null)));
 
         _mockBlueprintService.SetInheritablePermissionsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),

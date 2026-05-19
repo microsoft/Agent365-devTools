@@ -56,8 +56,8 @@ internal static class PermissionsSubcommand
 
         // Add subcommands
         permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider, resolver));
-        permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
-        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
+        permissionsCommand.AddCommand(CreateBotSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider, resolver));
+        permissionsCommand.AddCommand(CreateCustomSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider, resolver));
         permissionsCommand.AddCommand(CopilotStudioSubcommand.CreateCommand(logger, authValidator, configService, executor, graphApiService, blueprintService, resolver));
 
         return permissionsCommand;
@@ -222,7 +222,8 @@ internal static class PermissionsSubcommand
                 blueprintService,
                 setupConfig,
                 false,
-                removeLegacyAtgScopes: removeLegacyScopes);
+                removeLegacyAtgScopes: removeLegacyScopes,
+                confirmationProvider: confirmationProvider);
 
         });
 
@@ -239,6 +240,7 @@ internal static class PermissionsSubcommand
         CommandExecutor executor,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
+        IConfirmationProvider? confirmationProvider = null,
         IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("bot",
@@ -332,7 +334,8 @@ internal static class PermissionsSubcommand
                 setupConfig,
                 graphApiService,
                 blueprintService,
-                false);
+                false,
+                confirmationProvider: confirmationProvider);
             if (!success)
                 context.ExitCode = 1;
 
@@ -351,6 +354,7 @@ internal static class PermissionsSubcommand
         CommandExecutor executor,
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
+        IConfirmationProvider? confirmationProvider = null,
         IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("custom",
@@ -538,8 +542,6 @@ internal static class PermissionsSubcommand
                 }
                 catch (SetupValidationException ex)
                 {
-                    // The OAuth2 grant POST requires DelegatedPermissionGrant.ReadWrite.All (admin scope).
-                    // Non-admin developers hit a 403 / Authorization_RequestDenied here.
                     // Prefer the structured failure info that EnsureResourcePermissionsAsync attaches
                     // to ex.Context (graphStatusCode, graphErrorCode) — branching on a parsed status
                     // code or error code is precise. Fall back to substring matching for safety in
@@ -594,7 +596,8 @@ internal static class PermissionsSubcommand
                     graphApiService,
                     blueprintService,
                     setupConfig,
-                    false);
+                    false,
+                    confirmationProvider: confirmationProvider);
             }
 
         });
@@ -629,7 +632,8 @@ internal static class PermissionsSubcommand
         bool iSetupAll,
         SetupResults? setupResults = null,
         CancellationToken cancellationToken = default,
-        bool removeLegacyAtgScopes = false)
+        bool removeLegacyAtgScopes = false,
+        IConfirmationProvider? confirmationProvider = null)
     {
         logger.LogInformation("");
         logger.LogInformation("Configuring MCP server permissions...");
@@ -674,7 +678,8 @@ internal static class PermissionsSubcommand
                 graphApiService, blueprintService, setupConfig,
                 setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                 specs, logger, setupResults, cancellationToken,
-                knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
+                knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
+                confirmationProvider: confirmationProvider);
 
             logger.LogInformation("");
             if (consentGranted)
@@ -724,7 +729,8 @@ internal static class PermissionsSubcommand
         AgentBlueprintService blueprintService,
         bool iSetupAll,
         SetupResults? setupResults = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IConfirmationProvider? confirmationProvider = null)
     {
         if (string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintId))
         {
@@ -745,7 +751,8 @@ internal static class PermissionsSubcommand
                 graphService, blueprintService, setupConfig,
                 setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                 specs, logger, localResults, cancellationToken,
-                knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
+                knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
+                confirmationProvider: confirmationProvider);
 
             await configService.SaveStateAsync(setupConfig);
 
@@ -953,7 +960,8 @@ internal static class PermissionsSubcommand
         Models.Agent365Config setupConfig,
         bool isSetupAll,
         SetupResults? setupResults = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IConfirmationProvider? confirmationProvider = null)
     {
         logger.LogInformation("");
         logger.LogInformation("Configuring custom blueprint permissions...");
@@ -1044,7 +1052,8 @@ internal static class PermissionsSubcommand
                     graphApiService, blueprintService, setupConfig,
                     setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                     specList, logger, setupResults, cancellationToken,
-                    knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId);
+                    knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
+                    confirmationProvider: confirmationProvider);
 
                 customAdminConsentUrl = adminConsentUrl;
                 customConsentGranted = consentGranted;

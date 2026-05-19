@@ -204,9 +204,9 @@ internal static class NonDwBlueprintSetupOrchestrator
             ctx.Logger.LogInformation("  - {Permission}", p);
         ctx.Logger.LogInformation("");
 
-        // The PATCH on oauth2PermissionGrants requires DelegatedPermissionGrant.ReadWrite.All
-        // (admin-only). Skip the prompt for non-admins so we don't ask the user to confirm
-        // an operation they cannot complete; print the admin consent URL for hand-off instead.
+        // OAuth2 grant operations require Global Administrator. Skip the prompt for non-admins
+        // so we don't ask them to confirm an operation they cannot complete; print the admin
+        // consent URL for hand-off instead.
         var roleCheck = await ctx.GraphApiService.IsCurrentUserAdminAsync(tenantId, ctx.CancellationToken);
         if (roleCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {

@@ -751,7 +751,7 @@ public class AgentBlueprintService
                     {
                         _logger.LogError("Failed to delete existing oauth2PermissionGrant {Id} for client {ClientId} and resource {ResourceId}. " +
                                        "This may indicate insufficient permissions or the grant is protected. " +
-                                       "Required permissions: DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All", 
+                                       "The signed-in account must be an Application Administrator or Global Administrator to delete oauth2PermissionGrants.",
                                        id, clientSpObjectId, resourceSpObjectId);
                         _logger.LogError("Troubleshooting steps:");
                         _logger.LogError("  1. Verify your account has sufficient Azure AD permissions");

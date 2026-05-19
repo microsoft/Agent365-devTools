@@ -139,4 +139,160 @@ public class BatchPermissionsOrchestratorTests
         Guid.TryParse(stateMatch.Groups[1].Value, out _).Should().BeTrue(
             because: "state parameter must be a random GUID, not a hardcoded value like 'xyz123'");
     }
+
+    /// <summary>
+    /// When a Global Administrator is prompted and explicitly declines the tenant-wide consent,
+    /// Phase 2b (OAuth2 grants) and Phase 3 (browser consent) must both be skipped entirely.
+    /// The return must be (false, null) — no URL, no browser open — so the caller summary
+    /// shows the correct "declined" state rather than an unexpected "action required" URL.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_WhenGaDeclines_SkipsPhase2bAndReturnsNoConsentUrl()
+    {
+        // Arrange — Phase 1 succeeds: pre-warm call returns a valid document.
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
+
+        _graph.LookupServicePrincipalByAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<string?>("blueprint-sp-id"));
+
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("resource-sp-id"));
+
+        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.HasRole));
+
+        // Phase 2a — inheritable permissions succeed.
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(bool ok, bool alreadyExists, string? error)>((true, false, null)));
+
+        _blueprintService.VerifyInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<(bool exists, bool scopesAllAllowed, bool rolesAllAllowed, string? error)>((true, true, true, null)));
+
+        // GA declines the prompt.
+        var confirmationProvider = Substitute.For<IConfirmationProvider>();
+        confirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(false));
+
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-app-id",
+            AgentBlueprintDisplayName = "Test Blueprint"
+        };
+
+        var specs = new[]
+        {
+            new ResourcePermissionSpec(
+                AuthenticationConstants.MicrosoftGraphResourceAppId,
+                "Microsoft Graph",
+                new[] { "Mail.ReadWrite" },
+                SetInheritable: true)
+        };
+
+        // Act
+        var (blueprintUpdated, inheritedConfigured, consentGranted, consentUrl) =
+            await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+                _graph, _blueprintService, config,
+                blueprintAppId: "blueprint-app-id",
+                tenantId: "tenant-id",
+                specs: specs,
+                _logger,
+                setupResults: null,
+                ct: default,
+                confirmationProvider: confirmationProvider);
+
+        // Assert — GA declined, so neither Phase 2b nor Phase 3 ran.
+        consentGranted.Should().BeFalse(because: "GA declined the prompt");
+        consentUrl.Should().BeNull(because: "no browser URL should be produced when GA explicitly declined");
+
+        await _graph.DidNotReceive().CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+    }
+
+    /// <summary>
+    /// When no confirmation provider is supplied, an unattended Global Administrator run should
+    /// fire Phase 2b (OAuth2 grants) silently — the pre-PR #421 behavior.
+    /// This guards backward compatibility so existing headless scripts continue to work.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_WhenGaAndNoConfirmationProvider_GrantsFiredSilently()
+    {
+        // Arrange — Phase 1 succeeds.
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
+
+        _graph.LookupServicePrincipalByAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<string?>("blueprint-sp-id"));
+
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("resource-sp-id"));
+
+        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.HasRole));
+
+        // Phase 2a — inheritable permissions succeed.
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(bool ok, bool alreadyExists, string? error)>((true, false, null)));
+
+        _blueprintService.VerifyInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<(bool exists, bool scopesAllAllowed, bool rolesAllAllowed, string? error)>((true, true, true, null)));
+
+        // Phase 2b — OAuth2 grant call succeeds.
+        _graph.CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<(bool Success, int StatusCode, string? ErrorCode)>((true, 201, null)));
+
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-app-id"
+        };
+
+        // spec has no AppRoleScopes so PerformS2SGrantsAsync returns immediately.
+        var specs = new[]
+        {
+            new ResourcePermissionSpec(
+                AuthenticationConstants.MicrosoftGraphResourceAppId,
+                "Microsoft Graph",
+                new[] { "Mail.ReadWrite" },
+                SetInheritable: true)
+        };
+
+        // Act — no confirmationProvider (headless / unattended GA script).
+        var (blueprintUpdated, inheritedConfigured, consentGranted, consentUrl) =
+            await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+                _graph, _blueprintService, config,
+                blueprintAppId: "blueprint-app-id",
+                tenantId: "tenant-id",
+                specs: specs,
+                _logger,
+                setupResults: null,
+                ct: default);
+
+        // Assert — grants fired without a prompt and consent was granted.
+        consentGranted.Should().BeTrue(because: "unattended GA should grant silently when no confirmationProvider is set");
+        consentUrl.Should().BeNull(because: "no URL is needed when grants succeeded");
+
+        await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+    }
 }

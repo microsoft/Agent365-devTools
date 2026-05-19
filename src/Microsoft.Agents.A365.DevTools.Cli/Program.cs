@@ -27,6 +27,25 @@ class Program
         var isVerbose = args.Contains("--verbose") || args.Contains("-v");
         var logLevel = isVerbose ? LogLevel.Debug : LogLevel.Information;
 
+        // Write a run-start separator directly to the log file before the DI logger is ready.
+        // This makes it easy to find where each invocation begins when reviewing the log.
+        if (!string.IsNullOrEmpty(logFilePath))
+        {
+            try
+            {
+                // args are CLI arguments only — no secrets are passed as args (API keys, passwords are read from config/env).
+                var commandLine = "a365 " + string.Join(" ", args);
+                var separator =
+                    Environment.NewLine +
+                    "============================================================" + Environment.NewLine +
+                    $"Command : {commandLine}" + Environment.NewLine +
+                    $"Started : {DateTime.Now:yyyy-MM-dd HH:mm:ss}" + Environment.NewLine +
+                    "============================================================" + Environment.NewLine;
+                File.AppendAllText(logFilePath, separator);
+            }
+            catch { }
+        }
+
         // Configure Microsoft.Extensions.Logging with clean console formatter
         var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
         var startupLogger = loggerFactory.CreateLogger("Program");

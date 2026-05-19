@@ -366,7 +366,7 @@ The CLI configures two independent layers of permissions for agent blueprints:
 1. **Inheritable Permissions** — Blueprint-level permissions that agent instances inherit automatically. Set via the Agent Blueprint API (`/beta/applications/microsoft.graph.agentIdentityBlueprint/{id}/inheritablePermissions`). Requires Agent ID Administrator or Global Administrator role. Read back after writing to verify presence.
 2. **OAuth2 Grants** — Tenant-wide delegated consent via Graph API `/oauth2PermissionGrants` with `consentType=AllPrincipals`. Requires Global Administrator only.
 
-> **Technical limitation:** `oauth2PermissionGrant` creation via the API requires `DelegatedPermissionGrant.ReadWrite.All`, which is an admin-only scope. Additionally, Global Administrator bypasses entitlement validation and can grant any scope; non-admin users receive HTTP 403 (insufficient privileges) or HTTP 400 (entitlement not found) for all resource SPs. There is no self-service path for non-admin users.
+> **Technical limitation:** `oauth2PermissionGrant` creation via the API requires Global Administrator. GA bypasses entitlement validation and can grant any scope; non-admin users receive HTTP 403 (insufficient privileges) or HTTP 400 (entitlement not found) for all resource SPs. There is no self-service path for non-admin users.
 
 > **Note:** `requiredResourceAccess` (portal "API permissions") is **not** configured for Agent Blueprints — it is not supported by the Agent ID API.
 
