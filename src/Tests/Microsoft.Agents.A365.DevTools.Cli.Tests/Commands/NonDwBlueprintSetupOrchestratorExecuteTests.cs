@@ -870,8 +870,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// When AgenticAppId is missing (the SP object ID was never stored), S2SAppRoleGranted
-    /// is set to false and no grant calls are made — the SP ID is required as the grant target.
+    /// When AgenticAppId is missing (the SP object ID was never stored), AgentIdentityS2SOutcome
+    /// is set to Failed and no grant calls are made — the SP ID is required as the grant target.
     /// AgenticAppId holds the SP object ID directly (not an app ID); no lookup is performed.
     /// </summary>
     [Fact]
@@ -882,15 +882,15 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 
-        ctx.Results.S2SAppRoleGranted.Should().Be(false,
-            because: "when AgenticAppId (the SP object ID) is absent, grants cannot proceed and the result must be false");
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
+            because: "when AgenticAppId (the SP object ID) is absent, grants cannot proceed and the outcome must be Failed");
         await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>
-    /// When all GrantAppRoleAssignmentAsync calls return true, S2SAppRoleGranted is true
+    /// When all GrantAppRoleAssignmentAsync calls return true, AgentIdentityS2SOutcome is Granted
     /// and no warning is added — this is the Global Admin success path.
     /// </summary>
     [Fact]
@@ -910,15 +910,15 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 
-        ctx.Results.S2SAppRoleGranted.Should().Be(true,
-            because: "when all app role assignments succeed, S2SAppRoleGranted must be true");
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
+            because: "when all app role assignments succeed, AgentIdentityS2SOutcome must be Granted");
         ctx.Results.HasWarnings.Should().BeFalse(
             because: "a successful S2S grant must not add any warnings to setup results");
     }
 
     /// <summary>
     /// When GrantAppRoleAssignmentAsync returns false (caller lacks Global Admin),
-    /// S2SAppRoleGranted is false, a warning is added, and PowerShell instructions are logged.
+    /// AgentIdentityS2SOutcome is Failed, a warning is added, and PowerShell instructions are logged.
     /// </summary>
     [Fact]
     public async Task GrantOrInstructAgentIdentityAppPermissions_GrantFails_SetsGrantedFalse_AddsWarning()
@@ -937,8 +937,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 
-        ctx.Results.S2SAppRoleGranted.Should().Be(false,
-            because: "when app role assignments fail (non-admin path), S2SAppRoleGranted must be false");
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
+            because: "when app role assignments fail (non-admin path), AgentIdentityS2SOutcome must be Failed");
         ctx.Results.HasWarnings.Should().BeTrue(
             because: "a failed S2S grant must add a warning so the setup summary shows Action Required");
         ctx.Results.Warnings.Should().ContainSingle()

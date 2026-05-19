@@ -4,6 +4,7 @@
 using System.Text.Json;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -16,11 +17,14 @@ public class AgentBlueprintService
 {
     private readonly ILogger<AgentBlueprintService> _logger;
     private readonly GraphApiService _graphApiService;
+    private readonly RetryHelper _retryHelper;
 
     public AgentBlueprintService(ILogger<AgentBlueprintService> logger, GraphApiService graphApiService)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _graphApiService = graphApiService ?? throw new ArgumentNullException(nameof(graphApiService));
+        // RetryHelper with 5 attempts, 2 second base delay for S2S app role assignment transient errors (404 due to SP replication)
+        _retryHelper = new RetryHelper(logger, maxRetries: 5, baseDelaySeconds: 2);
     }
 
     /// <summary>
@@ -65,6 +69,7 @@ public class AgentBlueprintService
             return null;
         }
     }
+
 
     /// <summary>
     /// Delete an Agent Blueprint application using the special agentIdentityBlueprint endpoint.
@@ -365,9 +370,15 @@ public class AgentBlueprintService
     }
 
     /// <summary>
-    /// Sets inheritable permissions for an agent blueprint with proper scope merging.
-    /// Checks if permissions already exist and merges scopes if needed via PATCH.
+    /// Configures inheritable permissions on an agent blueprint for the given resource using the
+    /// allAllowed (wildcard) pattern on both inheritableScopes and inheritableRoles. The CLI no
+    /// longer writes the deprecated enumerated form; whatever scopes and roles are granted to the
+    /// blueprint SP for this resource become inheritable by agent identities created from the
+    /// blueprint. Schema: https://learn.microsoft.com/en-us/entra/agent-id/configure-inheritable-permissions-blueprints
     /// </summary>
+    /// <param name="scopes">Informational only — surfaces in log lines so operators can correlate
+    /// the call with the scope set granted to the blueprint SP. Not used to construct the request
+    /// body, which is a fixed allAllowed shape.</param>
     public virtual async Task<(bool ok, bool alreadyExists, string? error)> SetInheritablePermissionsAsync(
         string tenantId,
         string blueprintId,
@@ -376,22 +387,14 @@ public class AgentBlueprintService
         IEnumerable<string>? requiredScopes = null,
         CancellationToken ct = default)
     {
-        var desiredSet = new HashSet<string>(scopes ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
-
-        // Normalize into array form expected by Graph (each element is a single scope string)
-        var desiredArray = desiredSet.ToArray();
-
         string? blueprintObjectId = null;
         try
         {
-            // Resolve blueprintId to object ID if needed
             blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
 
-            // Retrieve existing inheritable permissions
             var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
             var existingDoc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, requiredScopes);
 
-            // Inspect existing entries
             JsonElement? existingEntry = null;
             if (existingDoc != null && existingDoc.RootElement.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
             {
@@ -408,30 +411,21 @@ public class AgentBlueprintService
 
             if (existingEntry is not null)
             {
-                // Parse existing scopes and merge with desired scopes
-                var currentScopes = ParseInheritableScopesFromJson(existingEntry.Value);
-                var currentSet = new HashSet<string>(currentScopes, StringComparer.OrdinalIgnoreCase);
-                
-                if (desiredSet.IsSubsetOf(currentSet))
+                var (scopesAllAllowed, rolesAllAllowed) = IsAllAllowedEntry(existingEntry.Value);
+                if (scopesAllAllowed && rolesAllAllowed)
                 {
-                    _logger.LogDebug("Inheritable permissions already exist for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                    _logger.LogDebug("Inheritable permissions already allAllowed for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
                     return (ok: true, alreadyExists: true, error: null);
                 }
-
-                // Union and PATCH
-                currentSet.UnionWith(desiredSet);
-                var mergedArray = currentSet.OrderBy(s => s).ToArray();
 
                 var patchPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions/{resourceAppId}";
                 var patchPayload = new
                 {
-                    inheritableScopes = new EnumeratedScopes
-                    {
-                        Scopes = mergedArray
-                    }
+                    inheritableScopes = new AllAllowedScopes(),
+                    inheritableRoles = new AllAllowedRoles()
                 };
 
-                var patched = false;
+                bool patched;
                 try
                 {
                     patched = await _graphApiService.GraphPatchAsync(tenantId, patchPath, patchPayload, ct, requiredScopes);
@@ -449,19 +443,17 @@ public class AgentBlueprintService
                     return (ok: false, alreadyExists: false, error: $"Graph PATCH returned false for blueprint {blueprintObjectId} resource {resourceAppId}");
                 }
 
-                _logger.LogDebug("Patched inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+                _logger.LogDebug("Patched inheritable permissions to allAllowed for blueprint {Blueprint} resource {Resource} (granted scopes context: [{Scopes}])",
+                    blueprintObjectId, resourceAppId, string.Join(' ', scopes ?? Enumerable.Empty<string>()));
                 return (ok: true, alreadyExists: false, error: null);
             }
 
-            // No existing entry -> create
             var postPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
             var postPayload = new
             {
                 resourceAppId = resourceAppId,
-                inheritableScopes = new EnumeratedScopes
-                {
-                    Scopes = desiredArray
-                }
+                inheritableScopes = new AllAllowedScopes(),
+                inheritableRoles = new AllAllowedRoles()
             };
 
             var createdResp = await _graphApiService.GraphPostWithResponseAsync(tenantId, postPath, postPayload, ct, requiredScopes);
@@ -479,7 +471,8 @@ public class AgentBlueprintService
                 return (ok: false, alreadyExists: false, error: err);
             }
 
-            _logger.LogDebug("Created inheritable permissions for blueprint {Blueprint} resource {Resource}", blueprintObjectId, resourceAppId);
+            _logger.LogDebug("Created allAllowed inheritable permissions for blueprint {Blueprint} resource {Resource} (granted scopes context: [{Scopes}])",
+                blueprintObjectId, resourceAppId, string.Join(' ', scopes ?? Enumerable.Empty<string>()));
             return (ok: true, alreadyExists: false, error: null);
         }
         catch (Exception ex)
@@ -495,13 +488,13 @@ public class AgentBlueprintService
     /// Each entry contains the resource app ID and its list of scopes.
     /// Returns an empty list if none are configured or if retrieval fails.
     /// </summary>
-    public virtual async Task<List<(string ResourceAppId, List<string> Scopes)>> ListInheritablePermissionsAsync(
+    public virtual async Task<List<(string ResourceAppId, bool ScopesAllAllowed, bool RolesAllAllowed)>> ListInheritablePermissionsAsync(
         string tenantId,
         string blueprintId,
         IEnumerable<string>? requiredScopes = null,
         CancellationToken ct = default)
     {
-        var results = new List<(string ResourceAppId, List<string> Scopes)>();
+        var results = new List<(string ResourceAppId, bool ScopesAllAllowed, bool RolesAllAllowed)>();
         try
         {
             var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
@@ -514,8 +507,8 @@ public class AgentBlueprintService
                     var resourceAppId = item.TryGetProperty("resourceAppId", out var r) ? r.GetString() : null;
                     if (string.IsNullOrWhiteSpace(resourceAppId)) continue;
 
-                    var scopes = ParseInheritableScopesFromJson(item);
-                    results.Add((resourceAppId, scopes));
+                    var (scopesAllAllowed, rolesAllAllowed) = IsAllAllowedEntry(item);
+                    results.Add((resourceAppId, scopesAllAllowed, rolesAllAllowed));
                 }
             }
         }
@@ -525,6 +518,125 @@ public class AgentBlueprintService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Bulk-fetches the permissions that have been granted on the blueprint's service principal for
+    /// each of the supplied resource app IDs. Returns a per-resource (DelegatedScopes, AppRoleNames)
+    /// tuple. Used by the `query-entra inheritance` command so operators can see exactly which scopes
+    /// and roles will be inherited by agent identities under kind=allAllowed — the wildcard inherits
+    /// whatever is granted on the blueprint SP, so this is the authoritative answer to "what will the
+    /// agent's token actually carry?"
+    /// </summary>
+    /// <param name="blueprintAppId">Application ID of the blueprint (will be resolved to its SP object ID).</param>
+    /// <param name="resourceAppIds">Resource app IDs of interest (typically the entries from inheritablePermissions).</param>
+    /// <returns>
+    /// Dictionary keyed by resource app ID. Resources with no grants on the blueprint SP are
+    /// present in the dictionary with empty arrays. Resources whose SP cannot be resolved are
+    /// omitted (a debug log is emitted).
+    /// </returns>
+    public virtual async Task<Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)>> GetBlueprintSpGrantsAsync(
+        string tenantId,
+        string blueprintAppId,
+        IEnumerable<string> resourceAppIds,
+        IEnumerable<string>? requiredScopes = null,
+        CancellationToken ct = default)
+    {
+        var result = new Dictionary<string, (string[] DelegatedScopes, string[] AppRoleNames)>(StringComparer.OrdinalIgnoreCase);
+        var appIds = resourceAppIds?.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                     ?? new List<string>();
+        if (appIds.Count == 0) return result;
+
+        var blueprintSpObjectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, blueprintAppId, ct, requiredScopes);
+        if (string.IsNullOrWhiteSpace(blueprintSpObjectId))
+        {
+            _logger.LogWarning("Blueprint service principal not found for app ID {BlueprintAppId} — cannot enumerate granted permissions.", blueprintAppId);
+            return result;
+        }
+
+        // One bulk fetch each — by resource SP object ID, not by app ID, so we'll need a resolution table.
+        var delegatedByResourceSpId = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var allGrants = await _graphApiService.GetOauth2PermissionGrantsAsync(tenantId, blueprintSpObjectId, ct);
+        foreach (var (resourceSpId, scope, _) in allGrants)
+        {
+            if (string.IsNullOrWhiteSpace(resourceSpId)) continue;
+            if (!delegatedByResourceSpId.TryGetValue(resourceSpId, out var list))
+            {
+                list = new List<string>();
+                delegatedByResourceSpId[resourceSpId] = list;
+            }
+            // Scopes come as a space-delimited single string per grant — split into individual scopes.
+            foreach (var tok in (scope ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                list.Add(tok);
+        }
+
+        var appRoleIdsByResourceSpId = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        using (var assignmentsDoc = await _graphApiService.GraphGetAsync(
+            tenantId, $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments", ct, scopes: requiredScopes))
+        {
+            if (assignmentsDoc != null &&
+                assignmentsDoc.RootElement.TryGetProperty("value", out var assignmentsArr) &&
+                assignmentsArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var assignment in assignmentsArr.EnumerateArray())
+                {
+                    var resId = assignment.TryGetProperty("resourceId", out var r) ? r.GetString() : null;
+                    var roleId = assignment.TryGetProperty("appRoleId", out var ar) ? ar.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(resId) || string.IsNullOrWhiteSpace(roleId)) continue;
+                    if (!appRoleIdsByResourceSpId.TryGetValue(resId, out var list))
+                    {
+                        list = new List<string>();
+                        appRoleIdsByResourceSpId[resId] = list;
+                    }
+                    list.Add(roleId);
+                }
+            }
+        }
+
+        foreach (var resourceAppId in appIds)
+        {
+            var resourceSpId = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct, requiredScopes);
+            if (string.IsNullOrWhiteSpace(resourceSpId))
+            {
+                _logger.LogDebug("Resource SP not found for app ID {ResourceAppId} — granted permissions cannot be enumerated.", resourceAppId);
+                continue;
+            }
+
+            var delegatedScopes = delegatedByResourceSpId.TryGetValue(resourceSpId, out var ds)
+                ? ds.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToArray()
+                : Array.Empty<string>();
+
+            string[] appRoleNames = Array.Empty<string>();
+            if (appRoleIdsByResourceSpId.TryGetValue(resourceSpId, out var roleIds) && roleIds.Count > 0)
+            {
+                // Resolve role IDs -> names by reading the resource SP's appRoles array. Unknown
+                // role IDs fall back to a "<role-id>" placeholder so the operator can still see them.
+                var roleIdSet = new HashSet<string>(roleIds, StringComparer.OrdinalIgnoreCase);
+                var nameById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                using var resourceSpDoc = await _graphApiService.GraphGetAsync(
+                    tenantId, $"/v1.0/servicePrincipals/{resourceSpId}?$select=appRoles", ct, scopes: requiredScopes);
+                if (resourceSpDoc != null &&
+                    resourceSpDoc.RootElement.TryGetProperty("appRoles", out var rolesEl) &&
+                    rolesEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var role in rolesEl.EnumerateArray())
+                    {
+                        var id = role.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                        var name = role.TryGetProperty("value", out var valEl) ? valEl.GetString() : null;
+                        if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(name))
+                            nameById[id] = name;
+                    }
+                }
+                appRoleNames = roleIdSet
+                    .Select(id => nameById.TryGetValue(id, out var n) ? n : $"<{id}>")
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            result[resourceAppId] = (delegatedScopes, appRoleNames);
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -552,9 +664,10 @@ public class AgentBlueprintService
     }
 
     /// <summary>
-    /// Verifies that inheritable permissions are correctly configured for a resource
+    /// Verifies that inheritable permissions are correctly configured for a resource. Returns whether
+    /// the entry exists and whether both inheritableScopes and inheritableRoles are at kind=allAllowed.
     /// </summary>
-    public virtual async Task<(bool exists, string[] scopes, string? error)> VerifyInheritablePermissionsAsync(
+    public virtual async Task<(bool exists, bool scopesAllAllowed, bool rolesAllAllowed, string? error)> VerifyInheritablePermissionsAsync(
         string tenantId,
         string blueprintId,
         string resourceAppId,
@@ -563,19 +676,16 @@ public class AgentBlueprintService
     {
         try
         {
-            // Resolve blueprintId to object ID if needed
             var blueprintObjectId = await ResolveBlueprintObjectIdAsync(tenantId, blueprintId, ct, requiredScopes);
 
-            // Retrieve inheritable permissions
             var getPath = $"/beta/applications/microsoft.graph.agentIdentityBlueprint/{blueprintObjectId}/inheritablePermissions";
             var existingDoc = await _graphApiService.GraphGetAsync(tenantId, getPath, ct, requiredScopes);
 
             if (existingDoc == null)
             {
-                return (exists: false, scopes: Array.Empty<string>(), error: "Failed to retrieve inheritable permissions");
+                return (exists: false, scopesAllAllowed: false, rolesAllAllowed: false, error: "Failed to retrieve inheritable permissions");
             }
 
-            // Find the entry for this resource
             if (existingDoc.RootElement.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in value.EnumerateArray())
@@ -583,19 +693,18 @@ public class AgentBlueprintService
                     var rId = item.TryGetProperty("resourceAppId", out var r) ? r.GetString() : null;
                     if (string.Equals(rId, resourceAppId, StringComparison.OrdinalIgnoreCase))
                     {
-                        // Found the resource, parse and return scopes
-                        var scopesList = ParseInheritableScopesFromJson(item);
-                        return (exists: true, scopes: scopesList.ToArray(), error: null);
+                        var (scopesAllAllowed, rolesAllAllowed) = IsAllAllowedEntry(item);
+                        return (exists: true, scopesAllAllowed, rolesAllAllowed, error: null);
                     }
                 }
             }
 
-            return (exists: false, scopes: Array.Empty<string>(), error: null);
+            return (exists: false, scopesAllAllowed: false, rolesAllAllowed: false, error: null);
         }
         catch (Exception ex)
         {
             _logger.LogError("Failed to verify inheritable permissions: {Error}", ex.Message);
-            return (exists: false, scopes: Array.Empty<string>(), error: ex.Message);
+            return (exists: false, scopesAllAllowed: false, rolesAllAllowed: false, error: ex.Message);
         }
     }
 
@@ -1117,12 +1226,17 @@ public class AgentBlueprintService
                     appRoleId = appRoleId
                 };
 
-                var resp = await _graphApiService.GraphPostWithResponseAsync(
-                    tenantId,
-                    $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
-                    payload,
-                    ct,
-                    requiredScopes);
+                // Retry on 404 (transient: service principal not yet fully replicated in directory after creation).
+                // maxRetries / baseDelaySeconds come from the _retryHelper instance constructed in the ctor.
+                var resp = await _retryHelper.ExecuteWithRetryAsync(
+                    async retryCt => await _graphApiService.GraphPostWithResponseAsync(
+                        tenantId,
+                        $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
+                        payload,
+                        retryCt,
+                        requiredScopes),
+                    result => (int)result.StatusCode == 404,
+                    cancellationToken: ct);
 
                 if (resp.IsSuccess)
                 {
@@ -1147,25 +1261,21 @@ public class AgentBlueprintService
         }
     }
 
-    private static List<string> ParseInheritableScopesFromJson(JsonElement entry)
+    // Reads kind on both inheritableScopes and inheritableRoles of an inheritablePermissions entry
+    // returned by GET. Both must be "allAllowed" for the entry to be considered fully migrated to
+    // the new wildcard form. The legacy enumerated form leaves both flags false here.
+    private static (bool scopesAllAllowed, bool rolesAllAllowed) IsAllAllowedEntry(JsonElement entry)
     {
-        var scopesList = new List<string>();
-        
-        if (entry.TryGetProperty("inheritableScopes", out var inheritable) &&
-            inheritable.TryGetProperty("scopes", out var scopesEl) && 
-            scopesEl.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var s in scopesEl.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.String))
-            {
-                var raw = s.GetString() ?? string.Empty;
-                // Some entries may contain space-separated tokens; split defensively
-                foreach (var tok in raw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                {
-                    scopesList.Add(tok);
-                }
-            }
-        }
-        
-        return scopesList;
+        return (ReadKindEqualsAllAllowed(entry, "inheritableScopes"),
+                ReadKindEqualsAllAllowed(entry, "inheritableRoles"));
+    }
+
+    private static bool ReadKindEqualsAllAllowed(JsonElement entry, string propertyName)
+    {
+        return entry.TryGetProperty(propertyName, out var prop)
+            && prop.ValueKind == JsonValueKind.Object
+            && prop.TryGetProperty("kind", out var kindEl)
+            && kindEl.ValueKind == JsonValueKind.String
+            && string.Equals(kindEl.GetString(), "allAllowed", StringComparison.OrdinalIgnoreCase);
     }
 }

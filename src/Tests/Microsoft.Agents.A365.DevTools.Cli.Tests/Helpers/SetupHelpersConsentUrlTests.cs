@@ -241,4 +241,69 @@ public class SetupHelpersConsentUrlTests
         scopeParam.Should().Contain("%20",
             because: "multiple scopes must be space-separated using %20");
     }
+
+    // ── isM365 gating ─────────────────────────────────────────────────────────
+    //
+    // Messaging Bot is the only resource gated on isM365 because non-M365 tenants
+    // typically lack the Messaging Bot resource SP, and the /v2.0/adminconsent
+    // endpoint returns AADSTS650053 when any requested scope is unknown. Graph,
+    // MCP (Agent 365 Tools), Observability, and Power Platform SPs are provisioned
+    // during blueprint permission stamping, so they must always appear in the
+    // consent URLs whenever they have scopes.
+
+    [Fact]
+    public void BuildAdminConsentUrls_NonM365_ExcludesMessagingBotButKeepsAllOthers()
+    {
+        var urls = SetupHelpers.BuildAdminConsentUrls(
+            TenantId, BlueprintClientId,
+            new[] { "Mail.Send" }, new[] { "McpServers.Mail.All" },
+            isM365: false);
+
+        urls.Select(u => u.ResourceName).Should().BeEquivalentTo(new[]
+        {
+            "Microsoft Graph",
+            "Agent 365 Tools",
+            "Observability API",
+            "Power Platform API",
+        }, because: "non-M365 tenants lack the Messaging Bot resource SP — Bot would cause AADSTS650053 if included");
+    }
+
+    [Fact]
+    public void BuildCombinedConsentUrl_NonM365_ExcludesBotScopeButKeepsGraphMcpObsPp()
+    {
+        var url = SetupHelpers.BuildCombinedConsentUrl(
+            TenantId, BlueprintClientId,
+            new[] { "Mail.Send" }, new[] { "McpServers.Mail.All" },
+            isM365: false);
+
+        url.Should().Contain(Uri.EscapeDataString($"{AuthenticationConstants.MicrosoftGraphResourceUri}/Mail.Send"),
+            because: "Graph scopes are stamped on the blueprint for all agents — non-admin users need the combined URL to cover them");
+        url.Should().Contain(Uri.EscapeDataString($"{McpConstants.Agent365ToolsIdentifierUri}/McpServers.Mail.All"),
+            because: "MCP scopes are stamped on the blueprint when a ToolingManifest.json is present — non-admin users need the combined URL to cover them");
+        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"));
+        url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
+
+        url.Should().NotContain(Uri.EscapeDataString(ConfigConstants.MessagingBotApiIdentifierUri),
+            because: "Messaging Bot must be omitted from the combined URL for non-M365 agents to avoid AADSTS650053 when the Bot resource SP is absent from the tenant");
+    }
+
+    [Fact]
+    public void PopulateAdminConsentUrls_NonM365_ResourceConsentsExcludeMessagingBot()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TenantId,
+            AgentBlueprintId = BlueprintClientId,
+        };
+
+        var names = SetupHelpers.PopulateAdminConsentUrls(
+            config, McpConstants.WorkIQToolsProdAppId, new[] { "McpServers.Mail.All" },
+            isM365: false);
+
+        names.Should().NotContain("Messaging Bot API",
+            because: "non-M365 agents must not advertise a Messaging Bot consent URL — the resource SP is typically absent and the URL would return AADSTS650053");
+        config.ResourceConsents.Should().NotContain(
+            rc => rc.ResourceAppId == ConfigConstants.MessagingBotApiAppId,
+            because: "no Messaging Bot consent URL is generated for non-M365 agents, so no resourceConsents entry should be persisted");
+    }
 }

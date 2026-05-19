@@ -43,6 +43,22 @@ public interface IConfigService
         string statePath = "a365.generated.config.json");
 
     /// <summary>
+    /// Backs up the current generated state file (if it exists) to a timestamped sibling file,
+    /// then resets every dynamic (get/set) property on <paramref name="config"/> to its default value
+    /// and persists an empty state file. Use when a structural root resource (e.g. the agent blueprint)
+    /// is about to be created fresh, making all downstream cached IDs (agent identity, registration,
+    /// SP IDs, secrets, consents, bot, infra) invalid by construction.
+    /// </summary>
+    /// <param name="config">Configuration instance whose dynamic properties will be reset in place.</param>
+    /// <param name="reason">Short human-readable reason used in the backup file name suffix.</param>
+    /// <param name="statePath">Path to the generated state file (default: a365.generated.config.json).</param>
+    /// <returns>The absolute backup path if a backup was created, or null if no existing file was present.</returns>
+    Task<string?> InvalidateGeneratedConfigAsync(
+        Agent365Config config,
+        string reason,
+        string statePath = "a365.generated.config.json");
+
+    /// <summary>
     /// Validates the configuration object, checking required properties, formats, and business rules.
     /// </summary>
     /// <param name="config">Configuration object to validate</param>

@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Models;
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 /// <summary>
@@ -51,16 +53,35 @@ public class SetupResults
     public bool BatchPermissionsPhase2Completed { get; set; }
 
     /// <summary>
-    /// Phase 3: Admin consent was granted or already existed.
-    /// False with <see cref="AdminConsentUrl"/> set means the user is non-admin and consent is pending.
+    /// Outcome of the tenant-wide admin consent grant (the <c>/v2.0/adminconsent</c> path that
+    /// covers blueprint delegated scopes for All Principals). <see cref="GrantOutcome.Failed"/> with
+    /// <see cref="AdminConsentUrl"/> or <see cref="CombinedConsentUrl"/> set means the user is
+    /// non-admin and consent is pending; <see cref="GrantOutcome.NotApplicable"/> means the step
+    /// was not reached.
     /// </summary>
-    public bool AdminConsentGranted { get; set; }
+    public GrantOutcome TenantWideConsentOutcome { get; set; }
 
     /// <summary>
-    /// True when all S2S app role assignments were successfully granted. False means pending
-    /// (non-admin user; Global Administrator action required). Null means not attempted.
+    /// Outcome of S2S app role assignments targeting the blueprint service principal. Written by
+    /// <see cref="BatchPermissionsOrchestrator"/> in the DW path and in the non-DW path when the
+    /// blueprint carries app-role scopes (e.g. Observability API).
     /// </summary>
-    public bool? S2SAppRoleGranted { get; set; }
+    public GrantOutcome BlueprintS2SOutcome { get; set; }
+
+    /// <summary>
+    /// Outcome of S2S app role assignments targeting the agent identity service principal. Written
+    /// by the non-DW path when <see cref="SetupContext.IsS2sMode"/> or <see cref="SetupContext.IsBothMode"/>
+    /// is true.
+    /// </summary>
+    public GrantOutcome AgentIdentityS2SOutcome { get; set; }
+
+    /// <summary>
+    /// Outcome of principal-scoped delegated grants on the agent identity service principal.
+    /// Written by the non-DW path when <see cref="SetupContext.IsOboMode"/> or <see cref="SetupContext.IsBothMode"/>
+    /// is true. <see cref="GrantOutcome.Failed"/> drives the "Agent identity delegated permissions"
+    /// PowerShell action item in the setup summary.
+    /// </summary>
+    public GrantOutcome AgentIdentityDelegatedOutcome { get; set; }
 
     /// <summary>
     /// Error message when Microsoft Graph inheritable permissions fail to configure.
@@ -129,29 +150,13 @@ public class SetupResults
     public bool IsNonDwBlueprintFlow { get; set; }
 
     /// <summary>
-    /// Whether Principal-scoped oauth2PermissionGrants were successfully created for the agent identity.
-    /// Set in the non-DW non-admin path as an alternative to tenant-wide AllPrincipals consent.
+    /// The effective --authmode value used during the non-DW grant step.
+    /// Null when the non-DW grant step was not reached (e.g. agent identity creation failed) or
+    /// when the run is a DW (AI Teammate) flow — DW does not use --authmode.
+    /// Used by DisplaySetupSummary to compute per-grant-type completion for the "both" mode and to
+    /// derive which Action Required items apply.
     /// </summary>
-    public bool AgentIdentityPermissionsGranted { get; set; }
-
-    /// <summary>
-    /// True when principal-scoped delegated grants for the agent identity were not completed during
-    /// the non-DW setup flow and manual follow-up may be required. This can occur when the user or
-    /// application context does not have the Graph permissions needed to create the grant, or when
-    /// prerequisite directory objects such as the target resource service principal are not yet
-    /// resolvable due to creation or propagation timing. When
-    /// set, <see cref="SetupHelpers"/> surfaces PowerShell instructions in the Action Required section
-    /// using <see cref="AgentIdentityId"/> and <see cref="TenantId"/> as the suggested remediation
-    /// path. Drives the delegated consent action item in the setup summary.
-    /// </summary>
-    public bool AgentIdentityDelegatedGrantPending { get; set; }
-
-    /// <summary>
-    /// The effective --authmode value used during the non-DW grant step ("obo", "s2s", or "both").
-    /// Null when the grant step was not reached (e.g. agent identity creation failed).
-    /// Used by DisplaySetupSummary to compute per-grant-type completion for the "both" mode.
-    /// </summary>
-    public string? EffectiveAuthMode { get; set; }
+    public AuthMode? EffectiveAuthMode { get; set; }
 
     /// <summary>
     /// Whether the Agent Identity was successfully created via the Agent Identity Graph API.

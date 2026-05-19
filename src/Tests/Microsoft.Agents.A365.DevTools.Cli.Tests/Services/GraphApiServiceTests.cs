@@ -312,51 +312,6 @@ public class GraphApiServiceTests
         actualToken.Should().NotContain("\n", "Token should not contain newline characters");
     }
 
-    [Fact]
-    public async Task CheckServicePrincipalCreationPrivilegesAsync_SanitizesTokenWithNewlines()
-    {
-        // This test verifies that CheckServicePrincipalCreationPrivilegesAsync sanitizes
-        // tokens with embedded whitespace before setting the Authorization header.
-        // Token acquisition now goes through IAuthenticationService (MSAL), not az CLI.
-
-        // Arrange
-        HttpRequestMessage? capturedRequest = null;
-        var handler = new CapturingHttpMessageHandler((req) => capturedRequest = req);
-        var logger = Substitute.For<ILogger<GraphApiService>>();
-        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
-
-        // Auth service returns a token WITH embedded newlines — simulates a whitespace-padded token.
-        var authWithNewlines = Substitute.For<IAuthenticationService>();
-        authWithNewlines.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
-            .Returns(Task.FromResult("privileges-check-token\r\n\n"));
-
-        var service = new GraphApiService(logger, executor, authWithNewlines, handler, loginHintResolver: () => Task.FromResult<string?>(null));
-
-        // Queue a successful response for the directory roles query
-        using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"value\":[{\"displayName\":\"Application Administrator\"}]}")
-        };
-        handler.QueueResponse(queuedResponse);
-
-        // Act - This should NOT throw FormatException
-        var (hasPrivileges, roles) = await service.CheckServicePrincipalCreationPrivilegesAsync("tenant-123");
-
-        // Assert
-        capturedRequest.Should().NotBeNull("HTTP request should have been sent");
-        capturedRequest!.Headers.Authorization.Should().NotBeNull("Authorization header should be set");
-
-        var actualToken = capturedRequest.Headers.Authorization!.Parameter;
-        actualToken.Should().NotBeNull();
-        actualToken.Should().NotContain("\r", "Token should not contain carriage return characters");
-        actualToken.Should().NotContain("\n", "Token should not contain newline characters");
-        actualToken.Should().Be("privileges-check-token", "Token should be sanitized to just the token value");
-
-        // Also verify the method returns correct results
-        hasPrivileges.Should().BeTrue("User has Application Administrator role");
-        roles.Should().Contain("Application Administrator");
-    }
 
     #region GetServicePrincipalDisplayNameAsync Tests
 

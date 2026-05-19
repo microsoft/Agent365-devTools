@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -365,6 +366,143 @@ public class Agent365ConfigServiceTests : IDisposable
         Assert.NotNull(node);
         Assert.Equal("super-secret-value", node!["agentBlueprintClientSecret"]?.GetValue<string>());
         Assert.Equal(false, node["agentBlueprintClientSecretProtected"]?.GetValue<bool>());
+    }
+
+    #endregion
+
+    #region InvalidateGeneratedConfigAsync Tests
+
+    [Fact]
+    public async Task InvalidateGeneratedConfigAsync_BackupContainsOriginal_AndStateFileIsEmpty()
+    {
+        // Arrange — pre-seed a generated state file that mimics a prior blueprint's output
+        // so we can prove the backup captures the pre-reset state and the new file is empty.
+        var statePath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        var config = new Agent365Config { TenantId = "12345678-1234-1234-1234-123456789012" };
+        config.AgentBlueprintId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        config.AgenticAppId = "37fc1c47-5eda-46ca-93b2-76baba49e605";
+        config.AgentBlueprintClientSecret = "secret-from-prior-blueprint";
+        config.BotId = "99999999-8888-7777-6666-555555555555";
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Microsoft Graph",
+            ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
+            ConsentGranted = true
+        });
+        await _service.SaveStateAsync(config, statePath);
+
+        // Act
+        var backupPath = await _service.InvalidateGeneratedConfigAsync(config, "newblueprint", statePath);
+
+        // Assert — backup file must exist and still hold the prior identifiers, because the
+        // invariant the feature must guarantee is: no data loss when invalidating; the user
+        // can always recover their prior generated config from disk.
+        backupPath.Should().NotBeNull(because: "an existing file must be backed up before invalidation to prevent data loss");
+        File.Exists(backupPath!).Should().BeTrue(because: "the backup file path returned by InvalidateGeneratedConfigAsync must exist on disk");
+        var backupJson = await File.ReadAllTextAsync(backupPath!);
+        backupJson.Should().Contain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", because: "the backup must preserve the blueprint id from the file that existed before invalidation");
+        backupJson.Should().Contain("37fc1c47-5eda-46ca-93b2-76baba49e605", because: "the backup must preserve the agentic app id from the file that existed before invalidation");
+        backupJson.Should().Contain("secret-from-prior-blueprint", because: "the backup must preserve the blueprint client secret so the user can recover credentials if needed");
+
+        // Assert — the live state file must be empty of every dynamic identifier so downstream
+        // steps (agent identity creation, registration) cannot reuse anything that belongs to
+        // the now-orphaned root resource.
+        var liveJson = await File.ReadAllTextAsync(statePath);
+        var liveNode = System.Text.Json.Nodes.JsonNode.Parse(liveJson)!.AsObject();
+        liveNode.ContainsKey("agentBlueprintId").Should().BeFalse(because: "the agent blueprint id from the prior root must not survive invalidation");
+        liveNode.ContainsKey("agenticAppId").Should().BeFalse(because: "the agentic app id is owned by the prior blueprint and would be orphaned");
+        liveNode.ContainsKey("agentBlueprintClientSecret").Should().BeFalse(because: "the prior blueprint's client secret cannot authenticate the new blueprint and would mislead retries");
+        liveNode.ContainsKey("botId").Should().BeFalse(because: "bot state was provisioned against the prior blueprint and must be re-derived");
+        // resourceConsents is a non-nullable collection on Agent365Config; invalidation resets it
+        // to an empty list (not null) so downstream code can keep its non-null invariant. The
+        // serialized form must therefore be an empty array, not absent.
+        liveNode["resourceConsents"]!.AsArray().Count.Should().Be(0, because: "consents granted against the prior blueprint's SP are no longer valid and the array must be empty after invalidation");
+        // Only the metadata fields that SaveStateAsync always emits should remain.
+        liveNode.ContainsKey("lastUpdated").Should().BeTrue(because: "SaveStateAsync writes the lastUpdated timestamp on every write, including the empty post-invalidation state");
+        liveNode.ContainsKey("cliVersion").Should().BeTrue(because: "SaveStateAsync writes cliVersion on every write so the empty state still records which CLI produced it");
+    }
+
+    [Fact]
+    public async Task InvalidateGeneratedConfigAsync_ResetsInMemoryConfigDynamicProperties()
+    {
+        // Arrange
+        var statePath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        var config = new Agent365Config
+        {
+            // Static (init-only) properties — must NOT be reset because they come from a365.config.json,
+            // which is the user-managed source of truth and is untouched by invalidation.
+            TenantId = "12345678-1234-1234-1234-123456789012",
+            AgentIdentityDisplayName = "Test Agent",
+        };
+        config.AgentBlueprintId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        config.AgenticAppId = "37fc1c47-5eda-46ca-93b2-76baba49e605";
+        config.BotId = "99999999-8888-7777-6666-555555555555";
+        config.AgentBlueprintClientSecret = "secret";
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Microsoft Graph",
+            ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
+            ConsentGranted = true
+        });
+
+        // Act
+        await _service.InvalidateGeneratedConfigAsync(config, "newblueprint", statePath);
+
+        // Assert — every dynamic (get/set) property the prior blueprint populated must be cleared
+        // on the in-memory instance, because callers continue to use the same instance after
+        // invalidation and any leftover value would silently re-seed the new blueprint's state.
+        config.AgentBlueprintId.Should().BeNull(because: "the prior blueprint id was the root of the invalidation and must not persist on the in-memory mirror");
+        config.AgenticAppId.Should().BeNull(because: "the agent identity was owned by the prior blueprint and the in-memory mirror must reflect that it no longer exists");
+        config.BotId.Should().BeNull(because: "bot state belongs to the prior blueprint and must not be reused for the new blueprint");
+        config.AgentBlueprintClientSecret.Should().BeNull(because: "the prior client secret cannot authenticate the new blueprint and must not be retained in memory");
+        config.ResourceConsents.Should().NotBeNull(because: "ResourceConsents is a non-nullable collection and must remain a valid empty instance to preserve invariants");
+        config.ResourceConsents.Should().BeEmpty(because: "consents were granted against the prior blueprint's SP and do not apply to the new one");
+
+        // Assert — static (init-only) properties must survive invalidation, because they are owned
+        // by a365.config.json (the user-managed file), not the generated file we are resetting.
+        config.TenantId.Should().Be("12345678-1234-1234-1234-123456789012", because: "TenantId is a static property sourced from a365.config.json and is not part of the generated-config invalidation contract");
+        config.AgentIdentityDisplayName.Should().Be("Test Agent", because: "AgentIdentityDisplayName is a static property sourced from a365.config.json and is not part of the generated-config invalidation contract");
+    }
+
+    [Fact]
+    public async Task InvalidateGeneratedConfigAsync_NoExistingFile_ReturnsNullBackupAndCreatesEmptyState()
+    {
+        // Arrange — no prior generated.config.json on disk.
+        var statePath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        File.Exists(statePath).Should().BeFalse(because: "this test exercises the first-run path where no generated config exists yet");
+        var config = new Agent365Config { TenantId = "12345678-1234-1234-1234-123456789012" };
+        config.AgentBlueprintId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+        // Act
+        var backupPath = await _service.InvalidateGeneratedConfigAsync(config, "newblueprint", statePath);
+
+        // Assert — no backup is created when there is nothing to back up; the in-memory reset still
+        // runs and an empty state file is written so the on-disk and in-memory views stay consistent.
+        backupPath.Should().BeNull(because: "no backup file should be created when there is no existing generated config to back up");
+        File.Exists(statePath).Should().BeTrue(because: "InvalidateGeneratedConfigAsync must always leave a fresh empty state file so subsequent SaveStateAsync calls write into a known location");
+        config.AgentBlueprintId.Should().BeNull(because: "the in-memory reset must run even when there was no prior file, to keep the in-memory and on-disk views consistent");
+    }
+
+    [Fact]
+    public async Task InvalidateGeneratedConfigAsync_BackupFileNameIsCrossPlatformSafe()
+    {
+        // Arrange — pre-seed and use a reason that includes characters which are illegal in file
+        // names on Windows (':') so we can prove the suffix is sanitized.
+        var statePath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        var config = new Agent365Config { TenantId = "12345678-1234-1234-1234-123456789012" };
+        config.AgentBlueprintId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        await _service.SaveStateAsync(config, statePath);
+
+        // Act
+        var backupPath = await _service.InvalidateGeneratedConfigAsync(config, "new:blueprint/v2", statePath);
+
+        // Assert — the backup file name must not contain characters that are invalid on any
+        // supported platform (Windows is the strictest); we assert against the broad union.
+        backupPath.Should().NotBeNull();
+        var fileName = Path.GetFileName(backupPath!);
+        var invalid = Path.GetInvalidFileNameChars();
+        fileName.Should().NotContainAny(invalid.Select(c => c.ToString()), because: "the backup file name is derived from a free-form reason string and must be safe to create on Windows, macOS, and Linux");
+        fileName.Should().StartWith("a365.generated.config.before-", because: "the backup file naming convention is the documented contract callers rely on to locate backups");
     }
 
     #endregion

@@ -92,13 +92,17 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     [Fact]
-    public void PrintDryRunPlan_InheritablePermissions_AreSkipped()
+    public void PrintDryRunPlan_BlueprintPermissions_AreConfigured()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger);
 
-        // Phase 2a (inheritable permissions) is skipped in all authMode values to avoid Global Admin
-        // involvement. The dry-run communicates this explicitly rather than listing specific APIs.
-        AnyLogContains("permissions set directly on agent identity").Should().BeTrue(because: "inheritable permissions row must explain that permissions are set directly on the agent identity (not just contain the word 'skipped' which can match unrelated rows)");
+        // Blueprint permissions must be stamped in the non-DW flow so MAC and other dependent
+        // systems can see the agent's permission set. Issue #417 — same spec set is applied to
+        // both the blueprint and the agent identity SP. The label is now unified with the DW
+        // flow as "Inheritable Permissions" because both flows call SetInheritablePermissionsAsync.
+        AnyLogContains("Inheritable Permissions").Should().BeTrue(because: "non-DW setup must stamp permissions on the blueprint via SetInheritablePermissionsAsync so MAC can see them (issue #417); label is unified with DW");
+        AnyLogContains("Observability API").Should().BeTrue(because: "Observability API is part of the non-DW spec set stamped on the blueprint");
+        AnyLogContains("Power Platform API").Should().BeTrue(because: "Power Platform API is part of the non-DW spec set stamped on the blueprint");
     }
 
     [Fact]
@@ -138,86 +142,90 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     // ── authMode dry-run output ────────────────────────────────────────────────
 
     /// <summary>
-    /// OBO mode must show delegated grants and must not surface admin-consent or AllPrincipals
-    /// instructions — the whole point of OBO authMode is to avoid Global Admin involvement.
+    /// OBO mode must show delegated (principal-scoped) grants on the agent identity SP.
+    /// authMode controls only the agent-identity grant style; the blueprint step is independent
+    /// and always uses AllPrincipals grants on the blueprint (issue #417).
     /// </summary>
     [Fact]
-    public void PrintDryRunPlan_AuthModeObo_ShowsDelegatedGrants_NoAdminConsentOrAllPrincipals()
+    public void PrintDryRunPlan_AuthModeObo_ShowsDelegatedGrantsOnAgentIdentity()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "obo");
 
-        AnyLogContains("delegated").Should().BeTrue(because: "OBO mode applies principal-scoped delegated grants");
-        AnyLogContains("admin consent").Should().BeFalse(because: "OBO mode must not require admin consent");
-        AnyLogContains("AllPrincipals").Should().BeFalse(because: "OBO mode must not create AllPrincipals grants");
+        AnyLogContains("delegated").Should().BeTrue(because: "OBO mode applies principal-scoped delegated grants to the agent identity SP");
     }
 
     /// <summary>
-    /// S2S mode must show application permissions and must not show delegated grants
-    /// — there is no user context in S2S so delegated scopes are not applicable.
+    /// S2S mode must show application permissions on the agent identity SP and must not show
+    /// delegated grants — there is no user context in S2S so delegated scopes don't apply.
+    /// authMode only affects the agent-identity step; the blueprint step is independent.
     /// </summary>
     [Fact]
-    public void PrintDryRunPlan_AuthModeS2s_ShowsAppPerms_NoDelegatedGrants()
+    public void PrintDryRunPlan_AuthModeS2s_ShowsAppPermsOnAgentIdentity_NoDelegatedGrants()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "s2s");
 
         AnyLogContains("S2S app roles").Should().BeTrue(because: "S2S mode applies app role assignments to the agent identity SP");
-        AnyLogContains("delegated").Should().BeFalse(because: "S2S mode must not show delegated grants — no user context");
-        AnyLogContains("admin consent").Should().BeFalse(because: "S2S mode falls back to PowerShell instructions; no interactive admin consent prompt");
+        AnyLogContains("delegated").Should().BeFalse(because: "S2S mode must not show delegated grants on the agent identity SP — no user context");
     }
 
     /// <summary>
-    /// Both mode must surface both delegated grants (OBO) and application permissions (S2S).
+    /// Both mode must surface both delegated grants and application permissions on the
+    /// agent identity SP.
     /// </summary>
     [Fact]
-    public void PrintDryRunPlan_AuthModeBoth_ShowsBothGrantRows()
+    public void PrintDryRunPlan_AuthModeBoth_ShowsBothGrantRowsOnAgentIdentity()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "both");
 
-        AnyLogContains("delegated").Should().BeTrue(because: "Both mode includes OBO delegated grants");
+        AnyLogContains("delegated").Should().BeTrue(because: "Both mode includes OBO delegated grants on the agent identity SP");
         AnyLogContains("S2S app roles").Should().BeTrue(because: "Both mode includes S2S app role assignments on the agent identity SP");
-        AnyLogContains("admin consent").Should().BeFalse(because: "Both mode must not require interactive admin consent");
     }
 
     /// <summary>
-    /// Null authMode must default to OBO behaviour — the plan shows delegated grants
-    /// and must not imply admin consent is required.
+    /// Null authMode must default to OBO behaviour — the agent-identity step shows
+    /// delegated grants.
     /// </summary>
     [Fact]
     public void PrintDryRunPlan_NullAuthMode_TreatedAsObo()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: null);
 
-        AnyLogContains("delegated").Should().BeTrue(because: "null authMode defaults to OBO — delegated grants must appear");
-        AnyLogContains("admin consent").Should().BeFalse(because: "null authMode defaults to OBO — admin consent must not be required");
+        AnyLogContains("delegated").Should().BeTrue(because: "null authMode defaults to OBO — delegated grants must appear on the agent identity SP");
     }
 
     /// <summary>
-    /// All authMode values must suppress the inheritable-permissions (Phase 2a) step
-    /// to avoid Global Admin involvement.
+    /// All authMode values must stamp the same permission set on the blueprint (issue #417).
+    /// The blueprint step is independent of authMode — authMode only changes how grants are
+    /// applied to the agent identity SP.
     /// </summary>
     [Theory]
     [InlineData("obo")]
     [InlineData("s2s")]
     [InlineData("both")]
     [InlineData(null)]
-    public void PrintDryRunPlan_AllAuthModes_SkipInheritablePermissions(string? authMode)
+    public void PrintDryRunPlan_AllAuthModes_ConfigureBlueprintPermissions(string? authMode)
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: authMode);
 
-        AnyLogContains("permissions set directly on agent identity").Should().BeTrue(because: $"authmode '{authMode ?? "null (obo)"}' must skip inheritable permissions and explain permissions are set directly on the agent identity");
+        AnyLogContains("Inheritable Permissions").Should().BeTrue(because: $"authmode '{authMode ?? "null (obo)"}' must stamp blueprint permissions via SetInheritablePermissionsAsync — the blueprint step is independent of authMode (issue #417)");
     }
 
     // ── --agent-registration-only dry-run ─────────────────────────────────────
 
     [Fact]
-    public void PrintDryRunPlan_AgentRegistrationOnly_SkipMessageReferencesSteps1Through3()
+    public void PrintDryRunPlan_AgentRegistrationOnly_SkipMessageReferencesSteps1Through4()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, agentRegistrationOnly: true);
 
-        AnyLogContains("Steps 1-3").Should().BeTrue(
-            because: "--agent-registration-only skips Prerequisites, Blueprint, and Inheritable Permissions — exactly 3 steps");
-        AnyLogContains("Steps 1-4").Should().BeFalse(
-            because: "the old incorrect label 'Steps 1-4' must not reappear");
+        AnyLogContains("Steps 1-4").Should().BeTrue(
+            because: "--agent-registration-only skips Prerequisites, Blueprint, Inheritable Permissions, and Blueprint Permission Grants — exactly 4 steps in the new blueprint-grouped layout (grants come before Agent identity so all blueprint-side rows are contiguous)");
+        AnyLogContains("Blueprint Permission Grants").Should().BeTrue(
+            because: "the skip summary must enumerate Blueprint Permission Grants by name so users know grants are not re-attempted in registration-only mode");
+        // Note: deliberately no negative assertion against the old pre-reorder "Steps 1-3" label.
+        // The positive Steps 1-4 + "Blueprint Permission Grants" assertions above already lock the
+        // current contract; an absence check against an obsolete string is a stale-string guard,
+        // not a requirement, and it would fail under any future relabel (e.g. "Phases 1-4") without
+        // indicating the contract is broken.
     }
 
     [Fact]
@@ -226,9 +234,9 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, agentRegistrationOnly: true);
 
         AnyLogContains("Agent identity").Should().BeTrue(
-            because: "step 4 (agent identity) must appear when --agent-registration-only is set");
-        AnyLogContains("Permission Grants").Should().BeTrue(
-            because: "step 5 (permission grants) must be shown as skipped with a re-run hint");
+            because: "step 5 (agent identity) must appear when --agent-registration-only is set");
+        AnyLogContains("Blueprint Permission Grants").Should().BeTrue(
+            because: "the 'Steps 1-4 are skipped' summary must enumerate Blueprint Permission Grants as one of the skipped steps so users know grants are not re-attempted");
         AnyLogContains("Agent Registration").Should().BeTrue(
             because: "step 6 (agent registration) is the primary purpose of the flag");
         AnyLogContains("Messaging endpoint").Should().BeTrue(

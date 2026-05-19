@@ -24,7 +24,7 @@ public class AgentBlueprintServiceVerifyInheritablePermissionsTests
     }
 
     [Fact]
-    public async Task VerifyInheritablePermissionsAsync_PermissionsExist_ReturnsScopes()
+    public async Task VerifyInheritablePermissionsAsync_PermissionsAllAllowed_ReturnsBothKindsTrue()
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
@@ -54,35 +54,83 @@ public class AgentBlueprintServiceVerifyInheritablePermissionsTests
                 new
                 {
                     resourceAppId = "resource-123",
-                    inheritableScopes = new
-                    {
-                        scopes = new[] { "scope1 scope2", "scope3" }
-                    }
+                    inheritableScopes = new { kind = "allAllowed" },
+                    inheritableRoles = new { kind = "allAllowed" }
                 }
             }
         };
 
-        // ResolveBlueprintObjectIdAsync: Check if bpAppId is an objectId (returns 404 NotFound)
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
-
-        // ResolveBlueprintObjectIdAsync: Resolve appId to objectId
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
         });
-
-        // VerifyInheritablePermissionsAsync: GET existing permissions
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(response))
         });
 
         // Act
-        var (exists, scopes, error) = await service.VerifyInheritablePermissionsAsync("tid", "bpAppId", "resource-123");
+        var (exists, scopesAllAllowed, rolesAllAllowed, error) = await service.VerifyInheritablePermissionsAsync("tid", "bpAppId", "resource-123");
 
         // Assert
         exists.Should().BeTrue();
-        scopes.Should().BeEquivalentTo(new[] { "scope1", "scope2", "scope3" });
+        scopesAllAllowed.Should().BeTrue(because: "the response declares scopes.kind = allAllowed");
+        rolesAllAllowed.Should().BeTrue(because: "the response declares roles.kind = allAllowed");
+        error.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task VerifyInheritablePermissionsAsync_LegacyEnumeratedEntry_ReturnsExistsTrueButKindsFalse()
+    {
+        // Arrange — an entry written by an older CLI version (enumerated scopes, no roles).
+        // Verification must report the entry exists but neither kind is allAllowed yet, so the
+        // caller knows a reconciliation PATCH is needed.
+        var handler = new FakeHttpMessageHandler();
+        var graphLogger = Substitute.For<ILogger<GraphApiService>>();
+        var blueprintLogger = Substitute.For<ILogger<AgentBlueprintService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(graphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new AgentBlueprintService(blueprintLogger, graphService);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+        var legacy = new
+        {
+            value = new[]
+            {
+                new
+                {
+                    resourceAppId = "resource-123",
+                    inheritableScopes = new { scopes = new[] { "scope1" } }
+                }
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(legacy))
+        });
+
+        // Act
+        var (exists, scopesAllAllowed, rolesAllAllowed, error) = await service.VerifyInheritablePermissionsAsync("tid", "bpAppId", "resource-123");
+
+        // Assert
+        exists.Should().BeTrue();
+        scopesAllAllowed.Should().BeFalse(because: "legacy enumerated entries lack kind=allAllowed");
+        rolesAllAllowed.Should().BeFalse(because: "legacy entries don't have inheritableRoles at all");
         error.Should().BeNull();
     }
 
@@ -138,11 +186,12 @@ public class AgentBlueprintServiceVerifyInheritablePermissionsTests
         });
 
         // Act
-        var (exists, scopes, error) = await service.VerifyInheritablePermissionsAsync("tid", "bpAppId", "resource-123");
+        var (exists, scopesAllAllowed, rolesAllAllowed, error) = await service.VerifyInheritablePermissionsAsync("tid", "bpAppId", "resource-123");
 
         // Assert
         exists.Should().BeFalse();
-        scopes.Should().BeEmpty();
+        scopesAllAllowed.Should().BeFalse();
+        rolesAllAllowed.Should().BeFalse();
         error.Should().BeNull();
     }
 
@@ -174,11 +223,12 @@ public class AgentBlueprintServiceVerifyInheritablePermissionsTests
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
 
         // Act
-        var (exists, scopes, error) = await service.VerifyInheritablePermissionsAsync("tid", "bpAppId", "resource-123");
+        var (exists, scopesAllAllowed, rolesAllAllowed, error) = await service.VerifyInheritablePermissionsAsync("tid", "bpAppId", "resource-123");
 
         // Assert
         exists.Should().BeFalse();
-        scopes.Should().BeEmpty();
+        scopesAllAllowed.Should().BeFalse();
+        rolesAllAllowed.Should().BeFalse();
         error.Should().Be("Failed to retrieve inheritable permissions");
     }
 }

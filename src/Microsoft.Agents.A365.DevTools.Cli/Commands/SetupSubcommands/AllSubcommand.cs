@@ -39,6 +39,10 @@ internal static class AllSubcommand
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
         {
             new ClientAppRequirementCheck(clientAppValidator),
+            // The wids optional claim is what makes Global Administrator role detection work in the
+            // orchestrator's Phase 2b. Without it, Phase 2b silently skips and the blueprint ends up
+            // with inheritablePermissions.kind=allAllowed but no grants — MAC sees nothing.
+            new WidsOptionalClaimRequirementCheck(clientAppValidator),
         };
 
         return checks;
@@ -46,7 +50,7 @@ internal static class AllSubcommand
 
     /// <summary>
     /// Returns the requirement checks for <c>setup all --aiteammate false</c> (non-DW blueprint).
-    /// Composes SetupCommand base checks + ClientApp (skipped in bootstrap mode).
+    /// Composes SetupCommand base checks + ClientApp + wids-optional-claim (skipped in bootstrap mode).
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
         AzureAuthValidator auth,
@@ -60,6 +64,7 @@ internal static class AllSubcommand
         if (!isBootstrap)
         {
             checks.Add(new ClientAppRequirementCheck(clientAppValidator));
+            checks.Add(new WidsOptionalClaimRequirementCheck(clientAppValidator));
         }
 
         return checks;
@@ -540,7 +545,7 @@ internal static class AllSubcommand
                     ctx, specs,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
-                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
+                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes, isM365: ctx.IsM365);
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config, ctx.GeneratedConfigPath);
 
@@ -751,7 +756,7 @@ internal static class AllSubcommand
 
             ctx.Results.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
             ctx.Results.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
-            ctx.Results.AdminConsentGranted = consentGranted;
+            ctx.Results.TenantWideConsentOutcome = consentGranted ? Models.GrantOutcome.Granted : Models.GrantOutcome.Failed;
             ctx.Results.AdminConsentUrl = adminConsentUrl;
         }
         catch (OperationCanceledException)
@@ -761,7 +766,7 @@ internal static class AllSubcommand
         catch (Exception permEx)
         {
             ctx.Results.BatchPermissionsPhase2Completed = false;
-            ctx.Results.AdminConsentGranted = false;
+            ctx.Results.TenantWideConsentOutcome = Models.GrantOutcome.Failed;
             ctx.Results.Errors.Add($"Permissions: {permEx.Message}");
             ctx.Logger.LogWarning("Permissions configuration failed: {Message}. Setup will continue, but permissions must be configured manually.", permEx.Message);
         }
@@ -832,9 +837,10 @@ internal static class AllSubcommand
     /// <summary>
     /// Step 3 (pre) — Removes stale custom permissions and builds the full resource permission
     /// spec list from dynamic config values (AgentApplicationScopes, MCP manifest, CustomBlueprintPermissions).
-    /// Shared by both DW and non-DW flows so permissions are always consistent.
+    /// Shared by both DW and non-DW flows so permissions are always consistent — the only difference
+    /// is that non-M365 agents exclude Messaging Bot API.
     /// </summary>
-    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx, bool isDw = true)
+    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx)
     {
         var desiredCustomIds = new HashSet<string>(
             (ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -851,39 +857,11 @@ internal static class AllSubcommand
         // V1-compatible: extract ATG scopes for consent URL helpers (empty for V2-only manifests)
         var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes) ? atgScopes : Array.Empty<string>();
 
-        List<ResourcePermissionSpec> specs;
-        if (isDw)
-        {
-            // Pass the already-computed scopesByAudience to avoid reading the MCP manifest twice.
-            // BuildConfiguredPermissionSpecsAsync also handles custom permissions.
-            specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(ctx.Config, setInheritable: true, scopesByAudience);
-        }
-        else
-        {
-            // Non-DW (blueprint) path: only Observability API and Power Platform API.
-            // Microsoft Graph, Agent 365 Tools (MCP), and Messaging Bot API are DW-only.
-            // To enable MCP or Messaging Bot API for non-DW, add them here and update
-            // the isDw guards in BuildAdminConsentUrls / BuildCombinedConsentUrl.
-            specs = [.. SetupHelpers.GetNonDwFixedApiPermissionSpecs(setInheritable: true)];
-
-            // Non-DW: custom permissions are not included by GetNonDwFixedApiPermissionSpecs.
-            // DW: custom permissions are already included by BuildConfiguredPermissionSpecsAsync above.
-            foreach (var customPerm in ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-            {
-                var (isValid, _) = customPerm.Validate();
-                if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
-                {
-                    var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                        ? customPerm.ResourceAppId
-                        : customPerm.ResourceName;
-                    specs.Add(new ResourcePermissionSpec(
-                        customPerm.ResourceAppId,
-                        resourceName,
-                        customPerm.Scopes.ToArray(),
-                        SetInheritable: true));
-                }
-            }
-        }
+        // Pass the already-computed scopesByAudience to avoid reading the MCP manifest twice.
+        // BuildConfiguredPermissionSpecsAsync stamps Graph + manifest MCP audiences + fixed APIs
+        // (Bot only when isM365) + custom permissions for both DW and non-DW agents.
+        var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
+            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience);
 
         return (specs, mcpResourceAppId, mcpScopes);
     }

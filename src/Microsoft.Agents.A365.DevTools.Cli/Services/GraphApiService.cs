@@ -127,6 +127,14 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Clears the persistent MSAL token cache. Passthrough to <see cref="IAuthenticationService.ClearTokenCacheAsync"/>
+    /// so callers that only hold a <see cref="GraphApiService"/> reference (e.g. <c>ClientAppValidator</c>)
+    /// can invalidate after an operation that makes cached tokens stale — most commonly after adding
+    /// the <c>wids</c> optional claim to the client app registration.
+    /// </summary>
+    public virtual Task ClearTokenCacheAsync() => _authService.ClearTokenCacheAsync();
+
+    /// <summary>
     /// Acquires an access token for Microsoft Graph API via MSAL (WAM on Windows,
     /// browser/device-code on macOS/Linux). Token is cached persistently by
     /// AuthenticationService — no az CLI subprocess involved.
@@ -551,6 +559,25 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Looks up a service principal's displayName by application (client) ID. Used by display-only
+    /// commands (e.g. `query-entra inheritance`) to render readable names for resources that aren't
+    /// in the small well-known list. Returns null when the SP is not present in the tenant or the
+    /// query fails — callers should fall back to the raw GUID.
+    /// </summary>
+    public virtual async Task<string?> GetServicePrincipalDisplayNameByAppIdAsync(
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    {
+        using var doc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=displayName",
+            ct,
+            scopes);
+        if (doc == null) return null;
+        if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
+        return value[0].TryGetProperty("displayName", out var dn) ? dn.GetString() : null;
+    }
+
+    /// <summary>
     /// Checks whether an Entra application with the given appId exists in the tenant.
     /// Uses the default az CLI token — does not require CustomClientAppId to be set.
     /// Returns false on any error so callers can fall back gracefully.
@@ -668,12 +695,24 @@ public class GraphApiService
     public virtual async Task<(string? appId, string? spId)> CreateCliClientAppAsync(
         string tenantId, string displayName, CancellationToken ct = default)
     {
+        // 'wids' on accessToken is REQUIRED — without it, IsCurrentUserAdminAsync cannot detect
+        // Global Administrator role and the orchestrator's AllPrincipals grant phase is silently
+        // skipped. Set it at creation time so newly-provisioned apps don't hit the bug.
         var body = new
         {
             displayName,
             signInAudience = "AzureADMyOrg",
             isFallbackPublicClient = true,
-            publicClient = new { redirectUris = AuthenticationConstants.RequiredRedirectUris }
+            publicClient = new { redirectUris = AuthenticationConstants.RequiredRedirectUris },
+            optionalClaims = new
+            {
+                accessToken = new[]
+                {
+                    new { name = "wids", essential = false, additionalProperties = Array.Empty<string>() }
+                },
+                idToken = Array.Empty<object>(),
+                saml2Token = Array.Empty<object>()
+            }
         };
 
         using var appDoc = await GraphPostAsync(tenantId, "/v1.0/applications", body, ct);
@@ -965,86 +1004,6 @@ public class GraphApiService
         }
 
         return grants;
-    }
-
-    /// <summary>
-    /// Checks if the current user has sufficient privileges to create service principals.
-    /// Virtual to allow mocking in unit tests using Moq.
-    /// </summary>
-    /// <param name="tenantId">The tenant ID</param>
-    /// <param name="ct">Cancellation token</param>
-    /// <returns>True if user has required roles, false otherwise</returns>
-    public virtual async Task<(bool hasPrivileges, List<string> roles)> CheckServicePrincipalCreationPrivilegesAsync(
-        string tenantId,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            _logger.LogDebug("Checking user's directory roles for service principal creation privileges");
-
-            var token = await GetGraphAccessTokenAsync(tenantId, ct: ct);
-            if (token == null)
-            {
-                _logger.LogWarning("Could not acquire Graph token to check privileges");
-                return (false, new List<string>());
-            }
-
-            // Trim token to remove any newline characters that may cause header validation errors
-            token = token.Trim();
-
-            using var request = new HttpRequestMessage(HttpMethod.Get,
-                $"{_graphBaseUrl}/v1.0/me/memberOf/microsoft.graph.directoryRole");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            using var response = await _httpClient.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Could not retrieve user's directory roles: {Status}", response.StatusCode);
-                return (false, new List<string>());
-            }
-
-            var json = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-
-            var roles = new List<string>();
-            if (doc.RootElement.TryGetProperty("value", out var rolesArray))
-            {
-                roles = rolesArray.EnumerateArray()
-                    .Where(role => role.TryGetProperty("displayName", out var displayName))
-                    .Select(role => role.GetProperty("displayName").GetString())
-                    .Where(roleName => !string.IsNullOrEmpty(roleName))
-                    .ToList()!;
-            }
-
-            _logger.LogDebug("User has {Count} directory roles", roles.Count);
-
-            // Check for required roles
-            var requiredRoles = new[]
-            {
-                "Application Administrator",
-                "Cloud Application Administrator",
-                "Global Administrator"
-            };
-
-            var hasRequiredRole = roles.Any(r => requiredRoles.Contains(r, StringComparer.OrdinalIgnoreCase));
-
-            if (hasRequiredRole)
-            {
-                _logger.LogDebug("User has sufficient privileges for service principal creation");
-            }
-            else
-            {
-                _logger.LogDebug("User does not have required roles for service principal creation. Roles: {Roles}",
-                    string.Join(", ", roles));
-            }
-
-            return (hasRequiredRole, roles);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to check service principal creation privileges: {Message}", ex.Message);
-            return (false, new List<string>());
-        }
     }
 
     /// <summary>

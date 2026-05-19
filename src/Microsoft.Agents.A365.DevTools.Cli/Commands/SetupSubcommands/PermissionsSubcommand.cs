@@ -738,7 +738,7 @@ internal static class PermissionsSubcommand
 
         try
         {
-            var specs = new List<ResourcePermissionSpec>(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true));
+            var specs = new List<ResourcePermissionSpec>(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true, isM365: true));
 
             var localResults = setupResults ?? new SetupResults();
             var (_, _, consentGranted, adminConsentUrl) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
@@ -749,10 +749,11 @@ internal static class PermissionsSubcommand
 
             await configService.SaveStateAsync(setupConfig);
 
-            // != true treats both explicit failure (false) and skipped-due-to-error (null) as failure.
-            // Consent state is checked before S2S so the non-admin path still shows "consent required"
-            // rather than the S2S warning (S2S is never attempted when consent isn't granted).
-            var s2sFailed = localResults.S2SAppRoleGranted != true;
+            // BlueprintS2SOutcome == Granted means S2S succeeded; any other value (NotApplicable,
+            // Failed) treats this as "not in place". Consent state is checked before S2S so the
+            // non-admin path still shows "consent required" rather than the S2S warning (S2S is
+            // never attempted when consent isn't granted).
+            var s2sFailed = localResults.BlueprintS2SOutcome != Models.GrantOutcome.Granted;
 
             logger.LogInformation("");
             if (!s2sFailed && consentGranted)
@@ -826,7 +827,7 @@ internal static class PermissionsSubcommand
         // a second Connect-MgGraph prompt.
         var requiredPermissions = AuthenticationConstants.RequiredPermissionGrantScopes;
 
-        List<(string ResourceAppId, List<string> Scopes)> currentPermissions;
+        List<(string ResourceAppId, bool ScopesAllAllowed, bool RolesAllAllowed)> currentPermissions;
         try
         {
             currentPermissions = await blueprintService.ListInheritablePermissionsAsync(
@@ -862,7 +863,7 @@ internal static class PermissionsSubcommand
             logger.LogDebug("Could not resolve blueprint service principal for OAuth2 grant cleanup: {Message}", ex.Message);
         }
 
-        foreach (var (resourceAppId, _) in stale)
+        foreach (var (resourceAppId, _, _) in stale)
         {
             logger.LogInformation("  Removing stale permission for {ResourceAppId}...", resourceAppId);
 

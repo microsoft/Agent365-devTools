@@ -133,7 +133,7 @@ public class SetupHelpersBootstrapTests : IDisposable
         };
 
         // Act
-        var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(config, setInheritable: true, precomputed);
+        var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(config, setInheritable: true, scopesByAudience: precomputed);
 
         // Assert: the injected audience must appear in the result
         specs.Should().Contain(s => s.ResourceAppId == "injected-audience-app-id" && s.Scopes.Contains("Injected.Scope"),

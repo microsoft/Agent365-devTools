@@ -807,7 +807,7 @@ public class PermissionsSubcommandTests
         _mockBlueprintService.VerifyInheritablePermissionsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<(bool, string[], string?)>((true, Array.Empty<string>(), null)));
+            .Returns(Task.FromResult<(bool exists, bool scopesAllAllowed, bool rolesAllAllowed, string? error)>((true, true, true, null)));
 
         _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>())
             .Returns(Task.CompletedTask);
@@ -1010,8 +1010,8 @@ public class PermissionsSubcommandTests
         // Assert
         result.Should().BeFalse(
             because: "S2S failure must propagate via the external SetupResults reference");
-        externalResults.S2SAppRoleGranted.Should().BeFalse(
-            because: "the orchestrator must write S2SAppRoleGranted=false to the caller's SetupResults");
+        externalResults.BlueprintS2SOutcome.Should().NotBe(Cli.Models.GrantOutcome.Granted,
+            because: "the orchestrator must record BlueprintS2SOutcome as not-Granted (Failed or NotApplicable) on the caller's SetupResults when S2S grants did not succeed");
     }
 
     #endregion

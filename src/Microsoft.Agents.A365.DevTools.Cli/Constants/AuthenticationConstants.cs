@@ -153,8 +153,10 @@ public static class AuthenticationConstants
     public const string AgentIdAdminRoleTemplateId = "db506228-d27e-4b7d-95e5-295956d6615f";
 
     /// <summary>
-    /// Delegated scope for broad directory read access.
-    /// Required for /me/memberOf and other directory read operations.
+    /// Delegated scope for broad directory read access. Retained for callers that explicitly need
+    /// a tenant-wide read; production code prefers the narrower <c>Application.Read.All</c> for
+    /// service-principal lookups by appId. Role detection no longer requires this scope — directory
+    /// role membership is read from the <c>wids</c> optional claim on the access token.
     /// </summary>
     public const string DirectoryReadAllScope = "Directory.Read.All";
 

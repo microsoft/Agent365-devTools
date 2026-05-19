@@ -102,6 +102,9 @@ internal static class BlueprintSubcommand
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
         {
             new ClientAppRequirementCheck(clientAppValidator),
+            // Verify the wids optional claim too — its absence is what silently breaks GA role detection
+            // in the batch permissions orchestrator and leaves the blueprint with no granted scopes/roles.
+            new WidsOptionalClaimRequirementCheck(clientAppValidator),
         };
 
         return checks;
@@ -990,6 +993,33 @@ internal static class BlueprintSubcommand
         // ========================================================================
         // Blueprint Creation: No existing blueprint found
         // ========================================================================
+        // The blueprint is the root of every dynamic identifier stored in
+        // a365.generated.config.json (agent identity, registration, SP IDs, client secret,
+        // resource consents, bot state, infra). Creating a new blueprint orphans every one
+        // of those fields by construction. Back up the existing generated config and reset
+        // both the on-disk file and the in-memory mirrors (Agent365Config + the JsonObject
+        // the caller will write blueprint identifiers into) so nothing downstream acts on
+        // stale state.
+        var generatedConfigPathForInvalidation = Path.Combine(
+            configFile.DirectoryName ?? Environment.CurrentDirectory,
+            "a365.generated.config.json");
+        var invalidationBackup = await configService.InvalidateGeneratedConfigAsync(
+            setupConfig,
+            reason: "newblueprint",
+            statePath: generatedConfigPathForInvalidation);
+        logger.LogDebug(
+            "Invalidating generated configuration before creating a new blueprint. Backup: {Backup}",
+            invalidationBackup ?? "(no prior file)");
+        // Clear the JsonObject the caller will mutate next. SaveStateAsync above has already
+        // persisted an empty file; the in-memory JsonObject was loaded earlier in the call
+        // chain and must be reset to match, otherwise the subsequent writes (e.g.
+        // generatedConfig["agentBlueprintId"] = ...) would re-introduce stale entries.
+        var jsonKeysToClear = generatedConfig.Select(kvp => kvp.Key).ToList();
+        foreach (var key in jsonKeysToClear)
+        {
+            generatedConfig.Remove(key);
+        }
+
         try
         {
             logger.LogInformation("Creating blueprint application...");

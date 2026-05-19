@@ -40,7 +40,8 @@ This folder contains data models used throughout the CLI. Models are organized b
 
 | Model | File | Description |
 |-------|------|-------------|
-| **EnumeratedScopes** | `EnumeratedScopes.cs` | Graph API scope enumeration results |
+| **AllAllowedScopes / AllAllowedRoles** | `InheritablePermissionTypes.cs` | Wire-format models for the inheritablePermissions polymorphic properties on agent identity blueprints (kind=allAllowed). |
+| **DeclaredResourcePermissions** | `DeclaredResourcePermissions.cs` | Permissions declared on a blueprint application for a single resource, with permission GUIDs resolved to display names. Returned by `AgentBlueprintService.GetBlueprintDeclaredPermissionsAsync`. |
 
 ### Other Models
 

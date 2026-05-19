@@ -1,9 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
@@ -259,6 +261,123 @@ public class ConfigService : IConfigService
             _logger?.LogError(ex, "Failed to save dynamic state to: {StatePath}", currentDirPath);
             throw;
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> InvalidateGeneratedConfigAsync(
+        Agent365Config config,
+        string reason,
+        string statePath = "a365.generated.config.json")
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        ArgumentException.ThrowIfNullOrWhiteSpace(statePath);
+
+        // Resolve the target file. Honour absolute paths; otherwise treat as current-directory relative
+        // (mirrors SaveStateAsync semantics).
+        var targetPath = Path.IsPathRooted(statePath)
+            ? statePath
+            : Path.Combine(Environment.CurrentDirectory, statePath);
+
+        // Back up the existing file (if any) before we overwrite it. Sanitize the reason to keep the
+        // file name portable across Windows/macOS/Linux.
+        string? backupPath = null;
+        if (File.Exists(targetPath))
+        {
+            var safeReason = SanitizeForFileName(reason);
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var dir = Path.GetDirectoryName(targetPath) ?? Environment.CurrentDirectory;
+            backupPath = Path.Combine(dir, $"a365.generated.config.before-{safeReason}-{timestamp}.json");
+
+            try
+            {
+                File.Copy(targetPath, backupPath, overwrite: false);
+                _logger?.LogDebug(
+                    "Invalidating generated configuration ({Reason}). Existing file backed up to: {BackupPath}",
+                    reason, backupPath);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex,
+                    "Failed to back up existing generated configuration before invalidation. Aborting reset to avoid data loss: {TargetPath}",
+                    targetPath);
+                throw;
+            }
+        }
+        else
+        {
+            _logger?.LogDebug(
+                "Invalidating generated configuration ({Reason}). No existing file to back up at: {TargetPath}",
+                reason, targetPath);
+        }
+
+        // Reset every dynamic (get/set) property to its default. This wipes the in-memory mirror of
+        // the generated file so callers do not continue acting on stale identifiers (agent identity,
+        // registration, SP IDs, secrets, consents, bot, infra) that belong to a now-orphaned root.
+        ResetDynamicProperties(config);
+
+        // Persist the empty state so subsequent writers see a clean file and the on-disk view matches
+        // the in-memory view atomically.
+        await SaveStateAsync(config, statePath);
+
+        return backupPath;
+    }
+
+    /// <summary>
+    /// Resets every dynamic (get/set) property on the supplied config to its CLR default
+    /// (null for reference/Nullable&lt;T&gt;, default(T) for value types). Collection properties whose
+    /// default would be null are replaced with a fresh empty instance to preserve non-null
+    /// invariants expected by downstream code (e.g. ResourceConsents).
+    /// </summary>
+    private static void ResetDynamicProperties(Agent365Config config)
+    {
+        var type = typeof(Agent365Config);
+        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+        foreach (var prop in properties)
+        {
+            var setMethod = prop.GetSetMethod();
+            if (setMethod == null) continue;
+
+            // Skip init-only setters (static config surface). Detect via IsInitOnly modreq, matching
+            // ExtractDynamicProperties' definition of "dynamic".
+            var returnParamMods = setMethod.ReturnParameter.GetRequiredCustomModifiers();
+            var isInitOnly = returnParamMods.Any(m => m.FullName == "System.Runtime.CompilerServices.IsExternalInit");
+            if (isInitOnly) continue;
+
+            // Preserve non-null collection invariants by allocating an empty instance instead of null.
+            if (prop.PropertyType == typeof(List<Models.ResourceConsent>))
+            {
+                prop.SetValue(config, new List<Models.ResourceConsent>());
+                continue;
+            }
+
+            // For all other dynamic properties, set to default(T).
+            var defaultValue = prop.PropertyType.IsValueType
+                ? Activator.CreateInstance(prop.PropertyType)
+                : null;
+            prop.SetValue(config, defaultValue);
+        }
+    }
+
+    /// <summary>
+    /// Replaces characters that are invalid in file names (cross-platform) with a hyphen and trims
+    /// leading and trailing hyphens. Does not collapse internal runs of hyphens — successive invalid
+    /// characters in the input produce successive hyphens in the output, which is harmless for the
+    /// backup file-name suffix use case. Returns "reset" when the sanitized string is empty.
+    /// </summary>
+    private static string SanitizeForFileName(string value)
+    {
+        var sb = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            if (char.IsLetterOrDigit(ch) || ch == '-' || ch == '_')
+                sb.Append(ch);
+            else
+                sb.Append('-');
+        }
+        var sanitized = sb.ToString().Trim('-');
+        return string.IsNullOrEmpty(sanitized) ? "reset" : sanitized;
     }
 
     /// <inheritdoc />

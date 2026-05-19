@@ -30,6 +30,8 @@ public interface IAuthenticationService
         CancellationToken ct = default);
 
     Task<string?> ResolveLoginHintFromCacheAsync();
+
+    Task ClearTokenCacheAsync();
 }
 
 /// <summary>
@@ -69,6 +71,32 @@ public class AuthenticationService : IAuthenticationService
         var cacheDir = Path.Combine(appDataPath, AuthenticationConstants.ApplicationName);
         Directory.CreateDirectory(cacheDir);
         _tokenCachePath = Path.Combine(cacheDir, AuthenticationConstants.TokenCacheFileName);
+    }
+
+    /// <summary>
+    /// Clears the persistent MSAL token cache. Callers invoke this after an operation that
+    /// invalidates cached tokens — most commonly after adding an optional claim (like <c>wids</c>)
+    /// to the client app registration, where existing access tokens lack the new claim and need
+    /// to be re-issued. Silent re-acquisition on the next call (via WAM on Windows or refresh-token
+    /// flow elsewhere) typically completes without re-prompting the user.
+    /// </summary>
+    public Task ClearTokenCacheAsync()
+    {
+        try
+        {
+            if (File.Exists(_tokenCachePath))
+            {
+                File.Delete(_tokenCachePath);
+                _logger.LogDebug("Token cache cleared at {Path}", _tokenCachePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: a stale cache only means the user re-acquires sooner than expected,
+            // not that anything breaks. Surface at debug so the operator can see why if needed.
+            _logger.LogDebug(ex, "Failed to clear token cache at {Path}: {Message}", _tokenCachePath, ex.Message);
+        }
+        return Task.CompletedTask;
     }
 
     /// <summary>

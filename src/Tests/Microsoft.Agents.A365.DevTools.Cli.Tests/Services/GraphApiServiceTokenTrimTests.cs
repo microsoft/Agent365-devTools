@@ -104,44 +104,4 @@ public class GraphApiServiceTokenTrimTests
         result.Should().NotBeNull();
     }
 
-    [Fact]
-    public async Task CheckServicePrincipalCreationPrivilegesAsync_TrimsNewlineCharactersFromToken()
-    {
-        // Arrange
-        var handler = new TestHttpMessageHandler();
-        var logger = Substitute.For<ILogger<GraphApiService>>();
-        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
-
-        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo =>
-            {
-                var cmd = callInfo.ArgAt<string>(0);
-                var args = callInfo.ArgAt<string>(1);
-                if (cmd == "az" && args != null && args.StartsWith("account show", StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
-                if (cmd == "az" && args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token\r\n", StandardError = string.Empty });
-                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty });
-            });
-
-        var mockAuth = Substitute.For<IAuthenticationService>();
-        mockAuth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
-            .Returns(Task.FromResult("fake-token\r\n"));
-        var service = new GraphApiService(logger, executor, mockAuth, handler, loginHintResolver: () => Task.FromResult<string?>(null));
-
-        // Queue successful response for directory roles
-        using var response = new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"value\":[]}")
-        };
-        handler.QueueResponse(response);
-
-        // Act - This should not throw FormatException about newline characters
-        var (hasPrivileges, roles) = await service.CheckServicePrincipalCreationPrivilegesAsync("tid");
-
-        // Assert
-        hasPrivileges.Should().BeFalse(); // No roles means no privileges
-        roles.Should().BeEmpty();
-    }
 }

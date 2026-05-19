@@ -173,7 +173,7 @@ internal static class BatchPermissionsOrchestrator
                 var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
                 if (!string.IsNullOrWhiteSpace(phase1Result?.BlueprintSpObjectId))
                     await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
-                // else: blueprint SP was not resolved — leave S2SAppRoleGranted = null (not attempted)
+                // else: blueprint SP was not resolved — leave BlueprintS2SOutcome = NotApplicable (not attempted)
 
                 logger.LogInformation("");
                 if (grantsOk)
@@ -343,23 +343,27 @@ internal static class BatchPermissionsOrchestrator
 
             if (alreadyExists || ok)
             {
-                // Read back to confirm the scopes are present — trust the API response only
-                // after verification so that transient write failures do not silently pass.
-                var (verified, verifiedScopes, verifyErr) = await blueprintService.VerifyInheritablePermissionsAsync(
+                // Read back to confirm the entry exists and both inheritableScopes and inheritableRoles
+                // are at kind=allAllowed. Trust the API response only after verification so that
+                // transient write failures do not silently pass.
+                var (exists, scopesAllAllowed, rolesAllAllowed, verifyErr) = await blueprintService.VerifyInheritablePermissionsAsync(
                     tenantId, blueprintAppId, spec.ResourceAppId, ct, permScopes);
 
-                if (verified)
+                if (exists && scopesAllAllowed && rolesAllAllowed)
                 {
                     inheritedResults[spec.ResourceAppId] = (configured: true, alreadyExisted: alreadyExists);
                     var verb = alreadyExists ? "already configured" : "configured";
-                    logger.LogInformation("{ResourceName}: inheritable permissions {Verb}", spec.ResourceName, verb);
+                    logger.LogInformation("{ResourceName}: inheritable permissions {Verb} (kind=allAllowed on scopes and roles)", spec.ResourceName, verb);
                 }
                 else
                 {
                     inheritedResults[spec.ResourceAppId] = (configured: false, alreadyExisted: false);
+                    var detail = !exists
+                        ? (verifyErr ?? "not found in read-back")
+                        : $"scopes.kind allAllowed={scopesAllAllowed}, roles.kind allAllowed={rolesAllAllowed}";
                     logger.LogWarning(
                         "Inheritable permissions set for {ResourceName} but verification read-back failed: {Error}",
-                        spec.ResourceName, verifyErr ?? "not found in read-back");
+                        spec.ResourceName, detail);
                     setupResults?.Warnings.Add(
                         $"Inheritable permissions for {spec.ResourceName} could not be verified after setting.");
                 }
@@ -454,7 +458,7 @@ internal static class BatchPermissionsOrchestrator
 
     /// <summary>
     /// Grants S2S app role assignments for all specs that carry <see cref="ResourcePermissionSpec.AppRoleScopes"/>.
-    /// Idempotent: skips roles already assigned. Sets <see cref="SetupResults.S2SAppRoleGranted"/> on completion.
+    /// Idempotent: skips roles already assigned. Sets <see cref="SetupResults.BlueprintS2SOutcome"/> on completion.
     /// Requires Application Administrator, Global Administrator, or Agent ID Administrator and <see cref="AuthenticationConstants.RequiredS2SGrantScopes"/>.
     /// </summary>
     private static async Task PerformS2SGrantsAsync(
@@ -470,7 +474,8 @@ internal static class BatchPermissionsOrchestrator
         var s2sSpecs = specs.Where(s => s.AppRoleScopes is { Length: > 0 }).ToList();
         if (s2sSpecs.Count == 0)
         {
-            if (setupResults is not null) setupResults.S2SAppRoleGranted = true;
+            // No S2S scopes on any spec — outcome is NotApplicable (default). Do not write Granted
+            // here; "no work to do" is not the same as "a grant succeeded" for the summary.
             return;
         }
 
@@ -503,7 +508,7 @@ internal static class BatchPermissionsOrchestrator
         }
 
         if (setupResults is not null)
-            setupResults.S2SAppRoleGranted = allS2SOk;
+            setupResults.BlueprintS2SOutcome = allS2SOk ? Models.GrantOutcome.Granted : Models.GrantOutcome.Failed;
     }
 
     /// <summary>
@@ -604,9 +609,10 @@ internal static class BatchPermissionsOrchestrator
         // we performed a role check and found the user lacks the GA role.
         if (adminCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
-            var s2sSpecs = specs.Where(s => s.AppRoleScopes is { Length: > 0 }).ToList();
-            if (s2sSpecs.Count > 0 && setupResults is not null)
-                setupResults.S2SAppRoleGranted = false;
+            // Non-admin: do not touch BlueprintS2SOutcome here. Whether blueprint S2S was attempted
+            // is determined by PerformS2SGrantsAsync (admin-only path). Writing Failed here would
+            // make the summary think an S2S attempt occurred, which suppresses the consent URL
+            // action item (see the B2 regression: non-admin OBO non-DW must still surface the URL).
             return (false, consentUrl);
         }
 
@@ -766,7 +772,7 @@ internal static class BatchPermissionsOrchestrator
             if (!hasS2SSpecs)
             {
                 logger.LogInformation("All permission specs have empty scope and app role lists — nothing to grant.");
-                setupResults.S2SAppRoleGranted = true;
+                // Nothing to grant — leave BlueprintS2SOutcome at NotApplicable (default).
                 return (true, null);
             }
             logger.LogDebug("No delegated scopes to grant — proceeding with S2S app role assignments.");
@@ -847,7 +853,7 @@ internal static class BatchPermissionsOrchestrator
         var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
         if (blueprintService is not null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
             await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
-        // else: blueprint service unavailable or SP not resolved — leave S2SAppRoleGranted = null (not attempted)
+        // else: blueprint service unavailable or SP not resolved — leave BlueprintS2SOutcome = NotApplicable (not attempted)
 
         return (allGrantsOk, phase1Result.BlueprintSpObjectId);
     }

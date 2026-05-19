@@ -93,10 +93,76 @@ public class AgentBlueprintServiceTests
         ok.Should().BeTrue();
         already.Should().BeFalse();
         err.Should().BeNull();
+
+        // POST body must use the allAllowed wildcard kind for BOTH scopes and roles. The old
+        // enumeratedScopes shape (with an explicit scopes array) must not appear — agent
+        // identities created from this blueprint need allAllowed on both to inherit roles
+        // granted to the blueprint SP (e.g. Observability otel-write).
+        //
+        // Assertions intentionally pin only `kind=allAllowed` and resourceAppId. The polymorphic
+        // `@odata.type` discriminator is a serialization-shape detail of the AllAllowedScopes /
+        // AllAllowedRoles wire-format models; covered separately by RequestBody_IncludesODataTypeDiscriminator below.
+        var post = handler.SentRequests.Single(r => r.Method == HttpMethod.Post && r.Url.Contains("/inheritablePermissions"));
+        post.Body.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(post.Body!);
+        var root = doc.RootElement;
+        root.GetProperty("resourceAppId").GetString().Should().Be("resAppId");
+        root.GetProperty("inheritableScopes").GetProperty("kind").GetString().Should().Be(
+            "allAllowed",
+            because: "issue from Sandeep — new entries must use allAllowed only on both scopes and roles");
+        root.GetProperty("inheritableRoles").GetProperty("kind").GetString().Should().Be(
+            "allAllowed",
+            because: "app-role inheritance must be set in the same call so roles granted to the blueprint SP (e.g. Observability otel-write) propagate to agent identities");
+        // Defensive: the deprecated enumerated form must NOT appear anywhere in the body.
+        post.Body!.Should().NotContain("enumeratedScopes");
     }
 
     [Fact]
-    public async Task SetInheritablePermissionsAsync_Patches_WhenPresent()
+    public async Task SetInheritablePermissionsAsync_RequestBody_IncludesODataTypeDiscriminator()
+    {
+        // Graph requires the polymorphic @odata.type discriminator on each inheritableScopes /
+        // inheritableRoles object so it can resolve the concrete type (allAllowedScopes vs
+        // enumeratedScopes). This is a wire-format contract distinct from the kind value asserted
+        // above; pinning it here protects against accidental removal during serialization refactors.
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = Array.Empty<object>() }))
+        });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created));
+
+        await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope1" });
+
+        var post = handler.SentRequests.Single(r => r.Method == HttpMethod.Post && r.Url.Contains("/inheritablePermissions"));
+        using var doc = JsonDocument.Parse(post.Body!);
+        doc.RootElement.GetProperty("inheritableScopes").GetProperty("@odata.type").GetString().Should().Be(
+            "#microsoft.graph.allAllowedScopes",
+            because: "Graph needs the polymorphic discriminator to route the body to the allAllowedScopes type — without it the API returns 400");
+        doc.RootElement.GetProperty("inheritableRoles").GetProperty("@odata.type").GetString().Should().Be(
+            "#microsoft.graph.allAllowedRoles",
+            because: "same discriminator contract on the roles side");
+    }
+
+    [Fact]
+    public async Task SetInheritablePermissionsAsync_WhenLegacyEnumeratedEntryExists_PatchesToAllAllowedOnBothSides()
     {
         // Arrange
         var handler = new FakeHttpMessageHandler();
@@ -159,10 +225,193 @@ public class AgentBlueprintServiceTests
         // Act
         var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
 
-        // Assert
+        // Assert — a stale enumerated entry must be reconciled to allAllowed via PATCH.
         ok.Should().BeTrue();
         already.Should().BeFalse();
         err.Should().BeNull();
+
+        var patch = handler.SentRequests.Single(r => r.Method == HttpMethod.Patch && r.Url.Contains("/inheritablePermissions/resAppId"));
+        patch.Body.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(patch.Body!);
+        doc.RootElement.GetProperty("inheritableScopes").GetProperty("kind").GetString().Should().Be("allAllowed",
+            because: "stale enumeratedScopes entries must be reconciled to allAllowed");
+        doc.RootElement.GetProperty("inheritableRoles").GetProperty("kind").GetString().Should().Be("allAllowed",
+            because: "the same PATCH must also set inheritableRoles to allAllowed so role inheritance starts working");
+        patch.Body!.Should().NotContain("enumeratedScopes");
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_ReturnsScopesAndResolvedRoleNames()
+    {
+        // Arrange — single resource with one delegated scope grant and one app role assignment on
+        // the blueprint SP. The role assignment's appRoleId must be resolved to a human-readable
+        // name via a lookup of the resource SP's appRoles array (the same shape Graph returns).
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        // 1) LookupServicePrincipalByAppIdAsync(blueprintAppId) -> blueprint SP id
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "bp-sp-id" } } }))
+        });
+        // 2) GetOauth2PermissionGrantsAsync — one delegated grant for the resource
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { resourceId = "obs-sp-id", scope = "otel-write extra-scope", consentType = "AllPrincipals" } } }))
+        });
+        // 3) appRoleAssignments on the blueprint SP — one assignment for the resource
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { resourceId = "obs-sp-id", appRoleId = "role-guid-1" } } }))
+        });
+        // 4) LookupServicePrincipalByAppIdAsync(resourceAppId) -> resource SP id
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "obs-sp-id" } } }))
+        });
+        // 5) GET resource SP appRoles to resolve the role id to a human-readable name
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                appRoles = new[] { new { id = "role-guid-1", value = "Agent365.Observability.OtelWrite" } }
+            }))
+        });
+
+        // Act
+        var grants = await service.GetBlueprintSpGrantsAsync(
+            "tid", "blueprint-app-id", new[] { "observability-app-id" });
+
+        // Assert
+        grants.Should().ContainKey("observability-app-id");
+        var (delegatedScopes, appRoleNames) = grants["observability-app-id"];
+        delegatedScopes.Should().BeEquivalentTo(new[] { "extra-scope", "otel-write" },
+            because: "the space-delimited Graph scope string must be split into individual scopes and returned sorted");
+        appRoleNames.Should().BeEquivalentTo(new[] { "Agent365.Observability.OtelWrite" },
+            because: "app role IDs must be resolved to their human-readable values via the resource SP's appRoles array");
+    }
+
+    [Fact]
+    public async Task SetInheritablePermissionsAsync_IsIdempotent_WhenAlreadyAllAllowed()
+    {
+        // Arrange — existing entry is already at kind=allAllowed for both scopes and roles.
+        // The service must detect this and return alreadyExists without issuing a PATCH.
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        var existing = new
+        {
+            value = new[]
+            {
+                new
+                {
+                    resourceAppId = "resAppId",
+                    inheritableScopes = new { kind = "allAllowed" },
+                    inheritableRoles = new { kind = "allAllowed" }
+                }
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(existing))
+        });
+
+        // Act
+        var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "anything" });
+
+        // Assert
+        ok.Should().BeTrue();
+        already.Should().BeTrue(because: "the entry is already at allAllowed for both scopes and roles");
+        err.Should().BeNull();
+        handler.SentRequests.Any(r => r.Method == HttpMethod.Patch).Should().BeFalse(
+            because: "an idempotent re-run must not issue a redundant PATCH");
+        handler.SentRequests.Any(r => r.Method == HttpMethod.Post && r.Url.Contains("/inheritablePermissions")).Should().BeFalse(
+            because: "an idempotent re-run must not issue a redundant POST either");
+    }
+
+    [Fact]
+    public async Task SetInheritablePermissionsAsync_Patches_WhenScopesAllAllowedButRolesMissing()
+    {
+        // Arrange — partial-migration state: the entry has inheritableScopes at allAllowed but
+        // inheritableRoles is absent. The service must PATCH to fill in roles=allAllowed.
+        var handler = new FakeHttpMessageHandler();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        executor.ExecuteAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var args = callInfo.ArgAt<string>(1);
+                if (args != null && args.Contains("get-access-token", StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "fake-token", StandardError = string.Empty });
+                return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{}", StandardError = string.Empty });
+            });
+
+        var graphService = new GraphApiService(_mockGraphLogger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
+        var service = new AgentBlueprintService(_mockLogger, graphService);
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "resolved-object-id" } } }))
+        });
+
+        var existing = new
+        {
+            value = new[]
+            {
+                new
+                {
+                    resourceAppId = "resAppId",
+                    inheritableScopes = new { kind = "allAllowed" }
+                    // no inheritableRoles
+                }
+            }
+        };
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(existing))
+        });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        // Act
+        var (ok, already, _) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "anything" });
+
+        // Assert
+        ok.Should().BeTrue();
+        already.Should().BeFalse(because: "the entry was not yet fully allAllowed (roles missing) so a PATCH was issued");
+
+        var patch = handler.SentRequests.Single(r => r.Method == HttpMethod.Patch && r.Url.Contains("/inheritablePermissions/resAppId"));
+        patch.Body.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(patch.Body!);
+        doc.RootElement.GetProperty("inheritableRoles").GetProperty("kind").GetString().Should().Be("allAllowed",
+            because: "the PATCH must add roles=allAllowed to complete the migration");
     }
 
     [Fact]
@@ -203,10 +452,12 @@ public class AgentBlueprintServiceTests
         // Act
         var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
 
-        // Assert — must not throw; must surface the failure gracefully
+        // Assert — must not throw; must surface the failure gracefully. We assert the contract
+        // (non-empty error message identifies the failing operation) rather than the literal log
+        // string so cosmetic message changes don't break the test.
         ok.Should().BeFalse(because: "GraphPatchAsync threw an exception and the caller must not crash");
         already.Should().BeFalse();
-        err.Should().Be("Network error during PATCH");
+        err.Should().NotBeNullOrWhiteSpace(because: "callers must receive a non-empty error to surface to operators");
     }
 
     [Fact]
@@ -253,10 +504,13 @@ public class AgentBlueprintServiceTests
         // Act
         var (ok, already, err) = await service.SetInheritablePermissionsAsync("tid", "bpAppId", "resAppId", new[] { "scope2" });
 
-        // Assert — must not throw; must surface the failure gracefully
+        // Assert — must not throw; must surface the failure gracefully. The contract is "error
+        // identifies the failing operation"; pinning the literal log string would couple this test
+        // to the message wording so the assertion is intentionally loose.
         ok.Should().BeFalse(because: "GraphPatchAsync returned false (HTTP 400)");
         already.Should().BeFalse();
-        err.Should().Contain("Graph PATCH returned false", because: "error message must identify the failing operation");
+        err.Should().NotBeNullOrWhiteSpace(because: "callers must receive a non-empty error to surface to operators");
+        err!.Should().Contain("PATCH", because: "the error must mention the failing operation so operators can correlate with logs");
     }
 
     [Fact]
@@ -846,28 +1100,238 @@ public class AgentBlueprintServiceTests
 
         result.Should().BeNull(because: "exceptions from the underlying query must be swallowed non-fatally");
     }
+
+    private static JsonDocument JsonDoc(string json) => JsonDocument.Parse(json);
+
+    private (AgentBlueprintService Service, GraphApiService Graph) BuildServiceWithMockedGraph()
+    {
+        // Pass a no-op loginHintResolver so any partially-mocked virtual that falls through to
+        // ResolveLoginHintAsync doesn't spawn a real `az account show` subprocess in tests. The
+        // tests using this helper stub all Graph virtuals they touch, but explicit loginHint
+        // wiring is the safer pattern matching the rest of this file.
+        var graph = Substitute.ForPartsOf<GraphApiService>(
+            _mockGraphLogger,
+            _mockExecutor,
+            (Func<Task<string?>>?)(() => Task.FromResult<string?>(null)));
+        var service = new AgentBlueprintService(_mockLogger, graph);
+        return (service, graph);
+    }
+
+    // ── GetBlueprintSpGrantsAsync branch tests (TEST-HIGH-1) ───────────────────
+    // The happy path is covered by GetBlueprintSpGrantsAsync_ReturnsScopesAndResolvedRoleNames
+    // above. These additional tests pin the five non-happy branches so a future refactor cannot
+    // silently drop a resource from the dictionary, fail to surface an unresolved role, or
+    // change the "blueprint SP missing" semantics that downstream commands (e.g. query-entra
+    // inheritance) depend on.
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WithEmptyResourceAppIds_ReturnsEmptyDictionary_WithoutGraphCalls()
+    {
+        // The early-exit before any Graph call matters: operators run query-entra inheritance
+        // against blueprints that may legitimately have no inheritable resources, and we must
+        // not waste a token acquisition or surface a misleading "blueprint SP not found" warning
+        // in that case.
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        var result = await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", Array.Empty<string>());
+
+        result.Should().BeEmpty(
+            because: "no resource app IDs means there's nothing to enumerate — the method must short-circuit to an empty dict");
+
+        await graph.DidNotReceive().LookupServicePrincipalByAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+        await graph.DidNotReceive().GetOauth2PermissionGrantsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenBlueprintSpNotFound_ReturnsEmptyDictionary_AndLogsWarning()
+    {
+        // If the blueprint app has no provisioned SP in this tenant the operator needs a visible
+        // signal — a Warning, not Debug — because every downstream "what does this agent inherit?"
+        // answer would otherwise come back empty without explanation.
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdAsync(
+                "tenant-id", "blueprint-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns((string?)null);
+
+        var result = await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        result.Should().BeEmpty(
+            because: "without a blueprint SP there is nothing to enumerate grants against — callers must see an empty dict, not a partial result");
+
+        // No grant enumeration must occur after the SP lookup failed.
+        await graph.DidNotReceive().GetOauth2PermissionGrantsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint service principal not found")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenResourceSpMissing_OmitsResourceFromDictionary()
+    {
+        // The contract documented on the method: "Resources whose SP cannot be resolved are
+        // omitted (a debug log is emitted)." A missing resource must not appear as a key with
+        // empty arrays — that would be indistinguishable from a known resource with zero grants,
+        // and the inheritance command surfaces the two cases differently.
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdAsync(
+                "tenant-id", "blueprint-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns("bp-sp-id");
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id", "bp-sp-id", Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        // appRoleAssignments — empty
+        graph.GraphGetAsync(
+                "tenant-id",
+                Arg.Is<string>(s => s.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDoc(@"{ ""value"": [] }"));
+        // Resource SP lookup returns null — this resource is unprovisioned.
+        graph.LookupServicePrincipalByAppIdAsync(
+                "tenant-id", "missing-resource-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns((string?)null);
+
+        var result = await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "missing-resource-app-id" });
+
+        result.Should().NotContainKey("missing-resource-app-id",
+            because: "an unresolvable resource SP must be omitted from the result entirely — not surfaced as a zero-grants entry — so callers can distinguish 'unknown' from 'known but empty'");
+        result.Should().BeEmpty(
+            because: "the only requested resource was unresolvable, so the dictionary must be empty");
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenResourceHasZeroGrants_IncludesResourceWithEmptyArrays()
+    {
+        // The contract documented on the method: "Resources with no grants on the blueprint SP
+        // are present in the dictionary with empty arrays." This is the inverse of the
+        // missing-SP branch above — operators reading the inheritance output must be able to
+        // tell "this resource has no grants" apart from "we couldn't look this resource up".
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdAsync(
+                "tenant-id", "blueprint-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns("bp-sp-id");
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id", "bp-sp-id", Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetAsync(
+                "tenant-id",
+                Arg.Is<string>(s => s.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDoc(@"{ ""value"": [] }"));
+        // Resource SP exists but has no delegated grants or app role assignments.
+        graph.LookupServicePrincipalByAppIdAsync(
+                "tenant-id", "zero-grants-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns("zero-grants-sp-id");
+
+        var result = await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "zero-grants-app-id" });
+
+        result.Should().ContainKey("zero-grants-app-id",
+            because: "a known-but-ungranted resource must still appear in the dictionary so the operator sees explicit confirmation that no grants exist");
+        var (delegatedScopes, appRoleNames) = result["zero-grants-app-id"];
+        delegatedScopes.Should().BeEmpty(
+            because: "no delegated grants were issued on the blueprint SP for this resource");
+        appRoleNames.Should().BeEmpty(
+            because: "no app role assignments were issued on the blueprint SP for this resource");
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenAppRoleIdIsUnknown_FallsBackToAngleBracketPlaceholder()
+    {
+        // When the blueprint SP has an app role assignment but the resource SP's appRoles array
+        // does not contain a matching entry (e.g. the role was removed from the resource after
+        // assignment, or the resource SP doc was fetched with a $select that elided it), the
+        // method must still surface the role ID so the operator can investigate. The wrapper
+        // form is "<role-id>" and we pin it because downstream UI keys off the angle brackets
+        // to flag the entry as unresolved.
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdAsync(
+                "tenant-id", "blueprint-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns("bp-sp-id");
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id", "bp-sp-id", Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        // App role assignment exists on the blueprint SP for our resource.
+        graph.GraphGetAsync(
+                "tenant-id",
+                Arg.Is<string>(s => s.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDoc(@"{
+              ""value"": [
+                { ""resourceId"": ""resource-sp-id"", ""appRoleId"": ""unknown-role-guid"" }
+              ]
+            }"));
+        graph.LookupServicePrincipalByAppIdAsync(
+                "tenant-id", "resource-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns("resource-sp-id");
+        // Resource SP appRoles does NOT contain "unknown-role-guid".
+        graph.GraphGetAsync(
+                "tenant-id",
+                Arg.Is<string>(s => s.Contains("/servicePrincipals/resource-sp-id?$select=appRoles", StringComparison.Ordinal)),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDoc(@"{
+              ""appRoles"": [
+                { ""id"": ""some-other-role-id"", ""value"": ""Some.Other.Role"" }
+              ]
+            }"));
+
+        var result = await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        result.Should().ContainKey("resource-app-id");
+        var (_, appRoleNames) = result["resource-app-id"];
+        appRoleNames.Should().Equal(new[] { "<unknown-role-guid>" },
+            because: "an unresolvable role ID must surface as '<role-id>' so operators can still see and investigate the assignment — silently dropping it would hide a real grant");
+    }
 }
 
-// Simple fake handler that returns queued responses sequentially
+// Simple fake handler that returns queued responses sequentially. Also captures the request
+// method, URL, and body for tests that need to assert on what was sent.
 internal class FakeHttpMessageHandler : HttpMessageHandler
 {
     private readonly Queue<HttpResponseMessage> _responses = new();
     private readonly List<HttpResponseMessage> _sentResponses = new();
 
+    public record CapturedRequest(HttpMethod Method, string Url, string? Body);
+
+    public List<CapturedRequest> SentRequests { get; } = new();
+
     public void QueueResponse(HttpResponseMessage resp) => _responses.Enqueue(resp);
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        var body = request.Content is null
+            ? null
+            : await request.Content.ReadAsStringAsync(cancellationToken);
+        SentRequests.Add(new CapturedRequest(request.Method, request.RequestUri?.ToString() ?? string.Empty, body));
+
         if (_responses.Count == 0)
         {
             var fallback = new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("") };
             _sentResponses.Add(fallback);
-            return Task.FromResult(fallback);
+            return fallback;
         }
 
         var resp = _responses.Dequeue();
         _sentResponses.Add(resp);
-        return Task.FromResult(resp);
+        return resp;
     }
 
     protected override void Dispose(bool disposing)
