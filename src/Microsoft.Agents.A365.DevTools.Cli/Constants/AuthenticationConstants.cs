@@ -268,8 +268,9 @@ public static class AuthenticationConstants
 
     /// <summary>
     /// Roles required to create tenant-wide AllPrincipals oauth2PermissionGrants.
+    /// The CLI's automated path detects Global Administrator via the wids token claim only.
     /// </summary>
-    public const string DelegatedGrantRequiredRoles = "Application Administrator or Global Administrator";
+    public const string DelegatedGrantRequiredRoles = "Global Administrator";
 
     /// <summary>
     /// Roles required to configure inheritable permissions on an agent blueprint or agent identity

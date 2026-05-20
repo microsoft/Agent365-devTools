@@ -525,11 +525,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             // HasRole instead of Unknown.
             await _graphApiService.ClearTokenCacheAsync();
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Error ensuring 'wids' optional claim is configured (non-fatal)");
         }
@@ -573,11 +569,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             _logger.LogInformation("Admin authority NOT confirmed: wids PATCH did not land. Treating caller as non-admin.");
             return ProbeResult.NotAdmin;
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "wids PATCH probe failed with an unexpected error — admin status is inconclusive: {Message}", ex.Message);
             return ProbeResult.Inconclusive;
