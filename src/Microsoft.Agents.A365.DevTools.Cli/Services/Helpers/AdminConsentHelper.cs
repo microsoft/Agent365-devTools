@@ -17,6 +17,24 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 public static class AdminConsentHelper
 {
     /// <summary>
+    /// Optional test-only override. When set to <c>true</c>, both
+    /// <see cref="CheckConsentExistsAsync"/> and the Graph-backed
+    /// <see cref="PollAdminConsentAsync(Services.GraphApiService, ILogger, string, string, string, int, int, CancellationToken)"/>
+    /// short-circuit and return <c>true</c> immediately without performing any Graph calls.
+    /// This prevents unit tests that exercise the admin-consent path from polling Graph for
+    /// the full timeout (180s) and from launching a real browser via <c>BrowserHelper.TryOpenUrl</c>.
+    /// AsyncLocal scoping prevents leaks across parallel xUnit test classes; tests that set this
+    /// must still reset it in a finally/Dispose block. Not intended for production code.
+    /// </summary>
+    public static bool BypassConsentChecksForTests
+    {
+        get => _bypassConsentChecks.Value;
+        set => _bypassConsentChecks.Value = value;
+    }
+
+    private static readonly AsyncLocal<bool> _bypassConsentChecks = new();
+
+    /// <summary>
     /// Polls Azure AD/Graph (via az rest) to detect an oauth2 permission grant for the provided appId.
     /// Mirrors the behavior previously implemented in A365SetupRunner.PollAdminConsentAsync.
     /// </summary>
@@ -127,6 +145,11 @@ public static class AdminConsentHelper
         int intervalSeconds,
         CancellationToken ct)
     {
+        if (BypassConsentChecksForTests)
+        {
+            return true;
+        }
+
         if (string.IsNullOrWhiteSpace(clientSpId))
         {
             logger.LogDebug("Blueprint service principal ID not available, falling back to az rest polling.");
@@ -213,6 +236,11 @@ public static class AdminConsentHelper
         System.Collections.Generic.IEnumerable<string>? scopes = null,
         string? consentType = null)
     {
+        if (BypassConsentChecksForTests)
+        {
+            return true;
+        }
+
         if (string.IsNullOrWhiteSpace(clientSpId) || string.IsNullOrWhiteSpace(resourceSpId))
         {
             logger.LogDebug("Cannot check consent: missing service principal IDs (Client: {ClientSpId}, Resource: {ResourceSpId})",

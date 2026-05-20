@@ -45,16 +45,21 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
             IBootstrapConfigResolver? resolver = null)
         {
             var command = new Command("setup",
-                "Set up your Agent 365 environment with granular control over each step\n\n" +
-                "Recommended execution order:\n" +
-                "  0. a365 setup requirements           # Check prerequisites (optional)\n" +
-                "  1. a365 setup blueprint\n" +
-                "  2. a365 setup permissions mcp\n" +
-                "  3. a365 setup permissions bot\n" +
-                "Or run all steps at once:\n" +
-                "  a365 setup all                      # Full setup\n\n" +
-                "If you are not a Global Administrator, setup all will print next steps\n" +
-                "for a Global Administrator to complete the required consent grants.");
+                "Set up your Agent 365 environment.\n\n" +
+                "Recommended:\n" +
+                "  a365 setup all                       Full setup in one command (preferred)\n\n" +
+                "Granular subcommands (for re-runs or partial setup):\n" +
+                "  a365 setup requirements              Validate prerequisites\n" +
+                "  a365 setup blueprint                 Create the agent blueprint (Entra app)\n" +
+                "  a365 setup permissions mcp           MCP server permissions (when using MCP tools)\n" +
+                "  a365 setup permissions bot           Bot API + Observability + Power Platform\n" +
+                "  a365 setup permissions custom        Inline custom resource permission (--resource-app-id, --scopes)\n" +
+                "  a365 setup permissions copilotstudio Copilot Studio agent permissions\n\n" +
+                "Roles required:\n" +
+                "  - Agent ID Developer                  Blueprint + inheritable permissions\n" +
+                "  - Global Administrator                Tenant-wide OAuth2 consent grants\n\n" +
+                "Non-admin flow: any step that needs Global Administrator action prints\n" +
+                "copy-paste PowerShell that an admin can run out-of-band.");
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(

@@ -1501,4 +1501,83 @@ internal static class SetupHelpers
         return (result, failureReason);
     }
 
+    /// <summary>
+    /// Emits an "Action Required" block for a non-admin <c>setup permissions *</c> run that mirrors
+    /// the corresponding section produced by the <c>setup all</c> summary writer. Surfaces:
+    /// <list type="bullet">
+    /// <item>The combined admin consent URL when present (covers ALL delegated scopes across every
+    /// resource stamped on the blueprint — Graph, Agent 365 Tools, Messaging Bot, Observability,
+    /// Power Platform — in a single /v2.0/adminconsent prompt).</item>
+    /// <item>A copy-paste PowerShell snippet for S2S app-role assignments when any spec declares
+    /// <see cref="ResourcePermissionSpec.AppRoleScopes"/>.</item>
+    /// </list>
+    /// Intended for the DW (blueprint) path; non-DW (agent identity) callers continue to use the
+    /// inline emitter inside <c>LogSetupAllSummary</c>.
+    /// <para>
+    /// Tenant-wide delegated grants are no longer emitted as PowerShell snippets: the previous
+    /// <c>Invoke-MgGraphRequest POST /v1.0/oauth2PermissionGrants</c> path required
+    /// <c>DelegatedPermissionGrant.ReadWrite.All</c> in the caller's token, which is not part of
+    /// any A365 sign-in scope. The consent URL (which the /v2.0/adminconsent endpoint accepts
+    /// for any resource, not just Graph) replaces it for both admins and handoff scenarios.
+    /// </para>
+    /// </summary>
+    internal static void LogPermissionsActionRequired(
+        ILogger logger,
+        SetupResults results,
+        IReadOnlyList<ResourcePermissionSpec> specs,
+        string? adminConsentUrl)
+    {
+        var blueprintAppId = results.BlueprintId ?? "<blueprint-app-id>";
+        var tenantId = results.TenantId;
+
+        var appRoleSpecs = specs
+            .Where(s => s.AppRoleScopes != null && s.AppRoleScopes.Length > 0)
+            .ToList();
+
+        var hasConsentUrl = !string.IsNullOrWhiteSpace(adminConsentUrl);
+        var hasS2SPowerShell = appRoleSpecs.Count > 0;
+
+        if (!hasConsentUrl && !hasS2SPowerShell)
+        {
+            logger.LogInformation("Ask a tenant administrator to grant consent for the blueprint app's required permissions.");
+            return;
+        }
+
+        logger.LogInformation("");
+        logger.LogInformation("Action Required:");
+        var step = 0;
+
+        if (hasConsentUrl)
+        {
+            step++;
+            logger.LogInformation("  {N}. Permission Grants — forward the following to a {Roles}:", step, AuthenticationConstants.DelegatedGrantRequiredRoles);
+            logger.LogInformation("");
+            logger.LogInformation("     Blueprint : {BlueprintId}", blueprintAppId);
+            if (!string.IsNullOrWhiteSpace(tenantId))
+                logger.LogInformation("     Tenant    : {TenantId}", tenantId);
+            logger.LogInformation("     Consent URL (covers all required delegated scopes):");
+            logger.LogInformation("       {ConsentUrl}", adminConsentUrl);
+        }
+
+        if (hasS2SPowerShell)
+        {
+            step++;
+            logger.LogInformation("");
+            logger.LogInformation("  {N}. S2S app role assignments (PowerShell):", step);
+            logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
+            logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'", tenantId ?? "<tenant-id>");
+            logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
+            foreach (var spec in appRoleSpecs)
+            {
+                foreach (var role in spec.AppRoleScopes!)
+                {
+                    logger.LogInformation("");
+                    logger.LogInformation("       # {ResourceName}: {RoleName}", spec.ResourceName, role);
+                    logger.LogInformation("       $res = Get-MgServicePrincipal -Filter \"appId eq '{ResAppId}'\"", spec.ResourceAppId);
+                    logger.LogInformation("       $rid = ($res.AppRoles | Where-Object {{ $_.Value -eq '{Role}' }}).Id", role);
+                    logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $res.Id -AppRoleId $rid");
+                }
+            }
+        }
+    }
 }

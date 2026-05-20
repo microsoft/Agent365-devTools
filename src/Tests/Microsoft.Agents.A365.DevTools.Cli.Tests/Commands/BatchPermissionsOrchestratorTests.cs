@@ -4,8 +4,10 @@
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -19,7 +21,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// Focused on the non-fatal phase-independence contract: each phase failure
 /// must not prevent subsequent phases from running.
 /// </summary>
-public class BatchPermissionsOrchestratorTests
+public class BatchPermissionsOrchestratorTests : IDisposable
 {
     private readonly GraphApiService _graph;
     private readonly AgentBlueprintService _blueprintService;
@@ -31,6 +33,18 @@ public class BatchPermissionsOrchestratorTests
         _graph = Substitute.ForPartsOf<GraphApiService>();
         _blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
             Substitute.For<ILogger<AgentBlueprintService>>(), _graph);
+
+        // Suppress real browser launches and 180s consent polls during orchestrator tests.
+        // Reset in Dispose so state does not leak into other test classes.
+        BrowserHelper.OpenUrlOverrideForTests = (_, _) => { };
+        AdminConsentHelper.BypassConsentChecksForTests = true;
+    }
+
+    public void Dispose()
+    {
+        BrowserHelper.OpenUrlOverrideForTests = null;
+        AdminConsentHelper.BypassConsentChecksForTests = false;
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>
@@ -141,15 +155,19 @@ public class BatchPermissionsOrchestratorTests
     }
 
     /// <summary>
-    /// When a Global Administrator is prompted and explicitly declines the tenant-wide consent,
-    /// Phase 2b (OAuth2 grants) and Phase 3 (browser consent) must both be skipped entirely.
-    /// The return must be (false, null) — no URL, no browser open — so the caller summary
-    /// shows the correct "declined" state rather than an unexpected "action required" URL.
+    /// The orchestrator now relies exclusively on the unified /v2.0/adminconsent URL (no direct
+    /// POST to /oauth2PermissionGrants). When specs include non-Graph resources (Messaging Bot
+    /// API, Observability API, etc.) the consent URL must fully-qualify those scopes as
+    /// api://{appId}/{scope} so a single browser prompt covers every delegated permission.
+    /// This test exercises the non-admin path so URL construction is validated without
+    /// triggering a real browser launch.
     /// </summary>
     [Fact]
-    public async Task ConfigureAllPermissions_WhenGaDeclines_SkipsPhase2bAndReturnsNoConsentUrl()
+    public async Task ConfigureAllPermissions_NonAdmin_BuildsUnifiedConsentUrlCoveringAllResources()
     {
-        // Arrange — Phase 1 succeeds: pre-warm call returns a valid document.
+        // Arrange — Phase 1 succeeds but the user is not a tenant admin, so Phase 3 returns
+        // the consent URL without opening a browser. This validates URL construction across
+        // Graph + non-Graph resources.
         _graph.GraphGetAsync(
             Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
@@ -157,108 +175,10 @@ public class BatchPermissionsOrchestratorTests
 
         _graph.LookupServicePrincipalByAppIdAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<string?>("blueprint-sp-id"));
-
-        _graph.EnsureServicePrincipalForAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
-            .Returns(Task.FromResult<string?>("resource-sp-id"));
+            .Returns(Task.FromResult<string?>(null));
 
         _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(RoleCheckResult.HasRole));
-
-        // Phase 2a — inheritable permissions succeed.
-        _blueprintService.SetInheritablePermissionsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<(bool ok, bool alreadyExists, string? error)>((true, false, null)));
-
-        _blueprintService.VerifyInheritablePermissionsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<(bool exists, bool scopesAllAllowed, bool rolesAllAllowed, string? error)>((true, true, true, null)));
-
-        // GA declines the prompt.
-        var confirmationProvider = Substitute.For<IConfirmationProvider>();
-        confirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(false));
-
-        var config = new Agent365Config
-        {
-            TenantId = "tenant-id",
-            AgentBlueprintId = "blueprint-app-id",
-            AgentBlueprintDisplayName = "Test Blueprint"
-        };
-
-        var specs = new[]
-        {
-            new ResourcePermissionSpec(
-                AuthenticationConstants.MicrosoftGraphResourceAppId,
-                "Microsoft Graph",
-                new[] { "Mail.ReadWrite" },
-                SetInheritable: true)
-        };
-
-        // Act
-        var (blueprintUpdated, inheritedConfigured, consentGranted, consentUrl) =
-            await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
-                _graph, _blueprintService, config,
-                blueprintAppId: "blueprint-app-id",
-                tenantId: "tenant-id",
-                specs: specs,
-                _logger,
-                setupResults: null,
-                ct: default,
-                confirmationProvider: confirmationProvider);
-
-        // Assert — GA declined, so neither Phase 2b nor Phase 3 ran.
-        consentGranted.Should().BeFalse(because: "GA declined the prompt");
-        consentUrl.Should().BeNull(because: "no browser URL should be produced when GA explicitly declined");
-
-        await _graph.DidNotReceive().CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
-    }
-
-    /// <summary>
-    /// When no confirmation provider is supplied, an unattended Global Administrator run should
-    /// fire Phase 2b (OAuth2 grants) silently — the pre-PR #421 behavior.
-    /// This guards backward compatibility so existing headless scripts continue to work.
-    /// </summary>
-    [Fact]
-    public async Task ConfigureAllPermissions_WhenGaAndNoConfirmationProvider_GrantsFiredSilently()
-    {
-        // Arrange — Phase 1 succeeds.
-        _graph.GraphGetAsync(
-            Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
-
-        _graph.LookupServicePrincipalByAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<string?>("blueprint-sp-id"));
-
-        _graph.EnsureServicePrincipalForAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
-            .Returns(Task.FromResult<string?>("resource-sp-id"));
-
-        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(RoleCheckResult.HasRole));
-
-        // Phase 2a — inheritable permissions succeed.
-        _blueprintService.SetInheritablePermissionsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<(bool ok, bool alreadyExists, string? error)>((true, false, null)));
-
-        _blueprintService.VerifyInheritablePermissionsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<(bool exists, bool scopesAllAllowed, bool rolesAllAllowed, string? error)>((true, true, true, null)));
-
-        // Phase 2b — OAuth2 grant call succeeds.
-        _graph.CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<(bool Success, int StatusCode, string? ErrorCode)>((true, 201, null)));
+            .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
 
         var config = new Agent365Config
         {
@@ -266,18 +186,27 @@ public class BatchPermissionsOrchestratorTests
             AgentBlueprintId = "blueprint-app-id"
         };
 
-        // spec has no AppRoleScopes so PerformS2SGrantsAsync returns immediately.
         var specs = new[]
         {
             new ResourcePermissionSpec(
                 AuthenticationConstants.MicrosoftGraphResourceAppId,
                 "Microsoft Graph",
                 new[] { "Mail.ReadWrite" },
+                SetInheritable: true),
+            new ResourcePermissionSpec(
+                ConfigConstants.MessagingBotApiAppId,
+                "Messaging Bot API",
+                new[] { "BotApi.Scope" },
+                SetInheritable: true),
+            new ResourcePermissionSpec(
+                ConfigConstants.ObservabilityApiAppId,
+                "Observability API",
+                new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
                 SetInheritable: true)
         };
 
-        // Act — no confirmationProvider (headless / unattended GA script).
-        var (blueprintUpdated, inheritedConfigured, consentGranted, consentUrl) =
+        // Act
+        var (_, _, consentGranted, consentUrl) =
             await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                 _graph, _blueprintService, config,
                 blueprintAppId: "blueprint-app-id",
@@ -287,12 +216,34 @@ public class BatchPermissionsOrchestratorTests
                 setupResults: null,
                 ct: default);
 
-        // Assert — grants fired without a prompt and consent was granted.
-        consentGranted.Should().BeTrue(because: "unattended GA should grant silently when no confirmationProvider is set");
-        consentUrl.Should().BeNull(because: "no URL is needed when grants succeeded");
+        // Assert — the orchestrator no longer calls /oauth2PermissionGrants for any resource;
+        // the unified consent URL must cover Graph + non-Graph scopes together.
+        consentGranted.Should().BeFalse(
+            because: "non-admin cannot grant consent interactively");
+        consentUrl.Should().NotBeNullOrWhiteSpace(
+            because: "every delegated-scope path now goes through /v2.0/adminconsent");
+        consentUrl.Should().Contain("tenant-id",
+            because: "the consent URL must be scoped to the correct tenant");
+        consentUrl.Should().Contain("blueprint-app-id",
+            because: "the consent URL must target the blueprint application");
+        consentUrl.Should().Contain("Mail.ReadWrite",
+            because: "Graph scopes must be included in the unified consent URL");
+        consentUrl.Should().Contain(ConfigConstants.MessagingBotApiAppId,
+            because: "non-Graph resources must be encoded as api://{appId}/{scope} in the unified URL");
+        consentUrl.Should().Contain(ConfigConstants.ObservabilityApiAppId,
+            because: "every delegated resource — including the Observability API — must be covered by a single browser prompt");
 
-        await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
+        await _graph.DidNotReceive().CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
     }
+
+    // The old GA-Phase-2b tests (`ConfigureAllPermissions_WhenGaDeclines_SkipsPhase2bAndReturnsNoConsentUrl`
+    // and `ConfigureAllPermissions_WhenGaAndNoConfirmationProvider_GrantsFiredSilently`) were removed
+    // when Phase 2b was retired. The orchestrator no longer issues a confirmation prompt and no longer
+    // calls /oauth2PermissionGrants — every delegated-scope path now goes through /v2.0/adminconsent,
+    // which is covered by `ConfigureAllPermissions_NonAdmin_BuildsUnifiedConsentUrlCoveringAllResources`
+    // above and by `ConfigureAllPermissions_WhenPhase1AuthFails_Phase2SkippedAndPhase3ReturnsConsentUrl`
+    // for the Graph-only non-admin path. The admin (browser-launching) path is not unit-tested to
+    // avoid invoking a real browser in CI.
 }
