@@ -283,7 +283,7 @@ public static class DevelopMcpCommand
         IAgent365ToolingService toolingService,
         GraphApiService? graphApiService)
     {
-        var command = new Command("publish", "Publish an MCP server to a Dataverse environment. Creates the A365 Proxy + Public Clients Entra apps in your tenant, calls the platform publish endpoint, and back-fills redirect URIs and PPMI scope grants — same orchestration shape as register-external-mcp-server.");
+        var command = new Command("publish", "Publish an MCP server to a Dataverse environment.");
 
         var envIdOption = new Option<string?>(
             ["--environment-id", "-e"],
@@ -293,27 +293,18 @@ public static class DevelopMcpCommand
         var serverNameOption = new Option<string?>(
             ["--server-name", "-s"],
             description: "MCP server name to publish");
+        serverNameOption.IsRequired = false;
         command.AddOption(serverNameOption);
 
         var aliasOption = new Option<string?>(
             ["--alias", "-a"],
-            description: "Alias for the MCP server (used as the MCC row name and the CMS connector id)");
+            description: "Alias for the MCP server");
         command.AddOption(aliasOption);
 
         var displayNameOption = new Option<string?>(
             ["--display-name", "-d"],
             description: "Display name for the MCP server (max 30 chars)");
         command.AddOption(displayNameOption);
-
-        var tenantIdOption = new Option<string?>(
-            ["--tenant-id", "-t"],
-            description: "Entra tenant ID for Entra app creation (defaults to current az login tenant)");
-        command.AddOption(tenantIdOption);
-
-        var serviceTreeIdOption = new Option<string?>(
-            "--service-tree-id",
-            description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
-        command.AddOption(serviceTreeIdOption);
 
         var dryRunOption = new Option<bool>("--dry-run", "Show what would be done without executing");
         command.AddOption(dryRunOption);
@@ -328,8 +319,6 @@ public static class DevelopMcpCommand
                 ServerName: context.ParseResult.GetValueForOption(serverNameOption),
                 Alias: context.ParseResult.GetValueForOption(aliasOption),
                 DisplayName: context.ParseResult.GetValueForOption(displayNameOption),
-                TenantId: context.ParseResult.GetValueForOption(tenantIdOption),
-                ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption),
                 DryRun: context.ParseResult.GetValueForOption(dryRunOption));
 
             var executor = new PublishCommandExecutor(logger, toolingService, graphApiService);
@@ -726,9 +715,6 @@ public static class DevelopMcpCommand
         var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://{appId-guid}/{scopeName}' such as 'api://00000000-0000-0000-0000-000000000000/access_as_user')");
         command.AddOption(remoteScopesOption);
 
-        var tenantIdOption = new Option<string?>(["--tenant-id", "-t"], description: "Entra tenant ID for app registration (defaults to current az login tenant)");
-        command.AddOption(tenantIdOption);
-
         var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
         command.AddOption(serviceTreeIdOption);
 
@@ -763,7 +749,7 @@ public static class DevelopMcpCommand
                 ToolsInput: context.ParseResult.GetValueForOption(toolsOption),
                 InputFile: context.ParseResult.GetValueForOption(inputFileOption),
                 RemoteScopes: context.ParseResult.GetValueForOption(remoteScopesOption),
-                TenantId: context.ParseResult.GetValueForOption(tenantIdOption),
+                TenantId: null,
                 ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption),
                 SecretLifetimeMonths: context.ParseResult.GetValueForOption(secretLifetimeMonthsOption),
                 PublisherName: context.ParseResult.GetValueForOption(publisherOption),

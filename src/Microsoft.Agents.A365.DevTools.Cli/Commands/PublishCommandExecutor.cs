@@ -17,8 +17,6 @@ internal record RawPublishArgs(
     string? ServerName,
     string? Alias,
     string? DisplayName,
-    string? TenantId,
-    string? ServiceTreeId,
     bool DryRun);
 
 /// <summary>
@@ -53,11 +51,9 @@ internal class PublishCommandExecutor
         public required string Alias { get; init; }
         public required string DisplayName { get; init; }
         public required bool DryRun { get; init; }
-        public string? TenantId { get; init; }
-        public string? ServiceTreeId { get; init; }
     }
 
-    private sealed record EntraAppSet(
+    internal sealed record EntraAppSet(
         string A365AppClientId,
         string A365AppSecret,
         string A365AppObjectId,
@@ -75,7 +71,7 @@ internal class PublishCommandExecutor
 
         if (input.DryRun)
         {
-            _logger.LogInformation("[DRY RUN] Would create Entra apps '{A365}' and '{PublicClients}' in tenant", $"{input.Alias}-A365Proxy", $"{input.Alias}-PublicClients");
+            _logger.LogInformation("[DRY RUN] Would create Entra apps '{A365}' and '{PublicClients}' in tenant", $"{input.ServerName}-A365Proxy", $"{input.ServerName}-PublicClients");
             _logger.LogInformation("[DRY RUN] Would call publish endpoint and back-fill redirect URI + PPMI scope on the created apps");
             return;
         }
@@ -92,7 +88,7 @@ internal class PublishCommandExecutor
         ct.ThrowIfCancellationRequested();
         Console.WriteLine($"Publishing MCP server '{input.ServerName}' as '{input.Alias}' to environment {input.EnvironmentId}...");
 
-        var tenantId = await DetectTenantIdAsync(input.TenantId);
+        var tenantId = await DetectTenantIdAsync();
         if (tenantId is null) return;
 
         if (_graphApiService is null)
@@ -107,11 +103,18 @@ internal class PublishCommandExecutor
 
         ct.ThrowIfCancellationRequested();
 
+        if (!Guid.TryParse(apps.A365AppClientId, out var a365ProxyClientId))
+        {
+            _logger.LogError("A365 Proxy Entra app returned an invalid client ID '{ClientId}'. Expected a GUID. Cannot continue publish.", apps.A365AppClientId);
+            await RollbackEntraAppsAsync(apps, tenantId, ct);
+            return;
+        }
+
         var request = new PublishMcpServerRequest
         {
             Alias = input.Alias,
             DisplayName = input.DisplayName,
-            A365ProxyClientId = Guid.Parse(apps.A365AppClientId),
+            A365ProxyClientId = a365ProxyClientId,
             A365ProxyClientSecret = apps.A365AppSecret,
             PublicClientsAppId = apps.PublicClientsClientId,
         };
@@ -128,7 +131,7 @@ internal class PublishCommandExecutor
         {
             _logger.LogError("Failed to publish MCP server '{ServerName}': {Error}", input.ServerName, ex.Message);
             _logger.LogDebug("Exception details: {Exception}", ex.ToString());
-            _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
+            await RollbackEntraAppsAsync(apps, tenantId, ct);
             return;
         }
 
@@ -136,7 +139,7 @@ internal class PublishCommandExecutor
         {
             var errorMsg = publishResponse?.Message ?? "No response received";
             _logger.LogError("Failed to publish MCP server {ServerName}: {Error}", input.ServerName, errorMsg);
-            _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
+            await RollbackEntraAppsAsync(apps, tenantId, ct);
             return;
         }
 
@@ -190,12 +193,12 @@ internal class PublishCommandExecutor
             var displayName = args.DisplayName;
             if (string.IsNullOrWhiteSpace(displayName))
             {
-                displayName = DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter display name for the MCP server: ", "Display name", 100);
+                displayName = DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter display name for the MCP server: ", "Display name", 30);
                 if (string.IsNullOrWhiteSpace(displayName)) { _logger.LogError("Display name is required"); return null; }
             }
             else
             {
-                displayName = DevelopMcpCommand.InputValidator.ValidateInput(displayName, "Display name", maxLength: 100);
+                displayName = DevelopMcpCommand.InputValidator.ValidateInput(displayName, "Display name", maxLength: 30);
                 if (displayName == null) { _logger.LogError("Invalid display name format"); return null; }
             }
 
@@ -206,8 +209,6 @@ internal class PublishCommandExecutor
                 Alias = alias,
                 DisplayName = displayName,
                 DryRun = args.DryRun,
-                TenantId = args.TenantId,
-                ServiceTreeId = args.ServiceTreeId,
             };
         }
         catch (ArgumentException ex)
@@ -232,17 +233,13 @@ internal class PublishCommandExecutor
         Console.WriteLine();
     }
 
-    private async Task<string?> DetectTenantIdAsync(string? userTenantId)
+    private async Task<string?> DetectTenantIdAsync()
     {
-        var tenantId = userTenantId;
-        if (string.IsNullOrWhiteSpace(tenantId))
-        {
-            tenantId = await TenantDetectionHelper.DetectTenantIdAsync(null, _logger);
-        }
+        var tenantId = await TenantDetectionHelper.DetectTenantIdAsync(null, _logger);
 
         if (string.IsNullOrWhiteSpace(tenantId))
         {
-            _logger.LogError("Tenant ID could not be determined. Pass --tenant-id or run 'az login'.");
+            _logger.LogError("Tenant ID could not be determined. Run 'az login' and try again.");
             return null;
         }
 
@@ -251,89 +248,70 @@ internal class PublishCommandExecutor
 
     private async Task<EntraAppSet?> CreateEntraAppsAsync(ResolvedInput input, string tenantId, List<string> warnings)
     {
-        var a365AppName = $"{input.ServerName}-A365Proxy";
-        var publicClientsAppName = $"{input.ServerName}-PublicClients";
+        var factory = new EntraAppFactory(_logger, _graphApiService!, _retryHelper);
 
-        _logger.LogDebug("Creating Entra application for A365 Proxy...");
-        var a365App = await _graphApiService!.CreateEntraAppAsync(tenantId, a365AppName, serviceTreeId: input.ServiceTreeId);
-        if (a365App == null)
+        var a365 = await factory.CreateProxyAppAsync(
+            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
+        if (a365 == null) return null;
+
+        var publicClients = await factory.CreatePublicClientsAppAsync(
+            input.ServerName, tenantId, serviceTreeId: null, warnings);
+
+        return new EntraAppSet(
+            A365AppClientId: a365.ClientId,
+            A365AppSecret: a365.Secret,
+            A365AppObjectId: a365.ObjectId,
+            A365AppName: a365.AppName,
+            PublicClientsClientId: publicClients.ClientId,
+            PublicClientsObjectId: publicClients.ObjectId,
+            PublicClientsAppName: publicClients.AppName);
+    }
+
+    // Best-effort compensating delete for the Entra apps created in CreateEntraAppsAsync, run when
+    // the platform publish call fails after app creation. Each delete is wrapped independently so
+    // a failure on the first app doesn't skip the second. Failures are logged with both clientId
+    // and objectId so the user can clean up manually.
+    internal async Task RollbackEntraAppsAsync(EntraAppSet apps, string tenantId, CancellationToken ct = default)
+    {
+        if (_graphApiService is null)
         {
-            _logger.LogError("Failed to create Entra application '{AppName}'. Ensure you have Application.ReadWrite.All permission in the target tenant. Run with -v for details.", a365AppName);
-            return null;
+            _logger.LogWarning("Graph API service is unavailable; cannot roll back Entra apps '{A365}' / '{PublicClients}'. Delete them manually in the Azure portal.", apps.A365AppName, apps.PublicClientsAppName);
+            return;
         }
-        _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", a365AppName, a365App.Value.ClientId);
 
-        var a365Secret = await _graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId);
-        if (string.IsNullOrWhiteSpace(a365Secret))
+        _logger.LogInformation("Rolling back Entra app registrations created for failed publish...");
+
+        await DeleteOneAsync(apps.A365AppObjectId, apps.A365AppClientId, apps.A365AppName, ct);
+
+        if (!string.IsNullOrWhiteSpace(apps.PublicClientsObjectId))
         {
-            _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", a365AppName);
-            return null;
+            await DeleteOneAsync(apps.PublicClientsObjectId, apps.PublicClientsClientId, apps.PublicClientsAppName, ct);
         }
 
-        if (string.IsNullOrWhiteSpace(a365App.Value.ClientId))
+        async Task DeleteOneAsync(string objectId, string? clientId, string appName, CancellationToken cancellationToken)
         {
-            _logger.LogError("A365 Proxy Entra application was created but returned an empty client ID");
-            return null;
-        }
-
-        _logger.LogDebug("Created A365 Proxy app: {ClientId}", a365App.Value.ClientId);
-
-        string? publicClientsClientId = null;
-        string? publicClientsObjectId = null;
-
-        _logger.LogDebug("Creating Entra application for Public Clients...");
-        var copilotApp = await _graphApiService.CreateEntraAppAsync(tenantId, publicClientsAppName, serviceTreeId: input.ServiceTreeId);
-        if (copilotApp != null)
-        {
-            publicClientsClientId = copilotApp.Value.ClientId;
-            publicClientsObjectId = copilotApp.Value.ObjectId;
-            _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", publicClientsAppName, publicClientsClientId);
-
-            var copilotRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{publicClientsClientId}";
-            var publicClientUris = new[] { copilotRedirectUri, "http://localhost:8080/callback", "https://vscode.dev/redirect", "http://localhost" };
             try
             {
-                var success = await _retryHelper.ExecuteWithRetryAsync(
-                    async ct => await _graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, publicClientsObjectId, publicClientUris, ct),
-                    result => !result);
-                if (!success)
+                var deleted = await _graphApiService!.DeleteEntraAppAsync(tenantId, objectId, cancellationToken);
+                if (deleted)
                 {
-                    var msg = $"Failed to set redirect URIs on Public Clients app '{publicClientsAppName}' after retries.";
-                    _logger.LogError(msg);
-                    warnings.Add(msg);
+                    _logger.LogInformation("Rolled back Entra app '{AppName}' (objectId {ObjectId})", appName, objectId);
                 }
                 else
                 {
-                    _logger.LogDebug(
-                        "Set {RedirectUriCount} redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
-                        publicClientUris.Length,
-                        publicClientsAppName,
-                        publicClientsObjectId,
-                        string.Join(", ", publicClientUris));
+                    _logger.LogError(
+                        "Failed to roll back Entra app '{AppName}' (clientId {ClientId}, objectId {ObjectId}). Delete it manually in the Azure portal.",
+                        appName, clientId ?? "<unknown>", objectId);
                 }
             }
             catch (Exception ex)
             {
-                var msg = $"Failed to set redirect URIs on Public Clients app: {ex.Message}";
-                _logger.LogError(msg);
-                warnings.Add(msg);
+                _logger.LogError(
+                    ex,
+                    "Exception rolling back Entra app '{AppName}' (clientId {ClientId}, objectId {ObjectId}). Delete it manually in the Azure portal.",
+                    appName, clientId ?? "<unknown>", objectId);
             }
         }
-        else
-        {
-            var msg = "Failed to create Public Clients Entra app. Continuing without it.";
-            _logger.LogWarning(msg);
-            warnings.Add(msg);
-        }
-
-        return new EntraAppSet(
-            A365AppClientId: a365App.Value.ClientId,
-            A365AppSecret: a365Secret,
-            A365AppObjectId: a365App.Value.ObjectId,
-            A365AppName: a365AppName,
-            PublicClientsClientId: publicClientsClientId,
-            PublicClientsObjectId: publicClientsObjectId,
-            PublicClientsAppName: publicClientsAppName);
     }
 
     private async Task ConfigureEntraAppsAsync(

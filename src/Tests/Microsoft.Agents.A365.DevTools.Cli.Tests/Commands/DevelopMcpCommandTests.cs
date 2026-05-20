@@ -122,15 +122,16 @@ public class DevelopMcpCommandTests
 
         var options = subcommand.Options.ToList();
 
-        // Verify all expected options exist (including tenant-id + service-tree-id added for the Entra
-        // app creation step that mirrors register-external-mcp-server).
+        // Verify all expected options exist. Tenant ID is auto-detected from the current az login
+        // session, so publish does not expose --tenant-id; ServiceTree tagging is not required for
+        // publish since it targets Dataverse environments rather than Microsoft corp tenants.
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("environment-id");
         optionNames.Should().Contain("server-name");
         optionNames.Should().Contain("alias");
         optionNames.Should().Contain("display-name");
-        optionNames.Should().Contain("tenant-id");
-        optionNames.Should().Contain("service-tree-id");
+        optionNames.Should().NotContain("tenant-id");
+        optionNames.Should().NotContain("service-tree-id");
         optionNames.Should().Contain("dry-run");
 
         // Verify critical aliases for Azure CLI compliance
@@ -145,9 +146,6 @@ public class DevelopMcpCommandTests
 
         var displayNameOption = options.FirstOrDefault(o => o.Name == "display-name");
         displayNameOption!.Aliases.Should().Contain("-d");
-
-        var tenantOption = options.FirstOrDefault(o => o.Name == "tenant-id");
-        tenantOption!.Aliases.Should().Contain("-t");
     }
 
     [Fact]
@@ -283,7 +281,7 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("tools");
         optionNames.Should().Contain("input-file");
         optionNames.Should().Contain("remote-scopes");
-        optionNames.Should().Contain("tenant-id");
+        optionNames.Should().NotContain("tenant-id", because: "tenant ID is auto-detected by RegisterCommandExecutor via TenantDetectionHelper");
         optionNames.Should().Contain("service-tree-id");
         optionNames.Should().Contain("secret-lifetime-months");
         optionNames.Should().Contain("publisher");
@@ -306,9 +304,6 @@ public class DevelopMcpCommandTests
         var inputFileOption = options.First(o => o.Name == "input-file");
         inputFileOption.Aliases.Should().Contain("-f");
 
-        var tenantIdOption = options.First(o => o.Name == "tenant-id");
-        tenantIdOption.Aliases.Should().Contain("-t");
-
         var verboseOption = options.First(o => o.Name == "verbose");
         verboseOption.Aliases.Should().Contain("-v");
     }
@@ -326,7 +321,6 @@ public class DevelopMcpCommandTests
     [InlineData("register-external-mcp-server", "server-url", "-u")]
     [InlineData("register-external-mcp-server", "auth-type", "-a")]
     [InlineData("register-external-mcp-server", "input-file", "-f")]
-    [InlineData("register-external-mcp-server", "tenant-id", "-t")]
     [InlineData("register-external-mcp-server", "secret-lifetime-months", "-l")]
     public void CriticalOptions_HaveConsistentAliases(string subcommandName, string optionName, string expectedAlias)
     {

@@ -582,127 +582,44 @@ internal class RegisterCommandExecutor
     private async Task<EntraAppSet?> CreateEntraAppsAsync(
         ResolvedInput input, string tenantId, List<string> warnings)
     {
-        var a365AppName = $"{input.ServerName}-A365Proxy";
-        var remoteProxyAppName = $"{input.ServerName}-RemoteProxy";
-        var publicClientsAppName = $"{input.ServerName}-PublicClients";
+        var factory = new EntraAppFactory(_logger, _graphApiService!, _retryHelper);
 
-        _logger.LogDebug("Creating Entra application for A365 Proxy...");
-        var a365App = await _graphApiService!.CreateEntraAppAsync(tenantId, a365AppName, serviceTreeId: input.ServiceTreeId);
-        if (a365App == null)
-        {
-            _logger.LogError("Failed to create Entra application '{AppName}'. Ensure you have Application.ReadWrite.All permission in the target tenant. Run with -v for details.", a365AppName);
-            return null;
-        }
-        _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", a365AppName, a365App.Value.ClientId);
-
-        var a365Secret = await _graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId, lifetimeMonths: input.SecretLifetimeMonths);
-        if (string.IsNullOrWhiteSpace(a365Secret))
-        {
-            _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", a365AppName);
-            return null;
-        }
-
-        if (string.IsNullOrWhiteSpace(a365App.Value.ClientId))
-        {
-            _logger.LogError("A365 Proxy Entra application was created but returned an empty client ID");
-            return null;
-        }
-
-        _logger.LogDebug("Created A365 Proxy app: {ClientId}", a365App.Value.ClientId);
+        var a365 = await factory.CreateProxyAppAsync(
+            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: input.ServiceTreeId);
+        if (a365 == null) return null;
 
         string? remoteProxyClientId = null;
         string? remoteProxySecret = null;
         string? remoteProxyObjectId = null;
+        var remoteProxyAppName = $"{input.ServerName}-RemoteProxy";
 
         if (input.IsEntra)
         {
-            _logger.LogDebug("Creating Entra application for Remote Proxy...");
-            var remoteApp = await _graphApiService.CreateEntraAppAsync(tenantId, remoteProxyAppName, serviceTreeId: input.ServiceTreeId);
-            if (remoteApp == null)
-            {
-                _logger.LogError("Failed to create Entra application '{AppName}'. Ensure you have Application.ReadWrite.All permission in the target tenant. Run with -v for details.", remoteProxyAppName);
-                return null;
-            }
-            _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", remoteProxyAppName, remoteApp.Value.ClientId);
+            var remote = await factory.CreateProxyAppAsync(
+                input.ServerName, tenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy", serviceTreeId: input.ServiceTreeId);
+            if (remote == null) return null;
 
-            remoteProxySecret = await _graphApiService.AddAppPasswordAsync(tenantId, remoteApp.Value.ObjectId, lifetimeMonths: input.SecretLifetimeMonths);
-            if (string.IsNullOrWhiteSpace(remoteProxySecret))
-            {
-                _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", remoteProxyAppName);
-                return null;
-            }
-
-            if (string.IsNullOrWhiteSpace(remoteApp.Value.ClientId))
-            {
-                _logger.LogError("Remote Proxy Entra application was created but returned an empty client ID");
-                return null;
-            }
-
-            _logger.LogDebug("Created Remote Proxy app: {ClientId}", remoteApp.Value.ClientId);
-            remoteProxyClientId = remoteApp.Value.ClientId;
-            remoteProxyObjectId = remoteApp.Value.ObjectId;
+            remoteProxyClientId = remote.ClientId;
+            remoteProxySecret = remote.Secret;
+            remoteProxyObjectId = remote.ObjectId;
+            remoteProxyAppName = remote.AppName;
         }
 
-        string? publicClientsClientId = null;
-        string? publicClientsObjectId = null;
-
-        _logger.LogDebug("Creating Entra application for Public Clients...");
-        var copilotApp = await _graphApiService.CreateEntraAppAsync(tenantId, publicClientsAppName, serviceTreeId: input.ServiceTreeId);
-        if (copilotApp != null)
-        {
-            publicClientsClientId = copilotApp.Value.ClientId;
-            publicClientsObjectId = copilotApp.Value.ObjectId;
-            _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", publicClientsAppName, publicClientsClientId);
-
-            var copilotRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{publicClientsClientId}";
-            var publicClientUris = new[] { copilotRedirectUri, "http://localhost:8080/callback", "https://vscode.dev/redirect", "http://localhost" };
-            try
-            {
-                var success = await _retryHelper.ExecuteWithRetryAsync(
-                    async ct => await _graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, publicClientsObjectId, publicClientUris, ct),
-                    result => !result);
-                if (!success)
-                {
-                    var msg = $"Failed to set redirect URIs on Public Clients app '{publicClientsAppName}' after retries.";
-                    _logger.LogError(msg);
-                    warnings.Add(msg);
-                }
-                else
-                {
-                    _logger.LogDebug(
-                        "Set {RedirectUriCount} redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
-                        publicClientUris.Length,
-                        publicClientsAppName,
-                        publicClientsObjectId,
-                        string.Join(", ", publicClientUris));
-                }
-            }
-            catch (Exception ex)
-            {
-                var msg = $"Failed to set redirect URIs on Public Clients app: {ex.Message}";
-                _logger.LogError(msg);
-                warnings.Add(msg);
-            }
-        }
-        else
-        {
-            var msg = "Failed to create Public Clients Entra app. Continuing without it.";
-            _logger.LogWarning(msg);
-            warnings.Add(msg);
-        }
+        var publicClients = await factory.CreatePublicClientsAppAsync(
+            input.ServerName, tenantId, serviceTreeId: input.ServiceTreeId, warnings);
 
         return new EntraAppSet(
-            A365AppClientId: a365App.Value.ClientId,
-            A365AppSecret: a365Secret,
-            A365AppObjectId: a365App.Value.ObjectId,
-            A365AppName: a365AppName,
+            A365AppClientId: a365.ClientId,
+            A365AppSecret: a365.Secret,
+            A365AppObjectId: a365.ObjectId,
+            A365AppName: a365.AppName,
             RemoteProxyClientId: remoteProxyClientId,
             RemoteProxySecret: remoteProxySecret,
             RemoteProxyObjectId: remoteProxyObjectId,
             RemoteProxyAppName: remoteProxyAppName,
-            PublicClientsClientId: publicClientsClientId,
-            PublicClientsObjectId: publicClientsObjectId,
-            PublicClientsAppName: publicClientsAppName);
+            PublicClientsClientId: publicClients.ClientId,
+            PublicClientsObjectId: publicClients.ObjectId,
+            PublicClientsAppName: publicClients.AppName);
     }
 
     private static AddMcpServerRequest BuildRequest(ResolvedInput input, EntraAppSet apps)
