@@ -54,4 +54,36 @@ public class AuthenticationConstantsTests
         // Should be between 1 and 60 minutes
         AuthenticationConstants.TokenExpirationBufferMinutes.Should().BeInRange(1, 60);
     }
+
+    [Fact]
+    public void WamDeclinedScopesError_ShouldMatchKnownWamErrorSubstring()
+    {
+        // This constant is matched against the WAM error message that reads:
+        // "Token response failed because declined scopes are present:'(pii)'"
+        // Verified against live WAM output when requesting Exchange-specific Graph scopes
+        // (MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All) through the a365 CLI.
+        AuthenticationConstants.WamDeclinedScopesError.Should().Be("declined scopes are present");
+    }
+
+    [Fact]
+    public void WamApiContractViolation_ShouldMatchKnownWamErrorClassification()
+    {
+        // WAM surfaces this as "Error Message: ApiContractViolation" in the MSAL exception message
+        // when its internal scope validator rejects a scope set it does not recognise.
+        // Used alongside WamDeclinedScopesError to trigger device code fallback.
+        AuthenticationConstants.WamApiContractViolation.Should().Be("ApiContractViolation");
+    }
+
+    [Fact]
+    public void WamDeclinedScopesError_ShouldBeDifferentFromWamConsentRequiredError()
+    {
+        // These are two distinct failure modes:
+        // - WamConsentRequiredError (0xcaa90019): admin consent NOT granted — do not fall back to device code
+        // - WamDeclinedScopesError (ApiContractViolation + declined scopes): consent granted, WAM
+        //   cannot process the scope — fall back to device code
+        AuthenticationConstants.WamDeclinedScopesError.Should()
+            .NotBe(AuthenticationConstants.WamConsentRequiredError);
+        AuthenticationConstants.WamDeclinedScopesError.Should()
+            .NotContain("0xcaa");
+    }
 }

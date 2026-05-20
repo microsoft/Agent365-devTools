@@ -457,13 +457,29 @@ public sealed class MsalBrowserCredential : TokenCredential
                 aadErrorCode);
             return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
         }
-        catch (MsalException ex) when (ex.Message.Contains(AuthenticationConstants.WamErrorPrefix, StringComparison.OrdinalIgnoreCase))
+        catch (MsalException ex) when (
+            ex.Message.Contains(AuthenticationConstants.WamErrorPrefix, StringComparison.OrdinalIgnoreCase)
+            || IsWamDeclinedScopesError(ex))
         {
             // WAM error 0xcaa90019 = "Need admin approval" (admin consent not granted).
             // Do NOT fall back to device code — device code shows the same browser consent page
             // and hangs if the user clicks "Return to application without granting consent".
             if (ex.Message.Contains(AuthenticationConstants.WamConsentRequiredError, StringComparison.OrdinalIgnoreCase))
                 LogConsentRequiredAndThrow(ex);
+
+            // "Declined scopes" (ApiContractViolation): WAM's internal scope validator rejected one
+            // or more scopes — typically Exchange-specific Graph delegated scopes such as
+            // MailboxSettings.ReadWrite or ExchangeMessageTrace.Read.All. Consent HAS been granted;
+            // WAM simply does not recognise those scope strings. Device code flow bypasses the WAM
+            // broker entirely and succeeds for these scopes.
+            if (IsWamDeclinedScopesError(ex))
+            {
+                _logger?.LogWarning(
+                    "WAM declined one or more requested scopes (ApiContractViolation). " +
+                    "This is expected for Exchange-specific Graph scopes (e.g. MailboxSettings.ReadWrite, " +
+                    "ExchangeMessageTrace.Read.All). Falling back to device code authentication.");
+                return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
+            }
 
             // Other WAM errors (e.g. Conditional Access Policy, device compliance policy)
             // are not consent-related — device code flow bypasses the WAM broker and may succeed.
@@ -487,6 +503,17 @@ public sealed class MsalBrowserCredential : TokenCredential
             throw new MsalAuthenticationFailedException($"Failed to acquire token: {ex.Message}", ex);
         }
     }
+
+    /// <summary>
+    /// Returns true when the MSAL exception represents WAM's "declined scopes" failure:
+    /// the WAM broker rejected one or more scopes with ApiContractViolation because its internal
+    /// scope validator does not recognise them (common for Exchange-specific Graph delegated scopes).
+    /// This is distinct from a consent-not-granted failure (0xcaa90019): consent HAS been granted,
+    /// but WAM cannot process the scope. Device code flow bypasses WAM and succeeds.
+    /// </summary>
+    private static bool IsWamDeclinedScopesError(MsalException ex)
+        => ex.Message.Contains(AuthenticationConstants.WamApiContractViolation, StringComparison.OrdinalIgnoreCase)
+        && ex.Message.Contains(AuthenticationConstants.WamDeclinedScopesError, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Logs a consistent "admin consent required" message with the admin consent URL and throws.

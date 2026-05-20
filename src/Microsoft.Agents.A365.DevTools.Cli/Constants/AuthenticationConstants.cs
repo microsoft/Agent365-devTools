@@ -384,4 +384,28 @@ public static class AuthenticationConstants
     /// Instead, print the admin consent URL and exit cleanly.
     /// </summary>
     public const string WamConsentRequiredError = "0xcaa90019";
+
+    /// <summary>
+    /// WAM error string indicating that the WAM broker rejected one or more requested scopes.
+    /// Appears in the WAM error message as "declined scopes are present".
+    ///
+    /// This is a distinct failure mode from <see cref="WamConsentRequiredError"/>:
+    /// - WamConsentRequiredError (0xcaa90019): consent has NOT been granted — admin must grant it.
+    /// - WamDeclinedScopesError: consent HAS been granted, but WAM's internal scope validator
+    ///   does not recognise the scope set (e.g. Exchange-specific delegated Graph scopes such as
+    ///   MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All, Mail.ReadWrite).
+    ///   Device code flow bypasses the WAM broker and succeeds for these scopes.
+    ///
+    /// The WAM internal error code for this condition is 0x236496A2 (593742242 decimal), which
+    /// does NOT match <see cref="WamErrorPrefix"/> ("0xcaa"), so a separate check is required.
+    /// </summary>
+    public const string WamDeclinedScopesError = "declined scopes are present";
+
+    /// <summary>
+    /// WAM error classification that accompanies <see cref="WamDeclinedScopesError"/>.
+    /// WAM surfaces this as "Error Message: ApiContractViolation" when scope validation fails.
+    /// Used together with <see cref="WamDeclinedScopesError"/> to distinguish this specific
+    /// fallback-eligible failure from other ApiContractViolation variants.
+    /// </summary>
+    public const string WamApiContractViolation = "ApiContractViolation";
 }
