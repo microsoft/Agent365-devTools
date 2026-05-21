@@ -740,6 +740,7 @@ internal static class SetupHelpers
             if (pendingS2SAction)
             {
                 actionCount++;
+                logger.LogInformation("");
                 logger.LogInformation("  {N}. Observability API S2S app role (PowerShell):", actionCount);
                 logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
                 if (!string.IsNullOrWhiteSpace(results.TenantId))

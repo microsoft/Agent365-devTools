@@ -209,6 +209,15 @@ internal static class BatchPermissionsOrchestrator
             }
         }
 
+        // Non-admin with S2S specs: mark BlueprintS2SOutcome = Failed so DisplaySetupSummary
+        // surfaces the PowerShell S2S block as a hand-off item alongside the consent URL.
+        if (!isGlobalAdmin && setupResults is not null && phase1Result is not null)
+        {
+            var hasS2SSpecs = specs.Any(s => s.AppRoleScopes is { Length: > 0 });
+            if (hasS2SSpecs)
+                setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Failed;
+        }
+
         // --- Admin consent ---
         var (consentGranted, consentUrl) = await GrantAdminConsentAsync(
             graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, adminCheck);

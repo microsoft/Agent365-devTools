@@ -283,6 +283,23 @@ public class BatchPermissionsOrchestratorTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<string[]>(), Arg.Any<string[]>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(false));
+
+        // Prevent real network calls: Phase 1 resource SP resolution and Phase 2a inheritable
+        // permission writes must not reach Azure endpoints in CI (ForPartsOf calls real implementations
+        // for unmocked methods). knownBlueprintSpObjectId pre-fills the blueprint SP so
+        // LookupServicePrincipalByAppIdAsync is skipped; EnsureServicePrincipalForAppIdAsync
+        // covers resource SPs. Null resource SP causes PerformS2SGrantsAsync to skip the
+        // GrantAppRoleAssignmentAsync call and set allS2SOk=false, which is equivalent to false
+        // from GrantAppRoleAssignmentAsync — BlueprintS2SOutcome=Failed either way.
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>(null));
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: false, alreadyExists: false, error: (string?)"Insufficient privileges")));
     }
 
     private static ResourcePermissionSpec[] S2SSpec() =>
@@ -386,5 +403,51 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
             Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// When the caller is a non-admin and the spec list includes S2S (AppRoleScopes) entries,
+    /// ConfigureAllPermissionsAsync must set BlueprintS2SOutcome = Failed so that
+    /// DisplaySetupSummary surfaces the PowerShell S2S hand-off block in the Action Required
+    /// section — just like it does for a GA whose Graph API call returns 403.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_NonAdmin_WithS2SSpecs_SetsBlueprintS2SOutcomeFailed()
+    {
+        // Arrange
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
+
+        _graph.LookupServicePrincipalByAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<string?>(null));
+
+        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
+
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>(null));
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: false, alreadyExists: false, error: (string?)"Insufficient privileges")));
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: S2SSpec(), _logger, setupResults, ct: default);
+
+        // Assert
+        setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
+            because: "a non-admin user cannot complete S2S app role assignment directly — the outcome must be marked Failed so DisplaySetupSummary surfaces the PowerShell hand-off block");
     }
 }
