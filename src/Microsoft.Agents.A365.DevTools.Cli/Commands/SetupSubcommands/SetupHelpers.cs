@@ -196,11 +196,14 @@ internal static class SetupHelpers
             var adminCheck = await graphApiService.IsCurrentUserAdminAsync(tenantId, ct);
             var isAdmin = adminCheck == Models.RoleCheckResult.HasRole;
 
+            // Bail out before any blocking prompt if the user has already requested cancellation.
+            ct.ThrowIfCancellationRequested();
+
             string? entered;
             if (isAdmin)
             {
                 Console.Write("Enter a client app ID, or [C] to create one: ");
-                entered = Console.ReadLine()?.Trim();
+                entered = ConsoleHelper.ReadLineCancellable(ct)?.Trim();
 
                 if (string.Equals(entered, "C", StringComparison.OrdinalIgnoreCase))
                     return await CreateAndConsentClientAppAsync(tenantId, graphApiService, logger, ct);
@@ -208,7 +211,7 @@ internal static class SetupHelpers
             else
             {
                 Console.Write("Enter the client app ID: ");
-                entered = Console.ReadLine()?.Trim();
+                entered = ConsoleHelper.ReadLineCancellable(ct)?.Trim();
             }
 
             if (string.IsNullOrWhiteSpace(entered))
@@ -260,7 +263,7 @@ internal static class SetupHelpers
             logger.LogInformation("    - {Scope}", scope);
 
         Console.Write("Grant admin consent for these permissions? [y/N]: ");
-        var consentChoice = Console.ReadLine()?.Trim().ToUpperInvariant();
+        var consentChoice = ConsoleHelper.ReadLineCancellable(ct)?.Trim().ToUpperInvariant();
 
         if (consentChoice != "Y")
         {
@@ -463,7 +466,11 @@ internal static class SetupHelpers
         //   - Non-DW reports the agent-identity S2S outcome (the user-facing intent).
         //   - DW reports the blueprint S2S outcome.
         var s2sOk     = isNonDw ? agentIdS2sGranted : blueprintS2sGranted;
-        var s2sFailed = isNonDw ? agentIdS2sFailed  : blueprintS2sFailed;
+        // Non-DW now also stamps the blueprint with permissions, so the blueprint S2S grant
+        // may run even in the non-DW flow. Surface its failure as a pending action so the
+        // Action Required block emits a PowerShell snippet to retry — otherwise the warning
+        // text alone leaves the operator without an actionable remediation.
+        var s2sFailed = blueprintS2sFailed || (isNonDw && agentIdS2sFailed);
 
         // Delegated success: either tenant-wide consent (DW or non-DW blueprint inheritable scopes)
         // or principal-scoped grants on the agent identity (non-DW path).
@@ -739,9 +746,11 @@ internal static class SetupHelpers
                     logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'", results.TenantId);
                 else
                     logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'");
-                if (isNonDw)
+                // Switch on which side actually failed rather than on DW vs non-DW: non-DW now
+                // stamps the blueprint too, so blueprintS2sFailed is reachable in the non-DW flow.
+                if (agentIdS2sFailed)
                 {
-                    // Non-DW: grant targets the agent identity SP directly (SP object ID, not an app ID).
+                    // Grant targets the agent identity SP directly (SP object ID, not an app ID).
                     var agentSpId = results.AgentIdentityId ?? "<agent-identity-sp-object-id>";
                     logger.LogInformation("       $agentSpId = '{AgentSpId}'", agentSpId);
                     logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);
@@ -970,6 +979,49 @@ internal static class SetupHelpers
         var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
         return $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={clientId}&scope={scopeParam}&redirect_uri={redirectEncoded}&state={Guid.NewGuid():N}";
     }
+
+    /// <summary>
+    /// Returns the canonical identifier URI for a known platform resource app ID
+    /// (Graph, Agent 365 Tools, Messaging Bot, Observability, Power Platform). For any
+    /// unknown app ID, returns the universally-valid <c>api://{appId}</c> form.
+    /// <para>
+    /// This is the single source of truth for building fully-qualified OAuth2 scope URIs
+    /// used in the /v2.0/adminconsent flow. Both the per-resource builder
+    /// (<see cref="BuildAdminConsentUrls"/>) and the combined-URL builder used by
+    /// <c>BatchPermissionsOrchestrator</c> resolve resource URIs through this helper so
+    /// the user always sees the same scope identifiers regardless of which code path
+    /// produced the URL.
+    /// </para>
+    /// <para>
+    /// The Agent 365 Tools (MCP) resource app ID is tenant-discovered and not a static
+    /// constant, so callers that know they are building scopes for MCP must pass the
+    /// resource name ("Agent 365 Tools") to resolve the canonical URI; without it, the
+    /// method falls back to <c>api://{appId}</c> (functionally equivalent but visually
+    /// inconsistent with the per-resource URL).
+    /// </para>
+    /// </summary>
+    internal static string GetResourceIdentifierUri(string resourceAppId, string? resourceName = null)
+    {
+        if (string.Equals(resourceAppId, AuthenticationConstants.MicrosoftGraphResourceAppId, StringComparison.OrdinalIgnoreCase))
+            return AuthenticationConstants.MicrosoftGraphResourceUri;
+        if (string.Equals(resourceAppId, ConfigConstants.MessagingBotApiAppId, StringComparison.OrdinalIgnoreCase))
+            return ConfigConstants.MessagingBotApiIdentifierUri;
+        if (string.Equals(resourceAppId, ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase))
+            return ConfigConstants.ObservabilityApiIdentifierUri;
+        if (string.Equals(resourceAppId, PowerPlatformConstants.PowerPlatformApiResourceAppId, StringComparison.OrdinalIgnoreCase))
+            return PowerPlatformConstants.PowerPlatformApiIdentifierUri;
+        if (string.Equals(resourceName, "Agent 365 Tools", StringComparison.OrdinalIgnoreCase))
+            return McpConstants.Agent365ToolsIdentifierUri;
+        return $"api://{resourceAppId}";
+    }
+
+    /// <summary>
+    /// Builds a fully-qualified OAuth2 scope URI for use in the /v2.0/adminconsent URL.
+    /// Resolves the resource URI via <see cref="GetResourceIdentifierUri"/> so the resulting
+    /// scope identifier matches what the per-resource URL builder emits.
+    /// </summary>
+    internal static string BuildFullyQualifiedScope(string resourceAppId, string scope, string? resourceName = null)
+        => $"{GetResourceIdentifierUri(resourceAppId, resourceName)}/{scope}";
 
     /// <summary>
     /// Builds per-resource admin consent URLs covering every resource stamped on the blueprint

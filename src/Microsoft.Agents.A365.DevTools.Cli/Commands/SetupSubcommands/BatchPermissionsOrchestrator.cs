@@ -387,15 +387,13 @@ internal static class BatchPermissionsOrchestrator
 
     /// <summary>
     /// Builds a fully-qualified OAuth2 scope URI for use in the /v2.0/adminconsent URL.
-    /// Microsoft Graph uses its public https URI; every other resource uses its api://{appId} form.
+    /// Delegates to <see cref="SetupHelpers.BuildFullyQualifiedScope"/> so the combined-URL
+    /// path here and the per-resource URL path in <see cref="SetupHelpers.BuildAdminConsentUrls"/>
+    /// emit identical scope identifiers (e.g. <c>https://agent365.svc.cloud.microsoft/Tools.Execute</c>,
+    /// not <c>api://{appId}/Tools.Execute</c>).
     /// </summary>
-    private static string BuildFullyQualifiedScope(string resourceAppId, string scope)
-    {
-        var resourceUri = string.Equals(resourceAppId, AuthenticationConstants.MicrosoftGraphResourceAppId, StringComparison.OrdinalIgnoreCase)
-            ? AuthenticationConstants.MicrosoftGraphResourceUri
-            : $"api://{resourceAppId}";
-        return $"{resourceUri}/{scope}";
-    }
+    private static string BuildFullyQualifiedScope(string resourceAppId, string scope, string? resourceName = null)
+        => SetupHelpers.BuildFullyQualifiedScope(resourceAppId, scope, resourceName);
 
     /// <summary>
     /// Grants S2S app role assignments for all specs that carry <see cref="ResourcePermissionSpec.AppRoleScopes"/>.
@@ -443,7 +441,12 @@ internal static class BatchPermissionsOrchestrator
             else
             {
                 logger.LogWarning("   - Failed to assign S2S app role for {ResourceName}.", spec.ResourceName);
-                setupResults?.Warnings.Add($"S2S app role assignment failed for {spec.ResourceName}. Re-run 'a365 setup all' as {AuthenticationConstants.S2SGrantRequiredRoles} to retry.");
+                // Do not add a Warnings entry here: the Setup Summary's Action Required block
+                // already emits a copy-paste PowerShell snippet for the failed S2S grant
+                // (gated on BlueprintS2SOutcome=Failed via pendingS2SAction). A bare warning
+                // restating "re-run as Application Administrator" duplicates that block without
+                // adding actionable detail — keep the actionable Action Required item, drop the
+                // redundant warning to reduce summary noise.
                 allS2SOk = false;
             }
         }
@@ -483,7 +486,7 @@ internal static class BatchPermissionsOrchestrator
         // A365 tokens never carry). See CHANGELOG for details.
         var allScopes = specs
             .Where(s => s.Scopes is { Length: > 0 })
-            .SelectMany(s => s.Scopes.Select(scope => BuildFullyQualifiedScope(s.ResourceAppId, scope)))
+            .SelectMany(s => s.Scopes.Select(scope => BuildFullyQualifiedScope(s.ResourceAppId, scope, s.ResourceName)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -563,9 +566,11 @@ internal static class BatchPermissionsOrchestrator
         // Admin path: open browser and poll for the grant.
         // The URL covers all delegated scopes for all resources stamped on the blueprint
         // (Graph + Agent 365 Tools + Messaging Bot + Observability + Power Platform).
+        // Intentionally do not echo the full consent URL here. The Entra consent screen in
+        // the freshly opened browser tab is the user-visible confirmation. If the browser
+        // fails to launch, BrowserHelper.TryOpenUrl logs the URL itself, and if consent is
+        // not detected within the timeout the Action Required block surfaces the URL again.
         logger.LogInformation("Opening browser for admin consent (covers all required delegated permissions)...");
-        logger.LogInformation(
-            "If the browser does not open automatically, navigate to this URL: {ConsentUrl}", consentUrl);
         BrowserHelper.TryOpenUrl(consentUrl!, logger);
 
         bool consentGranted;
@@ -586,7 +591,10 @@ internal static class BatchPermissionsOrchestrator
 
         if (consentGranted)
         {
-            logger.LogInformation("Admin consent granted successfully.");
+            // Polling success already emits "Consent granted (...)" inside PollAdminConsentAsync;
+            // the canary-403 path emits its own "Continuing without auto-verification" message.
+            // Do not add a second "Admin consent granted successfully." here — it would be a false
+            // claim on the canary path, where we never actually verified the grant.
         }
         else
         {

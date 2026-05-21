@@ -35,6 +35,32 @@ public static class AdminConsentHelper
     private static readonly AsyncLocal<bool> _bypassConsentChecks = new();
 
     /// <summary>
+    /// Non-blocking check for a buffered Enter keypress. Used by the canary 403 polling loop
+    /// to let an impatient user short-circuit verification without blocking on stdin.
+    /// Safe when stdin is redirected (e.g. test/CI): returns false and any other buffered keys
+    /// are consumed harmlessly. Returns true only when an Enter key was pressed and consumed.
+    /// </summary>
+    private static bool TryConsumeEnterKey()
+    {
+        try
+        {
+            while (Console.KeyAvailable)
+            {
+                var key = Console.ReadKey(intercept: true);
+                if (key.Key == ConsoleKey.Enter)
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Console.KeyAvailable throws when stdin is redirected. Treat as "no Enter".
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Polls Azure AD/Graph (via az rest) to detect an oauth2 permission grant for the provided appId.
     /// Mirrors the behavior previously implemented in A365SetupRunner.PollAdminConsentAsync.
     /// </summary>
@@ -159,8 +185,114 @@ public static class AdminConsentHelper
         var start = DateTime.UtcNow;
         int lastProgressReportSeconds = 0;
 
+        // Canary call to detect whether the caller is allowed to read oauth2PermissionGrants
+        // at all. Reading the grants collection requires DelegatedPermissionGrant.Read.All in
+        // the token's scp claim — a privilege the CLI's blueprint-app token does not carry.
+        // When the canary returns 403, polling is impossible: we cannot observe the grant
+        // landing no matter how long we wait. Degrade to an interactive prompt so the user
+        // can confirm completion manually rather than burning the full 180s timeout in silence.
+        try
+        {
+            var canary = await graphApiService.GraphGetWithResponseAsync(
+                tenantId,
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpId}'&$top=1",
+                scopes: AuthenticationConstants.RequiredPermissionGrantScopes,
+                ct: ct);
+
+            if (canary.StatusCode == 403)
+            {
+                logger.LogInformation(
+                    "Waiting for admin consent (up to {TimeoutSeconds}s). Complete the consent screen in the browser. Press Enter when you're done, or Ctrl+C to abort.",
+                    timeoutSeconds);
+                logger.LogDebug(
+                    "Auto-verification disabled: current token lacks DelegatedPermissionGrant.Read.All required to read oauth2PermissionGrants. Will re-check every {IntervalSeconds}s in case the read permission becomes available.",
+                    intervalSeconds);
+
+                var canaryStart = DateTime.UtcNow;
+                int canaryLastProgress = 0;
+                while ((DateTime.UtcNow - canaryStart).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
+                {
+                    // Non-blocking Enter check between polls so an impatient user can short-circuit.
+                    if (TryConsumeEnterKey())
+                    {
+                        logger.LogInformation("Continuing. Run 'a365 query-entra inheritance' later to confirm permissions if needed.");
+                        return true;
+                    }
+
+                    var elapsed = (int)(DateTime.UtcNow - canaryStart).TotalSeconds;
+                    if (elapsed > 0 && elapsed - canaryLastProgress >= 30)
+                    {
+                        canaryLastProgress = elapsed;
+                        logger.LogInformation(
+                            "Still waiting... ({ElapsedSeconds}s / {TimeoutSeconds}s). Press Enter when consent is complete.",
+                            elapsed, timeoutSeconds);
+                    }
+
+                    try
+                    {
+                        var retry = await graphApiService.GraphGetWithResponseAsync(
+                            tenantId,
+                            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpId}'&$top=1",
+                            scopes: AuthenticationConstants.RequiredPermissionGrantScopes,
+                            ct: ct);
+
+                        if (retry.IsSuccess && retry.Json is { } rdoc &&
+                            rdoc.RootElement.TryGetProperty("value", out var rarr) &&
+                            rarr.GetArrayLength() > 0)
+                        {
+                            logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
+                            return true;
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(ex, "Canary re-check failed; will retry.");
+                    }
+
+                    // Short delay loop so Enter is detected promptly without spamming Graph.
+                    var pollEnd = DateTime.UtcNow.AddSeconds(intervalSeconds);
+                    while (DateTime.UtcNow < pollEnd && !ct.IsCancellationRequested)
+                    {
+                        if (TryConsumeEnterKey())
+                        {
+                            logger.LogInformation("Continuing. Run 'a365 query-entra inheritance' later to confirm permissions if needed.");
+                            return true;
+                        }
+                        await Task.Delay(250, ct);
+                    }
+                }
+
+                logger.LogWarning(
+                    "Admin consent not confirmed within {TimeoutSeconds}s. Continuing — run 'a365 query-entra inheritance' later to verify.",
+                    timeoutSeconds);
+                return true;
+            }
+
+            // If the canary succeeded and already shows a grant, short-circuit.
+            if (canary.IsSuccess && canary.Json is { } cdoc &&
+                cdoc.RootElement.TryGetProperty("value", out var carr) &&
+                carr.GetArrayLength() > 0)
+            {
+                logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
+                return true;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Canary call failed for a non-403 reason (e.g. transient network error). Fall through
+            // to the normal polling loop, which has its own retry/error handling.
+            logger.LogDebug(ex, "Canary call before admin consent polling failed; continuing with regular polling.");
+        }
+
+        // Only emit the "waiting..." banner once we have decided to actually poll. Emitting it
+        // before the canary contradicts the interactive prompt the canary may print on 403.
         logger.LogInformation(
-            "Waiting for admin consent to be granted. Open the URL above in a browser and complete the consent flow. The CLI will continue automatically (timeout: {TimeoutSeconds}s).",
+            "Waiting for admin consent to be granted. Complete the consent flow in the browser. The CLI will continue automatically (timeout: {TimeoutSeconds}s).",
             timeoutSeconds);
 
         try

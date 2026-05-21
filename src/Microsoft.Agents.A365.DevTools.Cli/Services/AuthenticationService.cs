@@ -374,6 +374,13 @@ public class AuthenticationService : IAuthenticationService
             
             throw new AzureAuthenticationException($"Authentication failed: {ex.Message}");
         }
+        catch (OperationCanceledException)
+        {
+            // Honor cancellation — never wrap into AzureAuthenticationException. Otherwise
+            // Ctrl+C is silently converted to an auth failure and callers either return null
+            // or fall through to interactive prompts.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError("Unexpected authentication error: {Message}", ex.Message);

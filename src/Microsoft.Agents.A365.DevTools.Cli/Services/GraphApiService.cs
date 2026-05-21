@@ -155,6 +155,13 @@ public class GraphApiService
             _logger.LogError("Failed to acquire Graph API access token for tenant {TenantId}", tenantId);
             return null;
         }
+        catch (OperationCanceledException)
+        {
+            // Honor cancellation — never swallow. Otherwise Ctrl+C is silently converted to
+            // a "no token" result, and the caller falls through to interactive prompts or
+            // misleading "not found" errors.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error acquiring Graph API access token");

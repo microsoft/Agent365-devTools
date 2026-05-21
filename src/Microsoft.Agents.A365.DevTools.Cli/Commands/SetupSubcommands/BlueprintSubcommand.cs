@@ -1225,20 +1225,52 @@ internal static class BlueprintSubcommand
                 }
             };
 
-            var patchResponse = await httpClient.PatchAsync(
-                patchAppUrl,
-                new StringContent(patchBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+            // PATCH /v1.0/applications/{id} for newly created blueprint apps frequently returns
+            // 404 Request_ResourceNotFound for several seconds after creation, even after the GET
+            // propagation check above succeeds — the write replica lags the read replica. Retry
+            // with backoff until the write replica catches up, otherwise we silently leave the
+            // blueprint without an identifier URI or the OBO scope.
+            var patchBodyJson = patchBody.ToJsonString();
+            var patchSucceeded = false;
+            string? lastPatchError = null;
+            await retryHelper.ExecuteWithRetryAsync(
+                async innerCt =>
+                {
+                    using var patchContent = new StringContent(patchBodyJson, System.Text.Encoding.UTF8, "application/json");
+                    using var patchResponse = await httpClient.PatchAsync(patchAppUrl, patchContent, innerCt);
+                    if (patchResponse.IsSuccessStatusCode)
+                    {
+                        patchSucceeded = true;
+                        return true;
+                    }
+                    lastPatchError = await patchResponse.Content.ReadAsStringAsync(innerCt);
+                    logger.LogDebug("Identifier URI / scope PATCH attempt failed ({Status}); waiting for write replica to catch up...", (int)patchResponse.StatusCode);
+                    return false;
+                },
+                result => !result,
+                maxRetries: 10,
+                baseDelaySeconds: 3,
                 ct);
 
-            if (!patchResponse.IsSuccessStatusCode)
+            if (patchSucceeded)
             {
-                var patchError = await patchResponse.Content.ReadAsStringAsync(ct);
-                logger.LogDebug("Waiting for application propagation before setting identifier URI...");
-                logger.LogDebug("Identifier URI / scope update deferred (propagation delay): {Error}", patchError);
+                logger.LogDebug("Identifier URI set to {Uri}; {Scope} scope added", identifierUri, Constants.ConfigConstants.BlueprintOboScope);
             }
             else
             {
-                logger.LogDebug("Identifier URI set to {Uri}; {Scope} scope added", identifierUri, Constants.ConfigConstants.BlueprintOboScope);
+                // Blueprint without an identifier URI cannot perform on-behalf-of token exchange,
+                // so the agent will fail at runtime. Surface this as a hard error with a clear
+                // remediation step rather than continuing setup silently. The blueprint app object
+                // already exists, so re-running the setup command will retry the PATCH against a
+                // (by now) caught-up write replica.
+                logger.LogError("Identifier URI / scope update did not complete after retries: {Error}", lastPatchError);
+                throw new Exceptions.SetupValidationException(
+                    issueDescription: $"Blueprint application '{appId}' was created but the identifier URI / OBO scope PATCH did not complete after retries. The blueprint is incomplete and OBO token exchange will fail.",
+                    mitigationSteps: new List<string>
+                    {
+                        $"Re-run: a365 setup blueprint --agent-name {displayName}",
+                        "If the failure repeats, wait a few minutes for Entra replication to settle and try again."
+                    });
             }
 
             // Create service principal
@@ -1701,9 +1733,17 @@ internal static class BlueprintSubcommand
                 }
             };
 
-            var patched = await graphApiService.GraphPatchAsync(
-                tenantId, $"/v1.0/applications/{objectId}", patch, ct,
-                scopes: AuthenticationConstants.BlueprintOperationScopes);
+            // Retry on transient PATCH failure: write replica may lag the read replica for newly
+            // created blueprint apps. See note in BlueprintSubcommand.CreateBlueprintAsync.
+            var retryHelper = new RetryHelper(logger);
+            var patched = await retryHelper.ExecuteWithRetryAsync(
+                async innerCt => await graphApiService.GraphPatchAsync(
+                    tenantId, $"/v1.0/applications/{objectId}", patch, innerCt,
+                    scopes: AuthenticationConstants.BlueprintOperationScopes),
+                result => !result,
+                maxRetries: 5,
+                baseDelaySeconds: 3,
+                ct);
 
             if (patched)
                 logger.LogInformation("{Scope} scope added to blueprint", ConfigConstants.BlueprintOboScope);

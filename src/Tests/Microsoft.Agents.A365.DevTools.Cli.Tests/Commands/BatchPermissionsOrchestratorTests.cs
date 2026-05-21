@@ -228,10 +228,10 @@ public class BatchPermissionsOrchestratorTests : IDisposable
             because: "the consent URL must target the blueprint application");
         consentUrl.Should().Contain("Mail.ReadWrite",
             because: "Graph scopes must be included in the unified consent URL");
-        consentUrl.Should().Contain(ConfigConstants.MessagingBotApiAppId,
-            because: "non-Graph resources must be encoded as api://{appId}/{scope} in the unified URL");
+        consentUrl.Should().Contain("botapi.skype.com",
+            because: "non-Graph resources with a canonical identifierUri (e.g. Messaging Bot API) must use that URI in the unified consent URL — using api://{appId} for resources that publish their own identifierUri produces a scope mismatch and AAD rejects the consent");
         consentUrl.Should().Contain(ConfigConstants.ObservabilityApiAppId,
-            because: "every delegated resource — including the Observability API — must be covered by a single browser prompt");
+            because: "resources without a friendly identifierUri must be encoded as api://{appId}/{scope}, and the Observability API identifierUri embeds its appId — every delegated resource must be covered by a single browser prompt");
 
         await _graph.DidNotReceive().CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
