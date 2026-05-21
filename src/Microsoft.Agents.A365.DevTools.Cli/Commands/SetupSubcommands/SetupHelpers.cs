@@ -465,7 +465,7 @@ internal static class SetupHelpers
         // For row-label and "completed" gates, the "S2S" outcome of interest depends on flow:
         //   - Non-DW reports the agent-identity S2S outcome (the user-facing intent).
         //   - DW reports the blueprint S2S outcome.
-        var s2sOk     = isNonDw ? agentIdS2sGranted : blueprintS2sGranted;
+        var s2sOk     = isNonDw ? (agentIdS2sGranted && !blueprintS2sFailed) : blueprintS2sGranted;
         // Non-DW now also stamps the blueprint with permissions, so the blueprint S2S grant
         // may run even in the non-DW flow. Surface its failure as a pending action so the
         // Action Required block emits a PowerShell snippet to retry — otherwise the warning
@@ -1587,7 +1587,7 @@ internal static class SetupHelpers
             .ToList();
 
         var hasConsentUrl = !string.IsNullOrWhiteSpace(adminConsentUrl);
-        var hasS2SPowerShell = appRoleSpecs.Count > 0;
+        var hasS2SPowerShell = appRoleSpecs.Count > 0 && results.BlueprintS2SOutcome != Models.GrantOutcome.Granted;
 
         if (!hasConsentUrl && !hasS2SPowerShell)
         {
@@ -1617,7 +1617,10 @@ internal static class SetupHelpers
             logger.LogInformation("");
             logger.LogInformation("  {N}. S2S app role assignments (PowerShell):", step);
             logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
-            logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'", tenantId ?? "<tenant-id>");
+            if (!string.IsNullOrWhiteSpace(tenantId))
+                logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'", tenantId);
+            else
+                logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'");
             logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
             foreach (var spec in appRoleSpecs)
             {

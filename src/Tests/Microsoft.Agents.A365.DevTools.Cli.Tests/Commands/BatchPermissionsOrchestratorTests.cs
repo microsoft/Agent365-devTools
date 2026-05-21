@@ -182,6 +182,20 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
 
+        // Prevent real network calls: Phase 1 resource SP resolution and Phase 2a inheritable
+        // permission writes must not reach Azure endpoints in CI. Return null SPs (not found)
+        // and simulate an insufficient-privileges failure so both phases skip cleanly without
+        // making any real HTTP requests.
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>(null));
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: false, alreadyExists: false, error: (string?)"Insufficient privileges")));
+
         var config = new Agent365Config
         {
             TenantId = "tenant-id",
