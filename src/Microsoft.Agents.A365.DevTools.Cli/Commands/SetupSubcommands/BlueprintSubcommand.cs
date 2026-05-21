@@ -1241,11 +1241,32 @@ internal static class BlueprintSubcommand
                     if (patchResponse.IsSuccessStatusCode)
                     {
                         patchSucceeded = true;
+                        lastPatchError = null;
                         return true;
                     }
                     lastPatchError = await patchResponse.Content.ReadAsStringAsync(innerCt);
-                    logger.LogDebug("Identifier URI / scope PATCH attempt failed ({Status}); waiting for write replica to catch up...", (int)patchResponse.StatusCode);
-                    return false;
+
+                    // Only the read-replica-lag race is worth retrying: HTTP 404 with
+                    // Request_ResourceNotFound after a freshly created application. Any other
+                    // failure (400 invalid body, 403 missing permission, 5xx server error) is
+                    // unlikely to clear on its own and should fall through to the post-loop
+                    // SetupValidationException so the user sees the real error immediately
+                    // instead of waiting 10 * 3s of pointless retries.
+                    var isReplicaLag = patchResponse.StatusCode == System.Net.HttpStatusCode.NotFound
+                        && lastPatchError != null
+                        && lastPatchError.Contains("Request_ResourceNotFound", StringComparison.Ordinal);
+                    if (isReplicaLag)
+                    {
+                        logger.LogDebug("Identifier URI / scope PATCH attempt failed (404 Request_ResourceNotFound); waiting for write replica to catch up...");
+                        return false;
+                    }
+
+                    logger.LogDebug(
+                        "Identifier URI / scope PATCH failed with non-retryable status {Status}; aborting retry loop.",
+                        (int)patchResponse.StatusCode);
+                    // Returning a non-default success token signals 'don't retry'. The post-loop
+                    // 'if (!patchSucceeded)' branch will throw with lastPatchError.
+                    return true;
                 },
                 result => !result,
                 maxRetries: 10,
@@ -1944,24 +1965,42 @@ internal static class BlueprintSubcommand
         bool consentSuccess;
         if (!string.IsNullOrWhiteSpace(blueprintSpId))
         {
-            consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(
+            var pollResult = await AdminConsentHelper.PollAdminConsentAsync(
                 graphApiService, logger, tenantId, blueprintSpId,
                 "Graph API Scopes", 180, 5, ct);
+            switch (pollResult)
+            {
+                case ConsentPollResult.Verified:
+                    consentSuccess = true;
+                    logger.LogInformation("Graph API admin consent granted successfully!");
+                    break;
+                case ConsentPollResult.AssumedComplete:
+                    // Token lacked permission to read oauth2PermissionGrants; user pressed Enter
+                    // or the wait window elapsed. We have no proof the grant landed.
+                    consentSuccess = true;
+                    logger.LogInformation("Continuing without auto-verification. Run 'a365 query-entra inheritance' later to confirm the grant.");
+                    logger.LogInformation("  If consent was not completed, open this URL manually: {ConsentUrl}", consentUrlGraph);
+                    break;
+                default:
+                    consentSuccess = false;
+                    logger.LogWarning("Graph API admin consent may not have completed.");
+                    logger.LogWarning("  Open this URL to grant consent manually: {ConsentUrl}", consentUrlGraph);
+                    break;
+            }
         }
         else
         {
             logger.LogDebug("Could not resolve blueprint service principal. Falling back to az rest polling.");
             consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
-        }
-
-        if (consentSuccess)
-        {
-            logger.LogInformation("Graph API admin consent granted successfully!");
-        }
-        else
-        {
-            logger.LogWarning("Graph API admin consent may not have completed.");
-            logger.LogWarning("  Open this URL to grant consent manually: {ConsentUrl}", consentUrlGraph);
+            if (consentSuccess)
+            {
+                logger.LogInformation("Graph API admin consent granted successfully!");
+            }
+            else
+            {
+                logger.LogWarning("Graph API admin consent may not have completed.");
+                logger.LogWarning("  Open this URL to grant consent manually: {ConsentUrl}", consentUrlGraph);
+            }
         }
 
         // Configure Graph inheritable permissions regardless of admin consent outcome.

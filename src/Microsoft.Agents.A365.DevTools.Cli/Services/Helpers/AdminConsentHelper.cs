@@ -11,6 +11,35 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 /// <summary>
+/// Outcome of an admin-consent polling attempt.
+/// Distinguishes verified grants from assumed completion so callers do not
+/// mutate persisted consent state on the basis of an unverified observation.
+/// </summary>
+public enum ConsentPollResult
+{
+    /// <summary>
+    /// An oauth2PermissionGrant for the client SP was observed in Graph. Safe to mark
+    /// consent as granted in persisted state.
+    /// </summary>
+    Verified,
+
+    /// <summary>
+    /// Auto-verification was not possible (the calling token lacks the permission required to
+    /// read oauth2PermissionGrants). The user either pressed Enter to continue or the wait
+    /// window elapsed. The CLI did NOT observe the grant directly. Callers must NOT update
+    /// persisted consent state on this outcome and must keep the consent URL visible so the
+    /// user can verify manually (for example via 'a365 query-entra inheritance').
+    /// </summary>
+    AssumedComplete,
+
+    /// <summary>
+    /// Polling completed without observing a grant and without a canary fallback. Consent was
+    /// not detected.
+    /// </summary>
+    NotDetected
+}
+
+/// <summary>
 /// Helper methods for admin consent flows that use az cli to poll Graph resources.
 /// Kept intentionally small and focused so it can be reused across commands/runners.
 /// </summary>
@@ -161,7 +190,15 @@ public static class AdminConsentHelper
     /// Caller must supply the blueprint service principal object ID directly to avoid
     /// a servicePrincipals $filter query that requires ConsistencyLevel: eventual.
     /// </summary>
-    public static async Task<bool> PollAdminConsentAsync(
+    /// <returns>
+    /// <see cref="ConsentPollResult.Verified"/> when a grant was observed in Graph.
+    /// <see cref="ConsentPollResult.AssumedComplete"/> when the token lacks permission to read
+    /// oauth2PermissionGrants and the user either pressed Enter or the timeout elapsed without
+    /// the read permission becoming available — the grant was NOT directly observed.
+    /// <see cref="ConsentPollResult.NotDetected"/> on polling timeout without a canary fallback,
+    /// or when the blueprint SP id is not available.
+    /// </returns>
+    public static async Task<ConsentPollResult> PollAdminConsentAsync(
         Services.GraphApiService graphApiService,
         ILogger logger,
         string tenantId,
@@ -173,13 +210,13 @@ public static class AdminConsentHelper
     {
         if (BypassConsentChecksForTests)
         {
-            return true;
+            return ConsentPollResult.Verified;
         }
 
         if (string.IsNullOrWhiteSpace(clientSpId))
         {
             logger.LogDebug("Blueprint service principal ID not available, falling back to az rest polling.");
-            return false;
+            return ConsentPollResult.NotDetected;
         }
 
         var start = DateTime.UtcNow;
@@ -216,7 +253,7 @@ public static class AdminConsentHelper
                     if (TryConsumeEnterKey())
                     {
                         logger.LogInformation("Continuing. Run 'a365 query-entra inheritance' later to confirm permissions if needed.");
-                        return true;
+                        return ConsentPollResult.AssumedComplete;
                     }
 
                     var elapsed = (int)(DateTime.UtcNow - canaryStart).TotalSeconds;
@@ -241,7 +278,7 @@ public static class AdminConsentHelper
                             rarr.GetArrayLength() > 0)
                         {
                             logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
-                            return true;
+                            return ConsentPollResult.Verified;
                         }
                     }
                     catch (OperationCanceledException) { throw; }
@@ -257,7 +294,7 @@ public static class AdminConsentHelper
                         if (TryConsumeEnterKey())
                         {
                             logger.LogInformation("Continuing. Run 'a365 query-entra inheritance' later to confirm permissions if needed.");
-                            return true;
+                            return ConsentPollResult.AssumedComplete;
                         }
                         await Task.Delay(250, ct);
                     }
@@ -266,7 +303,7 @@ public static class AdminConsentHelper
                 logger.LogWarning(
                     "Admin consent not confirmed within {TimeoutSeconds}s. Continuing — run 'a365 query-entra inheritance' later to verify.",
                     timeoutSeconds);
-                return true;
+                return ConsentPollResult.AssumedComplete;
             }
 
             // If the canary succeeded and already shows a grant, short-circuit.
@@ -275,7 +312,7 @@ public static class AdminConsentHelper
                 carr.GetArrayLength() > 0)
             {
                 logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
-                return true;
+                return ConsentPollResult.Verified;
             }
         }
         catch (OperationCanceledException)
@@ -321,7 +358,7 @@ public static class AdminConsentHelper
                     arr.GetArrayLength() > 0)
                 {
                     logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
-                    return true;
+                    return ConsentPollResult.Verified;
                 }
 
                 logger.LogDebug("No consent grants found for blueprint SP {ClientSpId} yet.", clientSpId);
@@ -332,12 +369,12 @@ public static class AdminConsentHelper
             logger.LogWarning(
                 "Admin consent was not detected within {TimeoutSeconds}s. Continuing — you can re-run this command after granting consent.",
                 timeoutSeconds);
-            return false;
+            return ConsentPollResult.NotDetected;
         }
         catch (OperationCanceledException)
         {
             logger.LogDebug("Polling for admin consent was cancelled or timed out for SP {ClientSpId} ({Scope}).", clientSpId, scopeDescriptor);
-            return false;
+            return ConsentPollResult.NotDetected;
         }
     }
 

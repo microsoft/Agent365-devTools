@@ -1118,8 +1118,8 @@ internal static class PermissionsSubcommand
         IReadOnlyList<ResourcePermissionSpec>? specs = null)
     {
         // Rich path: when we have the per-run results and the spec list, surface the same
-        // copy-paste PowerShell action block that 'setup all' produces, including the OAuth2
-        // AllPrincipals grants for non-Graph resources (Bot API / Observability / Power Platform).
+        // action-required block that 'setup all' produces, including the unified
+        // /v2.0/adminconsent URL and any S2S app-role PowerShell guidance.
         if (results is not null && specs is not null)
         {
             SetupHelpers.LogPermissionsActionRequired(logger, results, specs, adminConsentUrl);

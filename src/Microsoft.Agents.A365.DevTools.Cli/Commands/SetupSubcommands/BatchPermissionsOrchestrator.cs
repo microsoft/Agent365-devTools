@@ -574,11 +574,17 @@ internal static class BatchPermissionsOrchestrator
         BrowserHelper.TryOpenUrl(consentUrl!, logger);
 
         bool consentGranted;
+        bool consentVerified;
         if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
         {
-            consentGranted = await AdminConsentHelper.PollAdminConsentAsync(
+            var pollResult = await AdminConsentHelper.PollAdminConsentAsync(
                 graph, logger, tenantId, phase1Result.BlueprintSpObjectId,
                 "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct);
+            consentVerified = pollResult == ConsentPollResult.Verified;
+            // AssumedComplete still allows setup to proceed (the user said they completed it),
+            // but the consent URL must remain visible in the Action Required block so they can
+            // verify manually. NotDetected is a hard 'no'.
+            consentGranted = pollResult != ConsentPollResult.NotDetected;
         }
         else
         {
@@ -587,6 +593,7 @@ internal static class BatchPermissionsOrchestrator
                 "Cannot poll for consent: blueprint service principal was not resolved. " +
                 "Please verify consent was granted at: {ConsentUrl}", consentUrl);
             consentGranted = false;
+            consentVerified = false;
         }
 
         if (consentGranted)
@@ -604,7 +611,9 @@ internal static class BatchPermissionsOrchestrator
             setupResults?.Warnings.Add($"Admin consent not detected within timeout. Grant at: {consentUrl}");
         }
 
-        return (consentGranted, consentGranted ? null : consentUrl);
+        // Return URL when either polling failed outright OR consent was assumed-complete but not
+        // verified. Caller uses (consentGranted && consentUrl == null) as the 'safe to persist' gate.
+        return (consentGranted, consentVerified ? null : consentUrl);
     }
 
     /// <summary>
