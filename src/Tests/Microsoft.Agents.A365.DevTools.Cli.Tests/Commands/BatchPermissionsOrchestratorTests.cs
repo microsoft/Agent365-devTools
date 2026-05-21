@@ -25,6 +25,7 @@ public class BatchPermissionsOrchestratorTests : IDisposable
 {
     private readonly GraphApiService _graph;
     private readonly AgentBlueprintService _blueprintService;
+    private readonly CommandExecutor _executor;
     private readonly ILogger _logger;
 
     public BatchPermissionsOrchestratorTests()
@@ -33,6 +34,7 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         _graph = Substitute.ForPartsOf<GraphApiService>();
         _blueprintService = Substitute.ForPartsOf<AgentBlueprintService>(
             Substitute.For<ILogger<AgentBlueprintService>>(), _graph);
+        _executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
 
         // Suppress real browser launches and 180s consent polls during orchestrator tests.
         // Reset in Dispose so state does not leak into other test classes.
@@ -246,4 +248,129 @@ public class BatchPermissionsOrchestratorTests : IDisposable
     // above and by `ConfigureAllPermissions_WhenPhase1AuthFails_Phase2SkippedAndPhase3ReturnsConsentUrl`
     // for the Graph-only non-admin path. The admin (browser-launching) path is not unit-tested to
     // avoid invoking a real browser in CI.
+
+    // ---- PowerShell S2S fallback tests ----
+    // Use valid GUIDs for tenantId/blueprintAppId so PowerShellS2SRunner GUID validation passes.
+    private const string S2STenantId = "00000000-0000-0000-0000-000000000001";
+    private const string S2SBlueprintAppId = "00000000-0000-0000-0000-000000000002";
+    private const string S2SBlueprintSpObjectId = "sp-object-id";
+
+    private void ArrangeS2SPhase1AndAdminCheck()
+    {
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
+
+        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(RoleCheckResult.HasRole);
+
+        _blueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string[]>(), Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(false));
+    }
+
+    private static ResourcePermissionSpec[] S2SSpec() =>
+    [
+        new ResourcePermissionSpec(
+            ConfigConstants.ObservabilityApiAppId,
+            "Observability API",
+            new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+            SetInheritable: false,
+            AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope })
+    ];
+
+    /// <summary>
+    /// When the programmatic Graph API path for S2S fails (e.g. token lacks
+    /// AppRoleAssignment.ReadWrite.All even for a GA) and pwsh executes the
+    /// fallback script successfully, BlueprintS2SOutcome must be set to Granted
+    /// so the Action Required block is suppressed in the setup summary.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_WhenS2SFailsAndPwshSucceeds_SetsBlueprintS2SOutcomeGranted()
+    {
+        // Arrange
+        ArrangeS2SPhase1AndAdminCheck();
+        _executor.ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "A365-S2S-OK\n" });
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: S2SSpec(), _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor);
+
+        // Assert
+        setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Granted,
+            because: "when pwsh executes the S2S script successfully the Action Required block must be suppressed");
+    }
+
+    /// <summary>
+    /// When the programmatic path fails and pwsh reports that the Microsoft.Graph modules
+    /// are not installed, BlueprintS2SOutcome must remain Failed so the Action Required
+    /// block still surfaces — the user needs to install the modules and re-run.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_WhenS2SFailsAndPwshMissingModules_OutcomeRemainsFailedWithWarning()
+    {
+        // Arrange
+        ArrangeS2SPhase1AndAdminCheck();
+        _executor.ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new CommandResult { ExitCode = 1, StandardError = "CommandNotFoundException: 'Connect-MgGraph' is not recognized" });
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: S2SSpec(), _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor);
+
+        // Assert
+        setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
+            because: "missing Microsoft.Graph modules means the fallback could not complete — Action Required must remain visible");
+    }
+
+    /// <summary>
+    /// Backward-compat contract: when no commandExecutor is supplied (e.g. callers that have not
+    /// been updated, or unattended/non-interactive runs), the PowerShell fallback is not attempted
+    /// and BlueprintS2SOutcome remains Failed exactly as before this feature was added.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_WhenNoCommandExecutor_PwshFallbackNotAttempted()
+    {
+        // Arrange
+        ArrangeS2SPhase1AndAdminCheck();
+
+        var setupResults = new SetupResults();
+
+        // Act — commandExecutor intentionally omitted
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: S2SSpec(), _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId);
+
+        // Assert
+        setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
+            because: "without a commandExecutor the PowerShell fallback is not attempted and outcome stays Failed");
+
+        await _executor.DidNotReceive().ExecuteWithStreamingAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
 }

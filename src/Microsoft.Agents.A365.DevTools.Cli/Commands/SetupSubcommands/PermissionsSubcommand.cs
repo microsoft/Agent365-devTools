@@ -684,7 +684,8 @@ internal static class PermissionsSubcommand
                 setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                 specs, logger, localResults, cancellationToken,
                 knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
-                confirmationProvider: confirmationProvider);
+                confirmationProvider: confirmationProvider,
+                commandExecutor: executor);
 
             // Ensure the Action Required block prints the blueprint and tenant context even when this
             // subcommand is run standalone (setup all populates these earlier; standalone runs don't).
@@ -762,7 +763,8 @@ internal static class PermissionsSubcommand
                 setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                 specs, logger, localResults, cancellationToken,
                 knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
-                confirmationProvider: confirmationProvider);
+                confirmationProvider: confirmationProvider,
+                commandExecutor: executor);
 
             // Ensure the Action Required block prints the blueprint and tenant context even when this
             // subcommand is run standalone (setup all populates these earlier; standalone runs don't).
@@ -1069,7 +1071,8 @@ internal static class PermissionsSubcommand
                     setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                     specList, logger, localResults, cancellationToken,
                     knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
-                    confirmationProvider: confirmationProvider);
+                    confirmationProvider: confirmationProvider,
+                    commandExecutor: executor);
 
                 customAdminConsentUrl = adminConsentUrl;
                 customConsentGranted = consentGranted;

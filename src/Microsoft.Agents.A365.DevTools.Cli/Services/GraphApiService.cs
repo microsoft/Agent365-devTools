@@ -486,9 +486,9 @@ public class GraphApiService
                 var body = await resp.Content.ReadAsStringAsync(ct);
                 var errorMessage = TryExtractGraphErrorMessage(body);
                 if (errorMessage != null)
-                    _logger.LogError("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
+                    _logger.LogDebug("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
                 else
-                    _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                    _logger.LogDebug("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
                 _logger.LogDebug("Graph PATCH response body: {Body}", body);
             }
 

@@ -1245,7 +1245,7 @@ public class AgentBlueprintService
                 }
                 else
                 {
-                    _logger.LogWarning(
+                    _logger.LogDebug(
                         "Failed to assign app role '{RoleName}': HTTP {Status} {Reason} — {Body}",
                         roleName, (int)resp.StatusCode, resp.ReasonPhrase, resp.Body);
                     allOk = false;

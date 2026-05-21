@@ -753,7 +753,8 @@ internal static class AllSubcommand
                     ctx.Config.AgentBlueprintId!, ctx.Config.TenantId!,
                     specs, ctx.Logger, ctx.Results, ctx.CancellationToken,
                     knownBlueprintSpObjectId: knownBlueprintSpObjectId,
-                    confirmationProvider: ctx.ConfirmationProvider);
+                    confirmationProvider: ctx.ConfirmationProvider,
+                    commandExecutor: ctx.Executor);
 
             ctx.Results.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
             ctx.Results.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;

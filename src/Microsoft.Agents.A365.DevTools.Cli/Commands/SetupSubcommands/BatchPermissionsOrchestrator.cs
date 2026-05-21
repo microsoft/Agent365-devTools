@@ -73,7 +73,8 @@ internal static class BatchPermissionsOrchestrator
         SetupResults? setupResults,
         CancellationToken ct,
         string? knownBlueprintSpObjectId = null,
-        IConfirmationProvider? confirmationProvider = null)
+        IConfirmationProvider? confirmationProvider = null,
+        CommandExecutor? commandExecutor = null)
     {
         if (specs.Count == 0)
         {
@@ -184,6 +185,27 @@ internal static class BatchPermissionsOrchestrator
                 if (!string.IsNullOrWhiteSpace(phase1Result?.BlueprintSpObjectId))
                     await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
                 // else: blueprint SP was not resolved — leave BlueprintS2SOutcome = NotApplicable (not attempted)
+
+                // When the programmatic Graph API path fails (e.g. token lacks AppRoleAssignment.ReadWrite.All
+                // even for GA), fall back to executing the same PowerShell script automatically.
+                if (setupResults?.BlueprintS2SOutcome == Models.GrantOutcome.Failed && commandExecutor != null)
+                {
+                    logger.LogDebug("S2S app role assignments could not be completed via the Graph API.");
+                    logger.LogDebug("Attempting via PowerShell (pwsh)...");
+                    var (attempted, succeeded, missingModules) = await PowerShellS2SRunner.TryRunAsync(
+                        commandExecutor, tenantId, blueprintAppId, specs, logger, ct);
+                    if (attempted && succeeded)
+                    {
+                        logger.LogInformation("S2S app role assignments completed via PowerShell.");
+                        setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Granted;
+                    }
+                    else if (missingModules)
+                        logger.LogWarning("Microsoft.Graph PowerShell modules not found. Run 'a365 setup requirements' for install instructions.");
+                    else if (attempted)
+                        logger.LogWarning("PowerShell execution did not complete — see output above. Manual steps in summary.");
+                    else
+                        logger.LogWarning("pwsh not available or inputs invalid. Manual steps in summary.");
+                }
             }
         }
 
@@ -440,7 +462,7 @@ internal static class BatchPermissionsOrchestrator
                 logger.LogInformation("   - S2S app role assigned for {ResourceName}", spec.ResourceName);
             else
             {
-                logger.LogWarning("   - Failed to assign S2S app role for {ResourceName}.", spec.ResourceName);
+                logger.LogDebug("   - Failed to assign S2S app role for {ResourceName}.", spec.ResourceName);
                 // Do not add a Warnings entry here: the Setup Summary's Action Required block
                 // already emits a copy-paste PowerShell snippet for the failed S2S grant
                 // (gated on BlueprintS2SOutcome=Failed via pendingS2SAction). A bare warning

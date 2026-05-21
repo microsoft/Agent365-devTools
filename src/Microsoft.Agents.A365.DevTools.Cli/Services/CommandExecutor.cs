@@ -89,6 +89,10 @@ public class CommandExecutor
         try
         {
             await process.WaitForExitAsync(cancellationToken);
+            // WaitForExitAsync does not drain the async OutputDataReceived/ErrorDataReceived
+            // event queue. Calling WaitForExit() (no-arg) after ensures all buffered output
+            // lines are processed before we read the builders.
+            process.WaitForExit();
         }
         catch (OperationCanceledException)
         {
@@ -108,7 +112,7 @@ public class CommandExecutor
 
         if (result.ExitCode != 0 && !suppressErrorLogging)
         {
-            _logger.LogError("Command failed with exit code {ExitCode}: {Error}", 
+            _logger.LogError("Command failed with exit code {ExitCode}: {Error}",
                 result.ExitCode, result.StandardError);
         }
 
@@ -211,6 +215,8 @@ public class CommandExecutor
         try
         {
             await process.WaitForExitAsync(cancellationToken);
+            // Drain remaining async OutputDataReceived/ErrorDataReceived events.
+            process.WaitForExit();
         }
         catch (OperationCanceledException)
         {
