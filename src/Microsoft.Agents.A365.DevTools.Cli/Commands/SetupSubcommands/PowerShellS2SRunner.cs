@@ -74,8 +74,7 @@ internal static partial class PowerShellS2SRunner
 
         var script = BuildScript(tenantId, blueprintAppId, s2sSpecs);
 
-        logger.LogInformation("S2S app role assignment requires interactive authentication.");
-        logger.LogInformation("A device code prompt will appear below — follow the on-screen instructions to sign in, then wait for setup to continue.");
+        logger.LogInformation("S2S app role assignment requires interactive authentication. A browser window will open — sign in and wait for setup to continue.");
 
         logger.LogDebug("Executing S2S PowerShell script via temp file...");
         logger.LogDebug("S2S PowerShell script:{NewLine}{Script}", Environment.NewLine, script);
@@ -132,7 +131,7 @@ internal static partial class PowerShellS2SRunner
         // -ContextScope Process forces an in-memory-only connection, bypassing the persistent token
         // cache. Without this, Connect-MgGraph reloads a stale DeviceCodeCredential from disk even
         // after Disconnect-MgGraph, causing a NullReferenceException in subsequent cmdlets.
-        sb.AppendLine($"Connect-MgGraph -TenantId '{tenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All' -UseDeviceCode -NoWelcome -ContextScope Process");
+        sb.AppendLine($"Connect-MgGraph -TenantId '{tenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All' -NoWelcome -ContextScope Process");
         // Guard: Connect-MgGraph can return without throwing even when auth did not complete.
         sb.AppendLine("$_ctx = Get-MgContext");
         sb.AppendLine("if (-not $_ctx -or [string]::IsNullOrEmpty($_ctx.Account)) { Write-Error 'Authentication did not complete — no account in context after Connect-MgGraph'; exit 1 }");
