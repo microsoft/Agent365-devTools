@@ -568,7 +568,7 @@ internal static class BatchPermissionsOrchestrator
                 if (allConsented)
                 {
                     logger.LogInformation("Admin consent already granted — skipping browser consent.");
-                    return (true, consentUrl);
+                    return (true, null);
                 }
             }
         }
@@ -577,7 +577,7 @@ internal static class BatchPermissionsOrchestrator
         // the Action Required block from setupResults if S2S work remains.
         if (consentUrl == null)
         {
-            return (false, null);
+            return (true, null);
         }
 
         // Consent not yet detected — check whether the current user can grant it interactively.

@@ -42,7 +42,7 @@ internal static partial class PowerShellS2SRunner
     {
         if (!GuidPattern().IsMatch(tenantId) || !GuidPattern().IsMatch(blueprintAppId))
         {
-            logger.LogWarning("PowerShell S2S runner: invalid tenantId or blueprintAppId — skipping.");
+            logger.LogWarning("PowerShell S2S runner: invalid tenantId or blueprintAppId - skipping.");
             return (false, false, false);
         }
 
@@ -58,7 +58,7 @@ internal static partial class PowerShellS2SRunner
         {
             if (!GuidPattern().IsMatch(spec.ResourceAppId))
             {
-                logger.LogWarning("PowerShell S2S runner: spec '{ResourceName}' has invalid ResourceAppId — skipping.", spec.ResourceName);
+                logger.LogWarning("PowerShell S2S runner: spec '{ResourceName}' has invalid ResourceAppId - skipping.", spec.ResourceName);
                 return (false, false, false);
             }
 
@@ -66,7 +66,7 @@ internal static partial class PowerShellS2SRunner
             {
                 if (!SafeScopePattern().IsMatch(role))
                 {
-                    logger.LogWarning("PowerShell S2S runner: spec '{ResourceName}' has unsafe role value '{Role}' — skipping.", spec.ResourceName, role);
+                    logger.LogWarning("PowerShell S2S runner: spec '{ResourceName}' has unsafe role value '{Role}' - skipping.", spec.ResourceName, role);
                     return (false, false, false);
                 }
             }
@@ -74,7 +74,7 @@ internal static partial class PowerShellS2SRunner
 
         var script = BuildScript(tenantId, blueprintAppId, s2sSpecs);
 
-        logger.LogInformation("S2S app role assignment — connecting to Microsoft Graph. A browser window may open; sign in if prompted.");
+        logger.LogInformation("S2S app role assignment - connecting to Microsoft Graph. A browser window may open; sign in if prompted.");
 
         logger.LogDebug("Executing S2S PowerShell script via temp file...");
         logger.LogDebug("S2S PowerShell script:{NewLine}{Script}", Environment.NewLine, script);
@@ -134,7 +134,7 @@ internal static partial class PowerShellS2SRunner
         sb.AppendLine($"Connect-MgGraph -TenantId '{tenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All' -NoWelcome -ContextScope Process");
         // Guard: Connect-MgGraph can return without throwing even when auth did not complete.
         sb.AppendLine("$_ctx = Get-MgContext");
-        sb.AppendLine("if (-not $_ctx -or [string]::IsNullOrEmpty($_ctx.Account)) { Write-Error 'Authentication did not complete — no account in context after Connect-MgGraph'; exit 1 }");
+        sb.AppendLine("if (-not $_ctx -or [string]::IsNullOrEmpty($_ctx.Account)) { Write-Error 'Authentication did not complete - no account in context after Connect-MgGraph'; exit 1 }");
         sb.AppendLine($"$bp = Get-MgServicePrincipal -Filter \"appId eq '{blueprintAppId}'\"");
         sb.AppendLine("if (-not $bp) { Write-Error 'Blueprint SP not found'; exit 1 }");
 

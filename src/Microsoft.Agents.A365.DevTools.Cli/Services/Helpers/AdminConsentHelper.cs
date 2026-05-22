@@ -116,7 +116,7 @@ public static class AdminConsentHelper
             while ((DateTime.UtcNow - start).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
             {
                 var elapsedSeconds = (int)(DateTime.UtcNow - start).TotalSeconds;
-                if (elapsedSeconds > 0 && elapsedSeconds - lastProgressReportSeconds >= 60)
+                if (elapsedSeconds > 0 && elapsedSeconds - lastProgressReportSeconds >= 30)
                 {
                     lastProgressReportSeconds = elapsedSeconds;
                     logger.LogInformation(
@@ -236,7 +236,7 @@ public static class AdminConsentHelper
             while ((DateTime.UtcNow - start).TotalSeconds < timeoutSeconds && !ct.IsCancellationRequested)
             {
                 var elapsedSeconds = (int)(DateTime.UtcNow - start).TotalSeconds;
-                if (elapsedSeconds > 0 && elapsedSeconds - lastProgressReportSeconds >= 60)
+                if (elapsedSeconds > 0 && elapsedSeconds - lastProgressReportSeconds >= 30)
                 {
                     lastProgressReportSeconds = elapsedSeconds;
                     logger.LogInformation(
@@ -291,7 +291,7 @@ public static class AdminConsentHelper
         catch (OperationCanceledException)
         {
             logger.LogDebug("Polling for admin consent was cancelled for SP {ClientSpId} ({Scope}).", clientSpId, scopeDescriptor);
-            return ConsentPollResult.NotDetected;
+            throw;
         }
     }
 

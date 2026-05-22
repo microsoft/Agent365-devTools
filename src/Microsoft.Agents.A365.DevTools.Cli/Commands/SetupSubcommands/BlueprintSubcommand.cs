@@ -1289,7 +1289,7 @@ internal static class BlueprintSubcommand
                     issueDescription: $"Blueprint application '{appId}' was created but the identifier URI / OBO scope PATCH did not complete after retries. The blueprint is incomplete and OBO token exchange will fail.",
                     mitigationSteps: new List<string>
                     {
-                        $"Re-run: a365 setup blueprint --agent-name {displayName}",
+                        "Re-run: a365 setup blueprint --agent-name <name>",
                         "If the failure repeats, wait a few minutes for Entra replication to settle and try again."
                     });
             }
@@ -1762,8 +1762,8 @@ internal static class BlueprintSubcommand
                     tenantId, $"/v1.0/applications/{objectId}", patch, innerCt,
                     scopes: AuthenticationConstants.BlueprintOperationScopes),
                 result => !result,
-                maxRetries: 5,
-                baseDelaySeconds: 3,
+                maxRetries: 2,
+                baseDelaySeconds: 2,
                 ct);
 
             if (patched)
