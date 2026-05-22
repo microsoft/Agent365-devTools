@@ -53,7 +53,7 @@ public static class AdminConsentHelper
     /// AsyncLocal scoping prevents leaks across parallel xUnit test classes; tests that set this
     /// must still reset it in a finally/Dispose block. Not intended for production code.
     /// </summary>
-    public static bool BypassConsentChecksForTests
+    internal static bool BypassConsentChecksForTests
     {
         get => _bypassConsentChecks.Value;
         set => _bypassConsentChecks.Value = value;

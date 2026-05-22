@@ -91,6 +91,17 @@ The review does not assume docs will be updated later — a user-visible surface
 - **Severity**: missing CHANGELOG for user-visible change = **HIGH**; stale rename in markdown = **HIGH**; missing folder README update = **MEDIUM**.
 - **Not excuses**: "it's preview/opt-in/temporary", "Microsoft Learn will cover it", "you can see it in the diff". The CHANGELOG is the release's source of truth.
 
+### Cross-Cutting Contract Checks
+Five checks that static per-file analysis tends to miss — each requires tracing across multiple files or comparing code against docs/descriptions:
+
+- **Return-value null semantics (Rule N)**: When a method documents that `null` (or a sentinel) carries a special meaning (e.g., "null = verified, safe to persist"), grep every call site and verify the producer returns null in exactly the documented cases. A path that returns non-null when the contract says "verified" silently breaks the caller's persistence gate.
+- **CHANGELOG vs code numeric consistency (Rule O)**: After reading CHANGELOG `[Unreleased]`, extract every numeric claim (interval, retry count, timeout). Grep production code for the corresponding literals. Flag any mismatch — the CHANGELOG and the code must agree.
+- **Swallowed `OperationCanceledException` (Rule P)**: For every `catch (OperationCanceledException)` that returns a value instead of rethrowing, verify the swallow is intentional and documented. In long-running interactive flows (setup, consent polling), a swallowed cancellation means Ctrl+C has no effect.
+- **Test-only escape hatch declared `public` (Rule Q)**: When a property/field named `*ForTests*` or `*TestOverride*` is declared `public` in a production assembly, check the `.csproj` for `InternalsVisibleTo`. If present, `public` is unnecessary and widens the security surface — flag as MEDIUM and suggest `internal`.
+- **`--help` text accuracy (Rule R)**: When the diff changes how a command surfaces output (new URL handoff, removed PowerShell path, added fallback), read every description string in the same file and its parent command. If the description still names an output form that no longer matches the code, flag as MEDIUM.
+
+Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through R.
+
 ### Context Awareness
 The skill differentiates between:
 - **CLI code** (strict requirements): Cross-platform, reliable, must have tests

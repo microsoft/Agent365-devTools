@@ -59,7 +59,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 "  - Agent ID Developer                  Blueprint + inheritable permissions\n" +
                 "  - Global Administrator                Tenant-wide OAuth2 consent grants\n\n" +
                 "Non-admin flow: any step that needs Global Administrator action prints\n" +
-                "copy-paste PowerShell that an admin can run out-of-band.");
+                "an admin-consent URL (and, when needed, a PowerShell snippet)\n" +
+                "that an admin can run out-of-band.");
 
             // Add subcommands
             command.AddCommand(RequirementsSubcommand.CreateCommand(
