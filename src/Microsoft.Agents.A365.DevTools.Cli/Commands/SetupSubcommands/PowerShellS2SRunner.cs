@@ -74,7 +74,7 @@ internal static partial class PowerShellS2SRunner
 
         var script = BuildScript(tenantId, blueprintAppId, s2sSpecs);
 
-        logger.LogInformation("S2S app role assignment requires interactive authentication. A browser window will open — sign in and wait for setup to continue.");
+        logger.LogInformation("S2S app role assignment — connecting to Microsoft Graph. A browser window may open; sign in if prompted.");
 
         logger.LogDebug("Executing S2S PowerShell script via temp file...");
         logger.LogDebug("S2S PowerShell script:{NewLine}{Script}", Environment.NewLine, script);
