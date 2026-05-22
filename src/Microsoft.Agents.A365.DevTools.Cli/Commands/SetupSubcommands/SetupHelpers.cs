@@ -449,6 +449,7 @@ internal static class SetupHelpers
 
         // Per-grant outcomes — single-purpose enums, one writer per field.
         var tenantConsentGranted    = results.TenantWideConsentOutcome      == Models.GrantOutcome.Granted;
+        var tenantConsentUnverified    = results.TenantWideConsentOutcome      == Models.GrantOutcome.Unverified;
         var blueprintS2sGranted     = results.BlueprintS2SOutcome           == Models.GrantOutcome.Granted;
         var blueprintS2sFailed      = results.BlueprintS2SOutcome           == Models.GrantOutcome.Failed;
         var agentIdS2sGranted       = results.AgentIdentityS2SOutcome       == Models.GrantOutcome.Granted;
@@ -474,7 +475,7 @@ internal static class SetupHelpers
 
         // Delegated success: either tenant-wide consent (DW or non-DW blueprint inheritable scopes)
         // or principal-scoped grants on the agent identity (non-DW path).
-        var delegatedOk = tenantConsentGranted || agentIdDelegatedGranted;
+        var delegatedOk = tenantConsentGranted || tenantConsentUnverified || agentIdDelegatedGranted;
 
         var permissionGrantsCompleted = isS2SFlow
             ? s2sOk && (!isBothMode || delegatedOk)
@@ -489,7 +490,7 @@ internal static class SetupHelpers
         // A non-admin run leaves TenantWideConsentOutcome=Failed and produces a consent URL via
         // ApplyConsentUrlsIfNeeded that the user must hand off to a privileged admin. Independent of
         // whether S2S also ran — the URL covers the delegated scopes regardless.
-        var pendingAdminAction = delegatedConsentApplicable && !tenantConsentGranted && results.BatchPermissionsPhase2Completed;
+        var pendingAdminAction = delegatedConsentApplicable && !tenantConsentGranted && !tenantConsentUnverified && results.BatchPermissionsPhase2Completed;
         // Per-principal OAuth2 grants on the agent identity SP and the tenant-wide consent URL both
         // ultimately deliver the same Obs+PP delegated scopes to the agent's runtime token. When the
         // admin consent URL hand-off is already pending, the per-principal PowerShell block is
@@ -597,7 +598,10 @@ internal static class SetupHelpers
         else if (pendingDelegatedAction)
             logger.LogWarning(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "PENDING — see Action Required");
         else if (results.BatchPermissionsPhase2Completed)
-            logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + (tenantConsentGranted ? "granted  tenant-wide delegated" : "PENDING"));
+            logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") +
+                (tenantConsentGranted ? "granted  tenant-wide delegated" :
+                 tenantConsentUnverified ? "unverified — run 'a365 query-entra inheritance' to confirm" :
+                 "PENDING"));
 
         // Non-DW only: Agent identity — step 5 (after blueprint rows are grouped together)
         if (isNonDw)
@@ -696,7 +700,7 @@ internal static class SetupHelpers
             results.MessagingEndpointResult == Models.EndpointRegistrationResult.SkippedContractMismatch;
         var messagingEndpointFailureRequired =
             results.MessagingEndpointResult == Models.EndpointRegistrationResult.Failed;
-        var hasActionRequired = pendingAdminAction || results.ClientSecretManualActionRequired || pendingS2SAction || pendingDelegatedAction || messagingEndpointManualRequired || messagingEndpointFailureRequired;
+        var hasActionRequired = pendingAdminAction || tenantConsentUnverified || results.ClientSecretManualActionRequired || pendingS2SAction || pendingDelegatedAction || messagingEndpointManualRequired || messagingEndpointFailureRequired;
         if (hasActionRequired)
         {
             var blueprintAppId = results.BlueprintId ?? "<blueprint-app-id>";
@@ -736,6 +740,15 @@ internal static class SetupHelpers
                     if (!string.IsNullOrWhiteSpace(consentUrl))
                         logger.LogInformation("     Consent URL: {ConsentUrl}", consentUrl);
                 }
+            }
+            if (tenantConsentUnverified)
+            {
+                actionCount++;
+                var consentUrlForVerify = results.AdminConsentUrl;
+                logger.LogInformation("  {N}. Verify delegated permissions — the browser consent completed, but the CLI could not confirm the grants.", actionCount);
+                logger.LogInformation("     Run 'a365 query-entra inheritance' to verify permissions are in place.");
+                if (!string.IsNullOrWhiteSpace(consentUrlForVerify))
+                    logger.LogInformation("     If missing, re-grant at: {ConsentUrl}", consentUrlForVerify);
             }
             if (pendingS2SAction)
             {

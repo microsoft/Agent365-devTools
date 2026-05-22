@@ -16,6 +16,13 @@ public enum GrantOutcome
     /// <summary>The grant was attempted and succeeded (including idempotent "already granted").</summary>
     Granted,
 
+    /// <summary>
+    /// The grant status could not be confirmed. The admin opened the consent browser but the poll
+    /// timed out without observing a grant. Setup proceeds, but the operator should run
+    /// <c>a365 query-entra inheritance</c> to confirm permissions are actually in place.
+    /// </summary>
+    Unverified,
+
     /// <summary>The grant was attempted (or skipped because the user lacks the role) and is not in place.</summary>
     Failed,
 }

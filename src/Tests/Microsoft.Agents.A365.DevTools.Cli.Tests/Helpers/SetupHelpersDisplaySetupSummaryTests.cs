@@ -447,6 +447,89 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the pre-rename 'Permission Grants' label (without the 'Blueprint' prefix) must not reappear");
     }
 
+    // ── TenantWideConsentOutcome = Unverified ─────────────────────────────────
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdmin_TenantConsentUnverified_PermissionGrantsRowShowsUnverified()
+    {
+        // Locks in the row text contract for the Unverified outcome: the CLI opened the browser
+        // and timed out without observing the grant, so the row must NOT claim "granted".
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Unverified,
+            AdminConsentUrl = "https://login.microsoftonline.com/tenant/adminconsent?client_id=bp-id",
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        var lines = logger.AllOutput.Split('\n');
+        var grantsRow = System.Array.Find(lines, l => l.Contains("Blueprint Permission Grants"));
+        grantsRow.Should().NotBeNull(
+            because: "the 'Blueprint Permission Grants' row must be emitted on the Unverified path");
+        grantsRow!.Should().Contain("unverified",
+            because: "Unverified must not claim the grant succeeded — the consent was not directly observed");
+        grantsRow!.Should().NotContain("granted  tenant-wide",
+            because: "the Unverified row must not use the Granted row text");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdmin_TenantConsentUnverified_EmitsActionRequired()
+    {
+        // Locks in that Unverified triggers an Action Required block — the operator must be
+        // told to verify, even though setup otherwise completed successfully.
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Unverified,
+            AdminConsentUrl = "https://login.microsoftonline.com/tenant/adminconsent?client_id=bp-id",
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Action Required",
+            because: "unverified consent must prompt the operator to check — setup completing is not the same as permissions being in place");
+        logger.AllOutput.Should().Contain("query-entra inheritance",
+            because: "the operator must be told the exact command to verify the grants");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdmin_TenantConsentUnverified_SurfacesReGrantUrl()
+    {
+        // Locks in that AdminConsentUrl is printed in the Action Required block so the
+        // operator can re-grant if 'a365 query-entra inheritance' shows nothing is in place.
+        const string consentUrl = "https://login.microsoftonline.com/tenant/adminconsent?client_id=bp-id&scope=Mail.Read";
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Unverified,
+            AdminConsentUrl = consentUrl,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(consentUrl,
+            because: "the re-grant URL must be surfaced verbatim so the operator can complete consent if 'query-entra inheritance' confirms nothing was granted");
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private static SetupResults BuildDelegatedPendingResults() => new()

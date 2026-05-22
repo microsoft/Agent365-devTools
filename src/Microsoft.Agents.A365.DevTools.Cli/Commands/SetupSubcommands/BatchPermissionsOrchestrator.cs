@@ -220,16 +220,19 @@ internal static class BatchPermissionsOrchestrator
 
         // --- Admin consent ---
         var (consentGranted, consentUrl) = await GrantAdminConsentAsync(
-            graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, adminCheck);
+            graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, commandExecutor, adminCheck);
 
-        // Update in-memory ResourceConsents so subsequent runs detect existing state.
-        // The caller is responsible for persisting changes via configService.SaveStateAsync.
-        if (consentGranted && phase1Result != null)
+        // Update in-memory ResourceConsents only when consent was directly verified (consentUrl == null).
+        // AssumedComplete returns a non-null consentUrl — do not persist in that case since the grant
+        // was never directly observed. The caller is responsible for saving via configService.SaveStateAsync.
+        if (consentGranted && consentUrl == null && phase1Result != null)
         {
             UpdateResourceConsents(config, specs, inheritedResults);
         }
 
-        string? adminConsentUrl = consentGranted ? null : consentUrl;
+        // consentUrl is already null for Verified (GrantAdminConsentAsync returns null on verified poll)
+        // and non-null for AssumedComplete — preserve it so callers can distinguish the two cases.
+        string? adminConsentUrl = consentUrl;
         return (blueprintPermissionsUpdated, inheritedPermissionsConfigured, consentGranted, adminConsentUrl);
     }
 
@@ -503,6 +506,7 @@ internal static class BatchPermissionsOrchestrator
         ILogger logger,
         SetupResults? setupResults,
         CancellationToken ct,
+        CommandExecutor? commandExecutor = null,
         Models.RoleCheckResult adminCheck = Models.RoleCheckResult.Unknown)
     {
         // Build a single combined consent URL covering ALL delegated scopes across every
@@ -606,20 +610,35 @@ internal static class BatchPermissionsOrchestrator
 
         bool consentGranted;
         bool consentVerified;
-        if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
+        if (commandExecutor != null)
         {
+            // Use az-cli (az rest) to poll. The Azure CLI token carries GA-level Graph access
+            // including DelegatedPermissionGrant.Read.All, which the MSAL delegated token no
+            // longer holds since PR #409 removed that scope from the CLI client app registration.
+            var found = await AdminConsentHelper.PollAdminConsentAsync(
+                commandExecutor, logger, blueprintAppId,
+                "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct);
+            consentVerified = found;
+            // Browser was opened regardless — either the grant was directly observed (Verified)
+            // or the timeout elapsed without observing it (AssumedComplete). Either way, setup
+            // proceeds; the Action Required block surfaces the consent URL for AssumedComplete.
+            consentGranted = true;
+        }
+        else if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
+        {
+            // Fallback for contexts without az-cli (tests). Graph overload may not detect grants
+            // when the token lacks DelegatedPermissionGrant.Read.All, but BypassConsentChecksForTests
+            // prevents this branch from running in practice.
             var pollResult = await AdminConsentHelper.PollAdminConsentAsync(
                 graph, logger, tenantId, phase1Result.BlueprintSpObjectId,
-                "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct);
+                "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct,
+                permScopes: AuthenticationConstants.BlueprintOperationScopes);
             consentVerified = pollResult == ConsentPollResult.Verified;
-            // AssumedComplete still allows setup to proceed (the user said they completed it),
-            // but the consent URL must remain visible in the Action Required block so they can
-            // verify manually. NotDetected is a hard 'no'.
             consentGranted = pollResult != ConsentPollResult.NotDetected;
         }
         else
         {
-            // Phase 1 did not resolve blueprint SP — cannot poll. Surface URL for manual completion.
+            // No executor and no blueprint SP — cannot poll. Surface URL for manual completion.
             logger.LogWarning(
                 "Cannot poll for consent: blueprint service principal was not resolved. " +
                 "Please verify consent was granted at: {ConsentUrl}", consentUrl);

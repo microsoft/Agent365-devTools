@@ -70,7 +70,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read", "Mail.Send" };
@@ -99,7 +99,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read", "Mail.Send" };
@@ -128,7 +128,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read", "Mail.Send" };
@@ -152,7 +152,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read" };
@@ -208,7 +208,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             }
             """;
             var grantDoc = JsonDocument.Parse(grantJson);
-            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>())
+            graphApiService.GraphGetAsync("tenant-1", Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult<JsonDocument?>(grantDoc));
 
             var requiredScopes = new[] { "User.Read" };
@@ -220,61 +220,53 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
         }
 
         [Fact]
-        public async Task PollAdminConsentAsync_Graph_ReturnsAssumedComplete_WhenCanaryReturns403AndTimeoutIsZero()
+        public async Task PollAdminConsentAsync_Graph_ReturnsAssumedComplete_WhenNoGrantsDetectedAndTimeoutIsZero()
         {
-            // Locks in the tri-state contract: when the calling token cannot read
-            // oauth2PermissionGrants (canary 403), the helper MUST report AssumedComplete
-            // rather than Verified, even when the wait window elapses without a keypress.
-            // Callers rely on this distinction to avoid mutating persisted consent state
-            // on the basis of an observation that never happened.
+            // Locks in the tri-state contract: when the timeout elapses without observing a grant,
+            // the helper MUST report AssumedComplete rather than Verified. Callers rely on this
+            // distinction to avoid mutating persisted consent state on the basis of an observation
+            // that never happened.
             var graphApiService = Substitute.For<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()));
             var logger = Substitute.For<ILogger>();
-
-            graphApiService.GraphGetWithResponseAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-                .Returns(Task.FromResult(new GraphApiService.GraphResponse
-                {
-                    IsSuccess = false,
-                    StatusCode = 403,
-                    ReasonPhrase = "Forbidden",
-                    Body = "{}",
-                    Json = null
-                }));
 
             var result = await AdminConsentHelper.PollAdminConsentAsync(
                 graphApiService, logger, "tenant-1", "client-sp-123",
                 "Test", timeoutSeconds: 0, intervalSeconds: 1, CancellationToken.None);
 
             result.Should().Be(ConsentPollResult.AssumedComplete,
-                because: "canary 403 means we cannot observe the grant; the helper must not falsely report Verified, so the caller leaves the consent URL visible.");
+                because: "no grants were detected before the timeout; the helper must not falsely report Verified, so the caller leaves the consent URL visible.");
         }
 
         [Fact]
-        public async Task PollAdminConsentAsync_Graph_ReturnsVerified_WhenCanaryShowsExistingGrant()
+        public async Task PollAdminConsentAsync_Graph_ReturnsVerified_WhenGrantFoundDuringPolling()
         {
-            // Locks in the contract: a successful canary that already shows a grant short-circuits
-            // to Verified — the only outcome that is safe to persist as ConsentGranted=true.
+            // Locks in the contract: when GraphGetAsync returns a non-empty grants array during
+            // polling, the helper returns Verified — the only outcome safe to persist as ConsentGranted=true.
             var graphApiService = Substitute.For<GraphApiService>(Substitute.For<ILogger<GraphApiService>>(), Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()));
             var logger = Substitute.For<ILogger>();
 
-            var grantsJson = JsonDocument.Parse("{\"value\":[{\"id\":\"grant-1\"}]}");
-            graphApiService.GraphGetWithResponseAsync(
-                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-                .Returns(Task.FromResult(new GraphApiService.GraphResponse
-                {
-                    IsSuccess = true,
-                    StatusCode = 200,
-                    ReasonPhrase = "OK",
-                    Body = grantsJson.RootElement.GetRawText(),
-                    Json = grantsJson
-                }));
+            var grantsJson = """
+            {
+                "value": [
+                    {
+                        "id": "grant-123",
+                        "scope": "User.Read Mail.Send",
+                        "consentType": "AllPrincipals"
+                    }
+                ]
+            }
+            """;
+            graphApiService.GraphGetAsync(
+                Arg.Any<string>(), Arg.Is<string>(s => s.Contains("oauth2PermissionGrants")),
+                Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+                .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(grantsJson)));
 
             var result = await AdminConsentHelper.PollAdminConsentAsync(
                 graphApiService, logger, "tenant-1", "client-sp-123",
                 "Test", timeoutSeconds: 30, intervalSeconds: 1, CancellationToken.None);
 
             result.Should().Be(ConsentPollResult.Verified,
-                because: "the canary directly observed an oauth2PermissionGrant; this is the only outcome that should let the caller persist ConsentGranted=true.");
+                because: "an oauth2PermissionGrant was observed during polling; this is the only outcome that should let the caller persist ConsentGranted=true.");
         }
 
         [Fact]

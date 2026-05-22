@@ -758,7 +758,10 @@ internal static class AllSubcommand
 
             ctx.Results.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
             ctx.Results.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
-            ctx.Results.TenantWideConsentOutcome = consentGranted ? Models.GrantOutcome.Granted : Models.GrantOutcome.Failed;
+            ctx.Results.TenantWideConsentOutcome =
+                consentGranted && adminConsentUrl == null ? Models.GrantOutcome.Granted :
+                consentGranted ? Models.GrantOutcome.Unverified :
+                Models.GrantOutcome.Failed;
             ctx.Results.AdminConsentUrl = adminConsentUrl;
         }
         catch (OperationCanceledException)
