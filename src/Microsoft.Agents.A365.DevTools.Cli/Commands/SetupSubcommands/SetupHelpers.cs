@@ -565,7 +565,15 @@ internal static class SetupHelpers
         if (results.BlueprintFailed)
             logger.LogInformation(DryRunRow(3 + s, permsLabel) + notRun);
         else if (results.BatchPermissionsPhase2Completed)
-            logger.LogInformation(DryRunRow(3 + s, permsLabel) + "configured");
+        {
+            // Mirror the "already granted" idempotency wording used by the Blueprint Permission
+            // Grants row: distinguish a re-run where every inheritable-permissions entry was
+            // already in place ("already configured") from a first-time write ("configured").
+            // Without this distinction the summary makes idempotent re-runs look identical to
+            // first-time setup even when the per-resource log lines above show "already configured".
+            var verb = results.InheritablePermissionsAlreadyExisted ? "already configured" : "configured";
+            logger.LogInformation(DryRunRow(3 + s, permsLabel) + verb);
+        }
         else if (results.BatchPermissionsPhase1Completed)
             logger.LogWarning(DryRunRow(3 + s, permsLabel) + "PENDING — see Action Required");
 
@@ -588,8 +596,24 @@ internal static class SetupHelpers
                         : "partial (S2S granted; delegated — see warnings)"));
             else
             {
+                // "already granted" applies when this run made no changes — every S2S role was
+                // already in place. For "both" mode, also require that the per-principal OBO grant
+                // on the agent identity SP pre-existed; otherwise the row would say "already granted"
+                // when the delegated half of the bothMode result was actually written in this run.
+                // Note: AgentIdentityDelegatedAlreadyExisted has no writer in production today (the
+                // non-DW OBO grant path is satisfied by blueprint inheritance + tenant-wide consent,
+                // not a per-principal POST). The "(!isBothMode || !agentIdDelegatedGranted || ...)"
+                // shape stays defensive for when that design changes — the previous code used
+                // TenantWideConsentAlreadyExisted as a proxy, which was wrong because tenant-wide
+                // consent and per-principal OBO are different scopes.
+                var s2sVerb = results.BlueprintS2SAlreadyAssigned
+                              && (!isBothMode || !agentIdDelegatedGranted || results.AgentIdentityDelegatedAlreadyExisted)
+                    ? "already granted"
+                    : "granted";
                 var oboAlso = isBothMode && agentIdDelegatedGranted;
-                var label = oboAlso ? "granted  S2S app roles + developer-scoped delegated on agent identity" : "granted  S2S app roles";
+                var label = oboAlso
+                    ? $"{s2sVerb}  S2S app roles + developer-scoped delegated on agent identity"
+                    : $"{s2sVerb}  S2S app roles";
                 logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + label);
             }
         }
@@ -598,10 +622,18 @@ internal static class SetupHelpers
         else if (pendingDelegatedAction)
             logger.LogWarning(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "PENDING — see Action Required");
         else if (results.BatchPermissionsPhase2Completed)
-            logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") +
-                (tenantConsentGranted ? "granted  tenant-wide delegated" :
-                 tenantConsentUnverified ? "unverified — run 'a365 query-entra inheritance' to confirm" :
-                 "PENDING"));
+        {
+            // Distinguish "already granted" (consent pre-existed in the tenant) from "granted"
+            // (the browser opened and consent was newly captured in this run). Drives the
+            // idempotency hint in the summary so re-runs visibly indicate no work was needed.
+            var delegatedLabel = tenantConsentGranted
+                ? (results.TenantWideConsentAlreadyExisted
+                    ? "already granted  tenant-wide delegated"
+                    : "granted  tenant-wide delegated")
+                : tenantConsentUnverified ? "unverified — run 'a365 query-entra inheritance' to confirm"
+                : "PENDING";
+            logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + delegatedLabel);
+        }
 
         // Non-DW only: Agent identity — step 5 (after blueprint rows are grouped together)
         if (isNonDw)
@@ -757,9 +789,9 @@ internal static class SetupHelpers
                 logger.LogInformation("  {N}. Observability API S2S app role (PowerShell):", actionCount);
                 logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
                 if (!string.IsNullOrWhiteSpace(results.TenantId))
-                    logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'", results.TenantId);
+                    logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All'", results.TenantId);
                 else
-                    logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'");
+                    logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All'");
                 // Switch on which side actually failed rather than on DW vs non-DW: non-DW now
                 // stamps the blueprint too, so blueprintS2sFailed is reachable in the non-DW flow.
                 if (agentIdS2sFailed)
@@ -797,7 +829,7 @@ internal static class SetupHelpers
                 logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.DelegatedGrantRequiredRoles);
                 logger.LogInformation("");
                 logger.LogInformation("     # Note: these scopes are for your PowerShell session only — they are NOT required on your CLI client app registration.");
-                logger.LogInformation("     Connect-MgGraph -TenantId '{TenantId}' -Scopes 'DelegatedPermissionGrant.ReadWrite.All', 'Directory.Read.All'", results.TenantId ?? "<tenant-id>");
+                logger.LogInformation("     Connect-MgGraph -TenantId '{TenantId}' -Scopes 'DelegatedPermissionGrant.ReadWrite.All', 'Application.Read.All'", results.TenantId ?? "<tenant-id>");
                 logger.LogInformation("");
                 logger.LogInformation("     $agentSpId = '{AgentSpId}'", results.AgentIdentityId ?? "<agent-identity-sp-id>");
                 logger.LogInformation("");
@@ -1632,9 +1664,9 @@ internal static class SetupHelpers
             logger.LogInformation("  {N}. S2S app role assignments (PowerShell):", step);
             logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
             if (!string.IsNullOrWhiteSpace(tenantId))
-                logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'", tenantId);
+                logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All' -UseDeviceCode", tenantId);
             else
-                logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All'");
+                logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All' -UseDeviceCode");
             logger.LogInformation("       $bp = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
             foreach (var spec in appRoleSpecs)
             {

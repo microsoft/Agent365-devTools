@@ -670,7 +670,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         var failedSpecs = new List<ResourcePermissionSpec>();
         foreach (var spec in s2sSpecs)
         {
-            var granted = await ctx.BlueprintService.GrantAppRoleAssignmentAsync(
+            var grantResult = await ctx.BlueprintService.GrantAppRoleAssignmentAsync(
                 ctx.Config.TenantId!,
                 agentIdentitySpObjectId,
                 spec.ResourceAppId,
@@ -678,8 +678,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 Constants.AuthenticationConstants.RequiredPermissionGrantScopes,
                 ctx.CancellationToken);
 
-            if (granted)
-                ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity.", spec.ResourceName);
+            if (grantResult.AllSucceeded)
+                ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity (already assigned: {AlreadyAssigned}).",
+                    spec.ResourceName, grantResult.AllAlreadyAssigned);
             else
             {
                 ctx.Logger.LogDebug("S2S app role assignment failed for {ResourceName} — user likely lacks a required role ({Roles}).", spec.ResourceName, AuthenticationConstants.S2SGrantRequiredRoles);
@@ -701,7 +702,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("S2S app role assignments require {Roles}. Run the following PowerShell:", AuthenticationConstants.S2SGrantRequiredRoles);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  # Connect to Microsoft Graph");
-        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All', 'Directory.Read.All'", ctx.Config.TenantId);
+        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All' -UseDeviceCode", ctx.Config.TenantId);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  $agentSpId = '{AgentSpId}'", agentIdentitySpObjectId);
 

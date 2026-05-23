@@ -852,7 +852,9 @@ public class AgentBlueprintServiceTests
                 new[] { "Agent365.Observability.OtelWrite" });
 
             // Assert
-            result.Should().BeFalse();
+            result.AllSucceeded.Should().BeFalse();
+            result.AllAlreadyAssigned.Should().BeFalse(
+                because: "AllAlreadyAssigned is only meaningful when AllSucceeded is true");
         }
     }
 
@@ -885,7 +887,8 @@ public class AgentBlueprintServiceTests
                 new[] { "Agent365.Observability.OtelWrite" });
 
             // Assert
-            result.Should().BeFalse();
+            result.AllSucceeded.Should().BeFalse();
+            result.AllAlreadyAssigned.Should().BeFalse();
         }
     }
 
@@ -919,7 +922,9 @@ public class AgentBlueprintServiceTests
                 new[] { "Agent365.Observability.OtelWrite" });
 
             // Assert
-            result.Should().BeTrue();
+            result.AllSucceeded.Should().BeTrue();
+            result.AllAlreadyAssigned.Should().BeTrue(
+                because: "the role was already in existingRoleIds so no POST was issued — the orchestrator uses this to surface 'already granted' in the setup summary");
         }
     }
 
@@ -957,7 +962,9 @@ public class AgentBlueprintServiceTests
                 new[] { "Agent365.Observability.OtelWrite" });
 
             // Assert
-            result.Should().BeTrue();
+            result.AllSucceeded.Should().BeTrue();
+            result.AllAlreadyAssigned.Should().BeFalse(
+                because: "at least one POST was issued (no existing assignment) — this is the newly-granted path, not the idempotent skip");
         }
     }
 
@@ -995,7 +1002,8 @@ public class AgentBlueprintServiceTests
                 new[] { "Agent365.Observability.OtelWrite" });
 
             // Assert
-            result.Should().BeFalse();
+            result.AllSucceeded.Should().BeFalse();
+            result.AllAlreadyAssigned.Should().BeFalse();
         }
     }
 
@@ -1012,7 +1020,9 @@ public class AgentBlueprintServiceTests
                 Array.Empty<string>());
 
             // Assert
-            result.Should().BeTrue();
+            result.AllSucceeded.Should().BeTrue();
+            result.AllAlreadyAssigned.Should().BeTrue(
+                because: "no roles to grant means there is nothing newly created — treated as fully idempotent");
         }
     }
 

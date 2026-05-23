@@ -42,7 +42,7 @@ public class PowerShellS2SRunnerTests
         };
 
         // Act
-        var (attempted, succeeded, missingModules) = await PowerShellS2SRunner.TryRunAsync(
+        var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
             _executor,
             tenantId: "not-a-guid",
             blueprintAppId: "00000000-0000-0000-0000-000000000002",
@@ -53,11 +53,11 @@ public class PowerShellS2SRunnerTests
         // Assert
         attempted.Should().BeFalse(because: "invalid GUID must be rejected before launching pwsh");
         succeeded.Should().BeFalse();
-        missingModules.Should().BeFalse();
 
         await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>());
     }
 
     /// <summary>
@@ -71,7 +71,8 @@ public class PowerShellS2SRunnerTests
         // Arrange
         _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>())
             .Returns(Task.FromException<CommandResult>(new System.ComponentModel.Win32Exception(2)));
 
         var specs = new[]
@@ -85,7 +86,7 @@ public class PowerShellS2SRunnerTests
         };
 
         // Act
-        var (attempted, succeeded, missingModules) = await PowerShellS2SRunner.TryRunAsync(
+        var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
             _executor,
             tenantId: "00000000-0000-0000-0000-000000000001",
             blueprintAppId: "00000000-0000-0000-0000-000000000002",
@@ -96,13 +97,12 @@ public class PowerShellS2SRunnerTests
         // Assert
         attempted.Should().BeFalse(because: "pwsh not found means no execution was possible");
         succeeded.Should().BeFalse();
-        missingModules.Should().BeFalse();
     }
 
     /// <summary>
-    /// When pwsh is available and the script completes successfully (writes the sentinel marker),
-    /// TryRunAsync returns (Attempted=true, Succeeded=true, MissingModules=false).
-    /// The script passed to the executor must contain the tenantId, blueprintAppId, and role values.
+    /// When pwsh is available and the script exits with code 0, TryRunAsync returns
+    /// (Attempted=true, Succeeded=true). The script passed to the executor must contain
+    /// the tenantId, blueprintAppId, and role values.
     /// </summary>
     [Fact]
     public async Task TryRunAsync_ValidInputsAndPwshSucceeds_ScriptContainsExpectedValuesAndReturnsSucceeded()
@@ -121,8 +121,9 @@ public class PowerShellS2SRunnerTests
                     capturedScript = System.IO.File.ReadAllText(match.Groups[1].Value);
             }),
             Arg.Any<string?>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
-            Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "A365-S2S-OK\n" });
+            Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>())
+            .Returns(new CommandResult { ExitCode = 0 });
 
         var specs = new[]
         {
@@ -135,7 +136,7 @@ public class PowerShellS2SRunnerTests
         };
 
         // Act
-        var (attempted, succeeded, missingModules) = await PowerShellS2SRunner.TryRunAsync(
+        var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
             _executor,
             tenantId: tenantId,
             blueprintAppId: blueprintAppId,
@@ -145,8 +146,7 @@ public class PowerShellS2SRunnerTests
 
         // Assert
         attempted.Should().BeTrue(because: "pwsh was found and the script was executed");
-        succeeded.Should().BeTrue(because: "stdout contains the A365-S2S-OK sentinel marker");
-        missingModules.Should().BeFalse();
+        succeeded.Should().BeTrue(because: "pwsh exited with code 0");
 
         capturedScript.Should().NotBeNull();
         capturedScript.Should().Contain(tenantId,
@@ -159,21 +159,24 @@ public class PowerShellS2SRunnerTests
             because: "the script must include the app role value to look up");
         capturedScript.Should().Contain("-ContextScope Process",
             because: "Connect-MgGraph must use process-scoped auth to bypass the persistent token cache and avoid DeviceCodeCredential NRE on repeat runs");
+        capturedScript.Should().Contain("Microsoft.Graph.Authentication",
+            because: "Connect-MgGraph lives in Authentication, which must be pinned and imported before Applications to avoid version-mismatch assembly conflicts");
     }
 
     /// <summary>
-    /// When pwsh runs and exits 0 but the sentinel A365-S2S-OK is absent from stdout,
-    /// TryRunAsync returns (Attempted=true, Succeeded=false, MissingModules=false).
-    /// This covers auth completing but an assignment silently failing without an error exit.
+    /// When pwsh runs but exits with a non-zero exit code, TryRunAsync returns
+    /// (Attempted=true, Succeeded=false). Success is now determined purely by exit code
+    /// since stdout is no longer redirected back to the parent.
     /// </summary>
     [Fact]
-    public async Task TryRunAsync_PwshRunsButSentinelAbsent_ReturnsAttemptedNotSucceeded()
+    public async Task TryRunAsync_PwshExitsNonZero_ReturnsAttemptedNotSucceeded()
     {
-        // Arrange
+        // Arrange — pwsh ran but exited with code 1 (e.g. assignment failed)
         _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "Some output without the marker" });
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>())
+            .Returns(new CommandResult { ExitCode = 1 });
 
         var specs = new[]
         {
@@ -186,7 +189,7 @@ public class PowerShellS2SRunnerTests
         };
 
         // Act
-        var (attempted, succeeded, missingModules) = await PowerShellS2SRunner.TryRunAsync(
+        var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
             _executor,
             tenantId: "00000000-0000-0000-0000-000000000001",
             blueprintAppId: "00000000-0000-0000-0000-000000000002",
@@ -195,9 +198,8 @@ public class PowerShellS2SRunnerTests
             ct: default);
 
         // Assert
-        attempted.Should().BeTrue(because: "pwsh was invoked and returned exit code 0");
-        succeeded.Should().BeFalse(because: "A365-S2S-OK was not present in stdout");
-        missingModules.Should().BeFalse();
+        attempted.Should().BeTrue(because: "pwsh was invoked and produced an exit code");
+        succeeded.Should().BeFalse(because: "non-zero exit code indicates the script failed");
     }
 
     /// <summary>
@@ -219,7 +221,7 @@ public class PowerShellS2SRunnerTests
         };
 
         // Act
-        var (attempted, succeeded, missingModules) = await PowerShellS2SRunner.TryRunAsync(
+        var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
             _executor,
             tenantId: "00000000-0000-0000-0000-000000000001",
             blueprintAppId: "not-a-guid",
@@ -230,11 +232,11 @@ public class PowerShellS2SRunnerTests
         // Assert
         attempted.Should().BeFalse(because: "invalid blueprintAppId GUID must be rejected before launching pwsh");
         succeeded.Should().BeFalse();
-        missingModules.Should().BeFalse();
 
         await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>());
     }
 
     /// <summary>
@@ -256,7 +258,7 @@ public class PowerShellS2SRunnerTests
         };
 
         // Act
-        var (attempted, succeeded, missingModules) = await PowerShellS2SRunner.TryRunAsync(
+        var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
             _executor,
             tenantId: "00000000-0000-0000-0000-000000000001",
             blueprintAppId: "00000000-0000-0000-0000-000000000002",
@@ -267,10 +269,10 @@ public class PowerShellS2SRunnerTests
         // Assert
         attempted.Should().BeFalse(because: "no S2S specs means there is nothing to assign via PowerShell");
         succeeded.Should().BeFalse();
-        missingModules.Should().BeFalse();
 
         await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>());
     }
 }

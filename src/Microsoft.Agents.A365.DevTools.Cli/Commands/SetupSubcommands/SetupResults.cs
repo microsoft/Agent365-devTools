@@ -119,6 +119,43 @@ public class SetupResults
     public bool CustomPermissionsAlreadyExisted { get; set; }
 
     /// <summary>
+    /// True when the tenant-wide admin consent for the blueprint already existed before this run.
+    /// Set alongside <see cref="TenantWideConsentOutcome"/> = <see cref="GrantOutcome.Granted"/>
+    /// when the consent pre-check observed an existing grant covering all required scopes, so
+    /// the browser was not opened and nothing was newly granted. Drives "already granted" vs
+    /// "granted" wording in the Blueprint Permission Grants row of the setup summary.
+    /// </summary>
+    public bool TenantWideConsentAlreadyExisted { get; set; }
+
+    /// <summary>
+    /// True when every S2S app role assignment on the blueprint SP already existed before this
+    /// run. Set alongside <see cref="BlueprintS2SOutcome"/> = <see cref="GrantOutcome.Granted"/>
+    /// when the S2S pre-check observed all required (resource, role) pairs already assigned, so
+    /// the assignment loop was skipped and nothing was newly created. Drives "already granted"
+    /// vs "granted" wording in the Blueprint Permission Grants row of the setup summary.
+    /// </summary>
+    public bool BlueprintS2SAlreadyAssigned { get; set; }
+
+    /// <summary>
+    /// True when the principal-scoped delegated grant on the agent identity SP already existed
+    /// before this run. Set alongside <see cref="AgentIdentityDelegatedOutcome"/> =
+    /// <see cref="GrantOutcome.Granted"/> by the non-DW OBO/Both code path when the per-principal
+    /// oauth2PermissionGrant was found already in place. Drives "already granted" vs "granted"
+    /// wording in the Blueprint Permission Grants row for the bothMode label
+    /// "S2S app roles + developer-scoped delegated on agent identity" — without it the row could
+    /// not tell whether the OBO half of the bothMode result was idempotent.
+    /// </summary>
+    /// <remarks>
+    /// No writer exists in production code as of this commit: the non-DW OBO grant path relies on
+    /// blueprint-inheritance + tenant-wide admin consent rather than a per-principal grant call
+    /// (see <c>NonDwBlueprintSetupOrchestrator.cs</c> step 5a comment). When that design is
+    /// revisited and an explicit per-principal grant call is introduced, callers must populate
+    /// this flag so the bothMode "already granted" wording renders correctly. The renderer in
+    /// <c>SetupHelpers.DisplaySetupSummary</c> already consumes the flag.
+    /// </remarks>
+    public bool AgentIdentityDelegatedAlreadyExisted { get; set; }
+
+    /// <summary>
     /// Consent URL to present when admin consent was not granted because the user lacks an admin role.
     /// Non-null indicates a tenant administrator needs to complete consent at this URL.
     /// </summary>

@@ -46,7 +46,7 @@ public static class AdminConsentHelper
 {
     /// <summary>
     /// Optional test-only override. When set to <c>true</c>, both overloads of
-    /// <c>PollAdminConsentAsync</c> and <see cref="CheckConsentExistsAsync"/>
+    /// <c>PollAdminConsentAsync</c> and both overloads of <c>CheckConsentExistsAsync</c>
     /// short-circuit and return <c>true</c> immediately without performing any Graph or az-cli calls.
     /// This prevents unit tests that exercise the admin-consent path from polling Graph for
     /// the full timeout (180s) and from launching a real browser via <c>BrowserHelper.TryOpenUrl</c>.
@@ -392,6 +392,148 @@ public static class AdminConsentHelper
             logger.LogDebug(ex, "Error checking existing consent between {ClientSpId} and {ResourceSpId}",
                 clientSpId, resourceSpId);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Checks whether an oauth2PermissionGrant already covers all required scopes between the
+    /// blueprint SP (looked up by appId) and the resource SP (looked up by appId), using the
+    /// Azure CLI's token via <c>az rest</c>.
+    /// </summary>
+    /// <remarks>
+    /// This overload exists because the CLI's MSAL Graph token no longer carries
+    /// <c>DelegatedPermissionGrant.Read.All</c> (removed in PR #409), so the
+    /// <see cref="CheckConsentExistsAsync(Services.GraphApiService, string, string, string, System.Collections.Generic.IEnumerable{string}, ILogger, CancellationToken, System.Collections.Generic.IEnumerable{string}, string)"/>
+    /// path returns a 403 and reports "no consent" even when consent actually exists. The Azure
+    /// CLI token carries the directory roles a Global Administrator already holds, which lets it
+    /// read <c>/v1.0/oauth2PermissionGrants</c>.
+    /// </remarks>
+    /// <returns>
+    /// <c>true</c> only when a grant is found AND its <c>scope</c> string contains every entry in
+    /// <paramref name="requiredScopes"/>. <c>false</c> on any error, when no grant exists, or when
+    /// the existing grant is missing any required scope (the caller should then open the browser
+    /// to re-consent).
+    /// </returns>
+    public static async Task<bool> CheckConsentExistsAsync(
+        CommandExecutor executor,
+        ILogger logger,
+        string blueprintAppId,
+        string resourceAppId,
+        System.Collections.Generic.IEnumerable<string> requiredScopes,
+        CancellationToken ct,
+        string? consentType = null,
+        string? blueprintSpObjectId = null,
+        string? resourceSpObjectId = null)
+    {
+        if (BypassConsentChecksForTests)
+            return true;
+
+        // Validate both appIds are well-formed GUIDs before interpolating them into the
+        // az rest URL filter. Both values originate from config (blueprintAppId from
+        // a365.config.json, resourceAppId from custom-permission specs); strict validation
+        // here gives defense-in-depth against an attacker-controlled config widening into
+        // a malformed Graph query or URL injection.
+        if (!Guid.TryParse(blueprintAppId, out _) || !Guid.TryParse(resourceAppId, out _))
+        {
+            logger.LogDebug("Cannot check consent: invalid GUID format (Blueprint: {BlueprintAppId}, Resource: {ResourceAppId})",
+                blueprintAppId ?? "(null)", resourceAppId ?? "(null)");
+            return false;
+        }
+
+        try
+        {
+            // Skip SP lookups when the caller already resolved them in Phase 1 — each az rest
+            // call costs ~1.7s due to az's Python startup. The orchestrator passes pre-resolved
+            // IDs to cut 4-resource setup pre-check from ~21s to ~7s.
+            var blueprintSpId = blueprintSpObjectId
+                ?? await LookupSpObjectIdByAppIdAsync(executor, blueprintAppId, ct);
+            if (blueprintSpId == null)
+            {
+                logger.LogDebug("Blueprint SP not found for appId {BlueprintAppId} via az rest", blueprintAppId);
+                return false;
+            }
+
+            var resourceSpId = resourceSpObjectId
+                ?? await LookupSpObjectIdByAppIdAsync(executor, resourceAppId, ct);
+            if (resourceSpId == null)
+            {
+                logger.LogDebug("Resource SP not found for appId {ResourceAppId} via az rest", resourceAppId);
+                return false;
+            }
+
+            var filter = $"clientId eq '{blueprintSpId}' and resourceId eq '{resourceSpId}'";
+            if (!string.IsNullOrWhiteSpace(consentType))
+                filter += $" and consentType eq '{consentType}'";
+
+            var grantsResult = await executor.ExecuteAsync("az",
+                $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString(filter)}\"",
+                captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
+
+            if (!grantsResult.Success)
+            {
+                logger.LogDebug("az rest failed reading oauth2PermissionGrants: {Stderr}", grantsResult.StandardError);
+                return false;
+            }
+
+            using var grantDoc = JsonDocument.Parse(grantsResult.StandardOutput);
+            if (!grantDoc.RootElement.TryGetProperty("value", out var grants) || grants.GetArrayLength() == 0)
+            {
+                logger.LogDebug("No oauth2PermissionGrants found between blueprint {BlueprintAppId} and resource {ResourceAppId}",
+                    blueprintAppId, resourceAppId);
+                return false;
+            }
+
+            // Aggregate scopes across ALL matching grant rows. Entra sometimes splits scopes across
+            // multiple rows for the same (client, resource) pair when consent was given incrementally.
+            var grantedScopeSet = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var grant in grants.EnumerateArray())
+            {
+                if (grant.TryGetProperty("scope", out var scopesEl))
+                {
+                    var s = scopesEl.GetString() ?? "";
+                    foreach (var sc in s.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                        grantedScopeSet.Add(sc);
+                }
+            }
+
+            var requiredScopeSet = new System.Collections.Generic.HashSet<string>(requiredScopes, StringComparer.OrdinalIgnoreCase);
+            bool allScopesPresent = requiredScopeSet.IsSubsetOf(grantedScopeSet);
+
+            if (allScopesPresent)
+                logger.LogDebug("All required scopes already granted via az rest: {Scopes}", string.Join(", ", requiredScopes));
+            else
+                logger.LogDebug("Missing scopes in existing grant (az rest): {MissingScopes}",
+                    string.Join(", ", requiredScopeSet.Except(grantedScopeSet)));
+
+            return allScopesPresent;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Error checking existing consent via az rest between blueprint {BlueprintAppId} and resource {ResourceAppId}",
+                blueprintAppId, resourceAppId);
+            return false;
+        }
+    }
+
+    private static async Task<string?> LookupSpObjectIdByAppIdAsync(
+        CommandExecutor executor, string appId, CancellationToken ct)
+    {
+        var spResult = await executor.ExecuteAsync("az",
+            $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id\"",
+            captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
+
+        if (!spResult.Success)
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(spResult.StandardOutput);
+            var value = doc.RootElement.GetProperty("value");
+            return value.GetArrayLength() > 0 ? value[0].GetProperty("id").GetString() : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 }

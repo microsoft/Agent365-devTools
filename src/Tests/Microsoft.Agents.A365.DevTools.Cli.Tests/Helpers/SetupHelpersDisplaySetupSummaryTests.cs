@@ -122,8 +122,8 @@ public class SetupHelpersDisplaySetupSummaryTests
 
         logger.AllOutput.Should().Contain("New-MgServicePrincipalAppRoleAssignment",
             because: "the S2S fallback must emit the app role assignment PowerShell command");
-        logger.AllOutput.Should().Contain("Directory.Read.All",
-            because: "Connect-MgGraph must request Directory.Read.All so Get-MgServicePrincipal works");
+        logger.AllOutput.Should().Contain("Application.Read.All",
+            because: "Connect-MgGraph must request Application.Read.All (the minimum scope) so Get-MgServicePrincipal works");
         logger.AllOutput.Should().Contain("AppRoleAssignment.ReadWrite.All",
             because: "Connect-MgGraph must request AppRoleAssignment.ReadWrite.All to assign roles");
     }
@@ -561,6 +561,226 @@ public class SetupHelpersDisplaySetupSummaryTests
         TenantId = TenantId,
         EffectiveAuthMode = Cli.Models.AuthMode.S2s,
         AgentIdentityS2SOutcome = Cli.Models.GrantOutcome.Failed,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+    };
+
+    // ── "already granted" idempotency wording (CR-001) ────────────────────────
+
+    /// <summary>
+    /// Locks in the contract: when consent existed before this run (TenantWideConsentAlreadyExisted=true)
+    /// the Blueprint Permission Grants row must render "already granted" instead of "granted". This is
+    /// the only signal the user gets that a re-run did no work — without it idempotent re-runs are
+    /// visually indistinguishable from first-time setup.
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_TenantConsentAlreadyExisted_RendersAlreadyGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildVerifiedTenantConsentResults();
+        results.TenantWideConsentAlreadyExisted = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("already granted  tenant-wide delegated",
+            because: "the row must distinguish idempotent re-runs from a freshly-captured grant — this is the user-visible idempotency signal");
+        logger.AllOutput.Should().NotContain("PENDING",
+            because: "consent was verified before this run; the row must not regress to PENDING");
+    }
+
+    /// <summary>
+    /// Control case for the previous test: same shape but TenantWideConsentAlreadyExisted=false.
+    /// The row must render "granted" (not "already granted") so the user can tell that consent was
+    /// actually captured in this run via the browser.
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_TenantConsentNewlyGranted_RendersGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildVerifiedTenantConsentResults();
+        results.TenantWideConsentAlreadyExisted = false;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("granted  tenant-wide delegated",
+            because: "a first-time grant in this run must render plain 'granted'");
+        logger.AllOutput.Should().NotContain("already granted  tenant-wide delegated",
+            because: "the 'already granted' wording is reserved for runs that did no work — using it for first-time grants would mislead the user");
+    }
+
+    /// <summary>
+    /// S2S parity: when every S2S app role assignment was already in place
+    /// (BlueprintS2SAlreadyAssigned=true), the row must render "already granted  S2S app roles".
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_S2SAllAlreadyAssigned_RendersAlreadyGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SVerifiedResults();
+        results.BlueprintS2SAlreadyAssigned = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("already granted  S2S app roles",
+            because: "when every S2S role was already assigned the row must surface that — a future regression that drops the flag would silently report 'granted' on every idempotent re-run");
+    }
+
+    /// <summary>
+    /// CR-008: bothMode "already granted" must require the per-principal OBO grant to also have
+    /// pre-existed — not just S2S. Previously the code used <c>TenantWideConsentAlreadyExisted</c>
+    /// as a proxy, which is the wrong scope (tenant-wide vs per-principal). This test locks in the
+    /// correct contract: with S2S idempotent but OBO newly granted (AgentIdentityDelegatedAlreadyExisted=false),
+    /// the row must render "granted", NOT "already granted" — even though S2S alone was idempotent.
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_BothMode_S2SAlreadyButOboNewlyGranted_RendersGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildBothModeBothGrantedResults();
+        results.BlueprintS2SAlreadyAssigned = true;
+        results.AgentIdentityDelegatedAlreadyExisted = false;  // OBO was newly granted this run
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        // The combined label is "S2S app roles + developer-scoped delegated on agent identity".
+        // Even with S2S idempotent, OBO being new means the combined work was NOT idempotent.
+        logger.AllOutput.Should().Contain("granted  S2S app roles + developer-scoped delegated on agent identity",
+            because: "the combined bothMode row must reflect that at least one half (OBO) was newly granted");
+        logger.AllOutput.Should().NotContain("already granted  S2S app roles + developer-scoped delegated on agent identity",
+            because: "using 'already granted' when OBO was newly written would mislead the user about what this run actually did — the previous code used TenantWideConsentAlreadyExisted as a proxy, which is the wrong scope for the per-principal OBO grant");
+    }
+
+    /// <summary>
+    /// CR-008 control case: bothMode where BOTH halves (S2S and OBO) pre-existed must render
+    /// "already granted". Locks in that AgentIdentityDelegatedAlreadyExisted is the gate the
+    /// renderer reads — replacing the prior wrong TenantWideConsentAlreadyExisted proxy.
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_BothMode_S2SAndOboBothAlreadyExisted_RendersAlreadyGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildBothModeBothGrantedResults();
+        results.BlueprintS2SAlreadyAssigned = true;
+        results.AgentIdentityDelegatedAlreadyExisted = true;  // OBO was already in place
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("already granted  S2S app roles + developer-scoped delegated on agent identity",
+            because: "when both halves of the bothMode label were already in place the row must say so — this is the load-bearing signal that distinguishes idempotent re-runs from real work");
+    }
+
+    /// <summary>
+    /// Builds a non-DW bothMode results object that reaches the combined S2S+OBO Blueprint
+    /// Permission Grants label. The label only renders when:
+    ///   - isS2SFlow = true (agentIdS2sGranted)
+    ///   - s2sOk = true (in non-DW, this maps to agentIdS2sGranted)
+    ///   - isBothMode = true
+    ///   - agentIdDelegatedGranted = true (drives the "+ developer-scoped delegated" suffix)
+    /// </summary>
+    private static SetupResults BuildBothModeBothGrantedResults() => new()
+    {
+        IsNonDwBlueprintFlow = true,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        AgentIdentityCreated = true,
+        AgentIdentityId = AgentSpId,
+        TenantId = TenantId,
+        EffectiveAuthMode = Cli.Models.AuthMode.Both,
+        AgentIdentityS2SOutcome = Cli.Models.GrantOutcome.Granted,
+        AgentIdentityDelegatedOutcome = Cli.Models.GrantOutcome.Granted,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+    };
+
+    /// <summary>
+    /// Builds a results object that drives the delegated-consent "granted" path of the Blueprint
+    /// Permission Grants row. Used to exercise the TenantWideConsentAlreadyExisted toggle.
+    /// </summary>
+    private static SetupResults BuildVerifiedTenantConsentResults() => new()
+    {
+        // DW flow (non-NonDw) so the row renders via the delegated/tenant-wide branch rather than
+        // the S2S branch — that's the path TenantWideConsentAlreadyExisted gates.
+        IsNonDwBlueprintFlow = false,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        TenantId = TenantId,
+        TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+    };
+
+    /// <summary>
+    /// Row 3 ("Inheritable Permissions") must follow the same idempotency wording as rows 4 and 5:
+    /// "already configured" on a re-run where every entry was in place, "configured" on a first-
+    /// time write. Without this the summary made idempotent re-runs look identical to first-time
+    /// setup even when the per-resource log lines above said "already configured".
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_InheritablePermissionsAlreadyExisted_RendersAlreadyConfigured()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildInheritablePermissionsResults();
+        results.InheritablePermissionsAlreadyExisted = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Inheritable Permissions",
+            because: "the row label must be present in the summary");
+        logger.AllOutput.Should().Contain("already configured",
+            because: "when every inheritable-permissions entry was in place before this run the row must say 'already configured' so re-runs visibly indicate no work was needed");
+    }
+
+    /// <summary>
+    /// Control case for the previous test: when at least one inheritable-permissions entry was
+    /// newly written (InheritablePermissionsAlreadyExisted=false), the row must say "configured"
+    /// — not "already configured".
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_InheritablePermissionsNewlyConfigured_RendersConfigured()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildInheritablePermissionsResults();
+        results.InheritablePermissionsAlreadyExisted = false;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("configured",
+            because: "a first-time inheritable-permissions write must render plain 'configured'");
+        logger.AllOutput.Should().NotContain("already configured",
+            because: "'already configured' is reserved for runs that did no work — using it for first-time writes would mislead the user");
+    }
+
+    /// <summary>
+    /// Builds a results object that reaches the row-3 "Inheritable Permissions" rendering at
+    /// the BatchPermissionsPhase2Completed branch. Used to exercise the
+    /// <see cref="SetupResults.InheritablePermissionsAlreadyExisted"/> toggle.
+    /// </summary>
+    private static SetupResults BuildInheritablePermissionsResults() => new()
+    {
+        IsNonDwBlueprintFlow = false,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        TenantId = TenantId,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+        TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+    };
+
+    /// <summary>
+    /// Builds a DW-flow results object on the S2S-granted branch of the Blueprint Permission
+    /// Grants row. DW because the summary's <c>s2sOk</c> gate maps to <c>blueprintS2sGranted</c>
+    /// for DW and <c>agentIdS2sGranted</c> for non-DW — using DW keeps the flag's name aligned
+    /// with the field that drives <c>s2sOk</c> for this test, isolating the
+    /// <see cref="SetupResults.BlueprintS2SAlreadyAssigned"/> toggle from non-DW row mechanics.
+    /// </summary>
+    private static SetupResults BuildS2SVerifiedResults() => new()
+    {
+        // DW flow — no EffectiveAuthMode, no agent identity row.
+        IsNonDwBlueprintFlow = false,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        TenantId = TenantId,
+        BlueprintS2SOutcome = Cli.Models.GrantOutcome.Granted,
         BatchPermissionsPhase1Completed = true,
         BatchPermissionsPhase2Completed = true,
     };

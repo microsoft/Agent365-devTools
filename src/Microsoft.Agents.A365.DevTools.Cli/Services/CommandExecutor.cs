@@ -131,14 +131,16 @@ public class CommandExecutor
         bool interactive = false,
         Func<string, string?>? outputTransform = null,
         bool suppressErrorLogging = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, string?>? environmentOverrides = null,
+        bool redirectOutput = true)
     {
-        _logger.LogDebug("Executing with streaming: {Command} {Arguments} (Interactive={Interactive})", command, arguments, interactive);
+        _logger.LogDebug("Executing with streaming: {Command} {Arguments} (Interactive={Interactive}, RedirectOutput={RedirectOutput})", command, arguments, interactive, redirectOutput);
 
         var fileName = command;
         var fileArguments = arguments;
-        
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && 
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
             NeedsCmdWrapper(command))
         {
             _logger.LogTrace("Wrapping command with cmd.exe for Windows batch file");
@@ -148,67 +150,112 @@ public class CommandExecutor
 
         // In interactive mode we keep stdout/err redirected (so we can still display/prefix),
         // but we DO NOT redirect stdin so the child reads directly from the console.
+        // When redirectOutput is false, the child inherits the parent's console for stdout/stderr,
+        // which Windows treats as a fully interactive process (required for UI like browser popups).
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
             Arguments = fileArguments,
             WorkingDirectory = workingDirectory ?? Directory.GetCurrentDirectory(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
+            RedirectStandardOutput = redirectOutput,
+            RedirectStandardError = redirectOutput,
             RedirectStandardInput = !interactive, // only redirect if not interactive
             UseShellExecute = false,
             CreateNoWindow = !interactive // show window characteristics suitable for interactive mode
         };
+
+        // Apply environment variable overrides (remove or set specific variables)
+        if (environmentOverrides != null)
+        {
+            // First, populate the Environment dictionary with all parent variables
+            // so that Remove() can work (ProcessStartInfo.Environment starts empty)
+            foreach (var envVar in System.Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>())
+            {
+                var key = envVar.Key.ToString()!;
+                var value = envVar.Value?.ToString();
+                if (!startInfo.Environment.ContainsKey(key))
+                    startInfo.Environment[key] = value ?? string.Empty;
+            }
+
+            // Now apply the overrides (case-insensitive for Windows)
+            foreach (var (key, value) in environmentOverrides)
+            {
+                if (value == null)
+                {
+                    // Find the actual key in the dictionary (case-insensitive on Windows)
+                    var actualKey = startInfo.Environment.Keys.FirstOrDefault(k =>
+                        string.Equals(k, key, StringComparison.OrdinalIgnoreCase));
+                    var removed = actualKey != null && startInfo.Environment.Remove(actualKey);
+                    _logger.LogDebug("Environment override: removed {Key} (was present: {WasPresent})", key, removed);
+                }
+                else
+                    startInfo.Environment[key] = value;
+            }
+
+            // Debug: log what we're actually passing to the child
+            var debugVars = startInfo.Environment
+                .Where(e => e.Key.StartsWith("DOTNET", StringComparison.OrdinalIgnoreCase)
+                    || e.Key.StartsWith("PS", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(e => e.Key);
+            foreach (var e in debugVars)
+                _logger.LogDebug("Child env (after overrides): {Key}={Value}", e.Key, e.Value);
+        }
 
         using var process = new Process { StartInfo = startInfo };
         
         var outputBuilder = new StringBuilder();
         var errorBuilder = new StringBuilder();
 
-        process.OutputDataReceived += (sender, args) =>
+        if (redirectOutput)
         {
-            if (args.Data != null)
+            process.OutputDataReceived += (sender, args) =>
             {
-                outputBuilder.AppendLine(args.Data);
-                // Don't print JWT tokens to console (security)
-                if (!IsJwtToken(args.Data))
+                if (args.Data != null)
                 {
-                    var display = outputTransform?.Invoke(args.Data) ?? args.Data;
-                    if (display != null)
+                    outputBuilder.AppendLine(args.Data);
+                    // Don't print JWT tokens to console (security)
+                    if (!IsJwtToken(args.Data))
                     {
-                        // outputPrefix is prepended only to the first line; callers must not return multi-line strings from outputTransform.
-                        Console.WriteLine($"{outputPrefix}{display}");
+                        var display = outputTransform?.Invoke(args.Data) ?? args.Data;
+                        if (display != null)
+                        {
+                            // outputPrefix is prepended only to the first line; callers must not return multi-line strings from outputTransform.
+                            Console.WriteLine($"{outputPrefix}{display}");
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogDebug("JWT token filtered from console output for security");
                     }
                 }
-                else
-                {
-                    _logger.LogDebug("JWT token filtered from console output for security");
-                }
-            }
-        };
+            };
 
-        process.ErrorDataReceived += (sender, args) =>
-        {
-            if (args.Data != null)
+            process.ErrorDataReceived += (sender, args) =>
             {
-                errorBuilder.AppendLine(args.Data);
-                // Azure CLI writes informational messages to stderr with "WARNING:" prefix.
-                // Strip it for cleaner output.
-                var cleanData = IsAzureCliCommand(command)
-                    ? StripAzureWarningPrefix(args.Data)
-                    : args.Data;
-                // Suppress blank lines and known non-actionable Python / az-CLI
-                // diagnostic lines that leak onto stderr even on successful calls.
-                if (!string.IsNullOrWhiteSpace(cleanData) && !IsNonActionableStderrLine(cleanData))
+                if (args.Data != null)
                 {
-                    Console.WriteLine($"{outputPrefix}{cleanData}");
+                    errorBuilder.AppendLine(args.Data);
+                    // Azure CLI writes informational messages to stderr with "WARNING:" prefix.
+                    // Strip it for cleaner output.
+                    var cleanData = IsAzureCliCommand(command)
+                        ? StripAzureWarningPrefix(args.Data)
+                        : args.Data;
+                    // Suppress blank lines and known non-actionable Python / az-CLI
+                    // diagnostic lines that leak onto stderr even on successful calls.
+                    if (!string.IsNullOrWhiteSpace(cleanData) && !IsNonActionableStderrLine(cleanData))
+                    {
+                        Console.WriteLine($"{outputPrefix}{cleanData}");
+                    }
                 }
-            }
-        };
+            };
+        }
 
         process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        if (redirectOutput)
+        {
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+        }
 
         // If not interactive and we redirected stdin we could implement scripted input later.
 

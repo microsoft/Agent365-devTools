@@ -282,7 +282,7 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         _blueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<string[]>(), Arg.Any<string[]>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(false));
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Models.AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false)));
 
         // Prevent real network calls: Phase 1 resource SP resolution and Phase 2a inheritable
         // permission writes must not reach Azure endpoints in CI (ForPartsOf calls real implementations
@@ -325,8 +325,9 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         ArrangeS2SPhase1AndAdminCheck();
         _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 0, StandardOutput = "A365-S2S-OK\n" });
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>())
+            .Returns(new CommandResult { ExitCode = 0 });
 
         var setupResults = new SetupResults();
 
@@ -345,19 +346,21 @@ public class BatchPermissionsOrchestratorTests : IDisposable
     }
 
     /// <summary>
-    /// When the programmatic path fails and pwsh reports that the Microsoft.Graph modules
-    /// are not installed, BlueprintS2SOutcome must remain Failed so the Action Required
-    /// block still surfaces — the user needs to install the modules and re-run.
+    /// When the programmatic path fails and pwsh exits non-zero (e.g. exit code 2 from the
+    /// in-script Microsoft.Graph module check, or any other script failure), BlueprintS2SOutcome
+    /// must remain Failed so the Action Required block still surfaces — the user needs to
+    /// install the modules / fix the underlying issue and re-run.
     /// </summary>
     [Fact]
-    public async Task ConfigureAllPermissions_WhenS2SFailsAndPwshMissingModules_OutcomeRemainsFailedWithWarning()
+    public async Task ConfigureAllPermissions_WhenS2SFailsAndPwshExitsNonZero_OutcomeRemainsFailed()
     {
         // Arrange
         ArrangeS2SPhase1AndAdminCheck();
         _executor.ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(new CommandResult { ExitCode = 1, StandardError = "CommandNotFoundException: 'Connect-MgGraph' is not recognized" });
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>())
+            .Returns(new CommandResult { ExitCode = 2 });
 
         var setupResults = new SetupResults();
 
@@ -372,7 +375,7 @@ public class BatchPermissionsOrchestratorTests : IDisposable
 
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
-            because: "missing Microsoft.Graph modules means the fallback could not complete — Action Required must remain visible");
+            because: "a non-zero pwsh exit code means the fallback could not complete — Action Required must remain visible");
     }
 
     /// <summary>
@@ -402,7 +405,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
 
         await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>());
     }
 
     /// <summary>
@@ -449,5 +453,318 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
             because: "a non-admin user cannot complete S2S app role assignment directly — the outcome must be marked Failed so DisplaySetupSummary surfaces the PowerShell hand-off block");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────────────
+    // Idempotency tracking — TenantWideConsentAlreadyExisted and BlueprintS2SAlreadyAssigned.
+    //
+    // These flags drive the "already granted" vs "granted" wording in the Blueprint Permission
+    // Grants summary row. They are user-visible — if a future change forgets to set them when
+    // a re-run was fully idempotent, the user has no way to tell that nothing changed and may
+    // think every run is performing real work. These tests lock the orchestrator's contract.
+    // ──────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// When every S2S spec's required app roles are already assigned on the blueprint SP,
+    /// PerformS2SGrantsAsync must mark the outcome Granted AND set BlueprintS2SAlreadyAssigned
+    /// so the setup summary renders "already granted  S2S app roles" instead of "granted".
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_AllS2SAlreadyAssigned_SetsBlueprintS2SAlreadyAssignedTrue()
+    {
+        // Arrange — Phase 1 succeeds, every S2S grant call reports AllAlreadyAssigned=true.
+        ArrangeS2SPhase1AndAdminCheck();
+        _blueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string[]>(), Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Models.AppRoleGrantResult(
+                AllSucceeded: true, AllAlreadyAssigned: true)));
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: S2SSpec(), _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor);
+
+        // Assert — both contract bits must be set together: Granted (success) AND AlreadyAssigned
+        // (no new POST). If a future refactor decouples them, the summary will silently regress.
+        setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Granted,
+            because: "every requested role was already in place — the operation succeeded by way of the idempotent skip");
+        setupResults.BlueprintS2SAlreadyAssigned.Should().BeTrue(
+            because: "this is the load-bearing signal for 'already granted' wording in DisplaySetupSummary — without it the summary cannot tell idempotent re-runs from first-time grants");
+    }
+
+    /// <summary>
+    /// When at least one S2S spec needed a new POST (AllAlreadyAssigned=false), the outcome
+    /// is Granted but BlueprintS2SAlreadyAssigned must stay false so the summary correctly
+    /// reports "granted" (not "already granted") for runs that did real work.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_S2SNewlyGranted_SetsBlueprintS2SAlreadyAssignedFalse()
+    {
+        // Arrange — grant succeeds but at least one role was newly created (AllAlreadyAssigned=false).
+        ArrangeS2SPhase1AndAdminCheck();
+        _blueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string[]>(), Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Models.AppRoleGrantResult(
+                AllSucceeded: true, AllAlreadyAssigned: false)));
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: S2SSpec(), _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor);
+
+        // Assert
+        setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Granted);
+        setupResults.BlueprintS2SAlreadyAssigned.Should().BeFalse(
+            because: "at least one role was newly POSTed, so this run did real work — the summary must report 'granted', not 'already granted'");
+    }
+
+    /// <summary>
+    /// When the consent pre-check observes that every required scope is already granted
+    /// (BypassConsentChecksForTests simulates the az-cli pre-check returning true),
+    /// GrantAdminConsentAsync must set TenantWideConsentAlreadyExisted=true and return
+    /// without launching the browser. This is the bug fix that motivates the whole PR.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_TenantConsentAlreadyExists_SetsTenantWideConsentAlreadyExistedTrue()
+    {
+        // Arrange — Phase 1 must resolve the resource SP so the pre-check loop has a spec
+        // to iterate over. BypassConsentChecksForTests (set in the ctor) makes the per-spec
+        // CheckConsentExistsAsync return true, exercising the "already consented" branch.
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
+
+        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(RoleCheckResult.HasRole);
+
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("resource-sp-id"));
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: true, alreadyExists: true, error: (string?)null)));
+
+        // Use a delegated-only spec so PerformS2SGrantsAsync is a no-op and we isolate the
+        // tenant-wide-consent code path.
+        var delegatedSpec = new[]
+        {
+            new ResourcePermissionSpec(
+                ConfigConstants.ObservabilityApiAppId,
+                "Observability API",
+                new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+                SetInheritable: false)
+        };
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: delegatedSpec, _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor);
+
+        // Assert — pre-check succeeded, so the browser-launching consent flow must be skipped.
+        setupResults.TenantWideConsentAlreadyExisted.Should().BeTrue(
+            because: "this is the signal DisplaySetupSummary reads to render 'already granted' — without it, re-runs visually look indistinguishable from first-time setup even when nothing changed");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────────────
+    // CR-007: Phase 2a aggregation that sets InheritablePermissionsAlreadyExisted.
+    //
+    // The orchestrator-side aggregation at BatchPermissionsOrchestrator.cs:166-174 is what
+    // drives the row-3 "already configured" wording in the setup summary. A previous run of
+    // `a365 setup all` rendered "configured" even on idempotent re-runs because this flag was
+    // never set in the ConfigureInheritedPermissionsAsync path — the only writer lived in a
+    // separate code path used by legacy `setup blueprint` subcommands. These tests lock the
+    // aggregation's contract:
+    //   - true only when EVERY inheritable spec is both successful AND was already in place
+    //   - false if ANY spec was newly written OR ANY spec failed (the user's rule:
+    //     "Even if one permission was newly granted, we should say configured")
+    // ──────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Arranges Phase 1 success + Phase 2a inheritable-permissions mock with the supplied
+    /// (set, verify) tuples per spec. The orchestrator's foreach loop runs through all specs;
+    /// the aggregation it performs after the loop is what these tests verify.
+    /// </summary>
+    private static ResourcePermissionSpec InheritableSpec(string appId, string name) =>
+        new(appId, name, new[] { "scope1" }, SetInheritable: true);
+
+    private void ArrangePhase1ForInheritablePermissions()
+    {
+        // Phase 1 must succeed enough to reach Phase 2a. The orchestrator uses GraphGetAsync
+        // for the /me lookup and EnsureServicePrincipalForAppIdAsync for resource SPs.
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
+
+        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(RoleCheckResult.HasRole);
+
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("resource-sp-id"));
+    }
+
+    [Fact]
+    public async Task ConfigureAllPermissions_AllInheritableSpecsAlreadyExisted_SetsInheritablePermissionsAlreadyExistedTrue()
+    {
+        // Arrange — every inheritable spec reports alreadyExists=true and verifies as kind=allAllowed.
+        // This is the idempotent-re-run scenario the user reported as buggy ("Summary says configured").
+        ArrangePhase1ForInheritablePermissions();
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: true, alreadyExists: true, error: (string?)null)));
+
+        _blueprintService.VerifyInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult((exists: true, scopesAllAllowed: true, rolesAllAllowed: true, error: (string?)null)));
+
+        var setupResults = new SetupResults();
+
+        // Act — three inheritable specs, all already in place.
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: new[]
+            {
+                InheritableSpec(ConfigConstants.ObservabilityApiAppId, "Observability API"),
+                InheritableSpec(ConfigConstants.MessagingBotApiAppId, "Messaging Bot API"),
+                InheritableSpec("11111111-1111-1111-1111-111111111111", "Custom Resource"),
+            },
+            _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor);
+
+        // Assert
+        setupResults.InheritablePermissionsAlreadyExisted.Should().BeTrue(
+            because: "every inheritable spec succeeded AND was already in place — this is the load-bearing signal for the row-3 'already configured' wording");
+    }
+
+    [Fact]
+    public async Task ConfigureAllPermissions_OneInheritableSpecNewlyWritten_SetsInheritablePermissionsAlreadyExistedFalse()
+    {
+        // Arrange — 2 specs report alreadyExists=true, 1 reports alreadyExists=false (newly written).
+        // The user's rule: "Even if one permission was newly granted, we should say configured".
+        ArrangePhase1ForInheritablePermissions();
+
+        var firstResourceAppId = ConfigConstants.ObservabilityApiAppId;
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Is<string>(rid => rid == firstResourceAppId),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: true, alreadyExists: false, error: (string?)null)));
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Is<string>(rid => rid != firstResourceAppId),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: true, alreadyExists: true, error: (string?)null)));
+
+        _blueprintService.VerifyInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult((exists: true, scopesAllAllowed: true, rolesAllAllowed: true, error: (string?)null)));
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: new[]
+            {
+                InheritableSpec(firstResourceAppId, "Observability API"),
+                InheritableSpec(ConfigConstants.MessagingBotApiAppId, "Messaging Bot API"),
+            },
+            _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor);
+
+        // Assert
+        setupResults.InheritablePermissionsAlreadyExisted.Should().BeFalse(
+            because: "at least one inheritable spec was newly written, so this run did real work — the summary must report 'configured', not 'already configured'");
+    }
+
+    [Fact]
+    public async Task ConfigureAllPermissions_OneInheritableSpecFailed_SetsInheritablePermissionsAlreadyExistedFalse()
+    {
+        // Arrange — 1 spec reports alreadyExists=true and verifies, 1 spec fails verification.
+        // A failed spec breaks the "all already existed" claim regardless of its alreadyExisted value.
+        // Without this assertion, a refactor that simplified the All() to drop the r.configured
+        // clause would silently regress (failed-but-pre-existing would wrongly land on "already configured").
+        ArrangePhase1ForInheritablePermissions();
+
+        var failingResourceAppId = ConfigConstants.MessagingBotApiAppId;
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Is<string>(rid => rid != failingResourceAppId),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: true, alreadyExists: true, error: (string?)null)));
+
+        // Failing spec — returns ok=false with an error (e.g. 403 Insufficient privileges).
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Is<string>(rid => rid == failingResourceAppId),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: false, alreadyExists: false, error: (string?)"Insufficient privileges")));
+
+        _blueprintService.VerifyInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult((exists: true, scopesAllAllowed: true, rolesAllAllowed: true, error: (string?)null)));
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: new[]
+            {
+                InheritableSpec(ConfigConstants.ObservabilityApiAppId, "Observability API"),
+                InheritableSpec(failingResourceAppId, "Messaging Bot API"),
+            },
+            _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor);
+
+        // Assert
+        setupResults.InheritablePermissionsAlreadyExisted.Should().BeFalse(
+            because: "a failed inheritable spec breaks the 'all already existed' claim — the aggregation must require r.configured AND r.alreadyExisted for every spec, not just r.alreadyExisted");
     }
 }

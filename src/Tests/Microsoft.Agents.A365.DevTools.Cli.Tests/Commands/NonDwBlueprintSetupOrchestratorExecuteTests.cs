@@ -755,7 +755,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         blueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(true));
+            .Returns(Task.FromResult(new Cli.Models.AppRoleGrantResult(AllSucceeded: true, AllAlreadyAssigned: false)));
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 
@@ -782,7 +782,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         blueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(false));
+            .Returns(Task.FromResult(new Cli.Models.AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false)));
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 

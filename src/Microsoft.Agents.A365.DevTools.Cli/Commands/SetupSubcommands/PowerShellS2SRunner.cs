@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -27,12 +28,11 @@ internal static partial class PowerShellS2SRunner
     /// Builds and executes the S2S app role assignment PowerShell script.
     /// </summary>
     /// <returns>
-    /// (Attempted, Succeeded, MissingModules):
-    /// - Attempted=false when prerequisites fail (bad GUID inputs, no S2S specs, pwsh not found).
-    /// - Succeeded=true only when all assignments completed and the sentinel marker was written.
-    /// - MissingModules=true when stderr indicates Microsoft.Graph modules are not installed.
+    /// (Attempted, Succeeded):
+    /// - Attempted=false when prerequisites fail (bad GUID inputs, no S2S specs, pwsh not found, timeout).
+    /// - Succeeded=true only when the pwsh subprocess exits with code 0.
     /// </returns>
-    public static async Task<(bool Attempted, bool Succeeded, bool MissingModules)> TryRunAsync(
+    public static async Task<(bool Attempted, bool Succeeded)> TryRunAsync(
         CommandExecutor executor,
         string tenantId,
         string blueprintAppId,
@@ -43,7 +43,7 @@ internal static partial class PowerShellS2SRunner
         if (!GuidPattern().IsMatch(tenantId) || !GuidPattern().IsMatch(blueprintAppId))
         {
             logger.LogWarning("PowerShell S2S runner: invalid tenantId or blueprintAppId - skipping.");
-            return (false, false, false);
+            return (false, false);
         }
 
         var s2sSpecs = specs
@@ -51,7 +51,7 @@ internal static partial class PowerShellS2SRunner
             .ToList();
 
         if (s2sSpecs.Count == 0)
-            return (false, false, false);
+            return (false, false);
 
         // Validate all resource app IDs and role values before building the script.
         foreach (var spec in s2sSpecs)
@@ -59,7 +59,7 @@ internal static partial class PowerShellS2SRunner
             if (!GuidPattern().IsMatch(spec.ResourceAppId))
             {
                 logger.LogWarning("PowerShell S2S runner: spec '{ResourceName}' has invalid ResourceAppId - skipping.", spec.ResourceName);
-                return (false, false, false);
+                return (false, false);
             }
 
             foreach (var role in spec.AppRoleScopes!)
@@ -67,7 +67,7 @@ internal static partial class PowerShellS2SRunner
                 if (!SafeScopePattern().IsMatch(role))
                 {
                     logger.LogWarning("PowerShell S2S runner: spec '{ResourceName}' has unsafe role value '{Role}' - skipping.", spec.ResourceName, role);
-                    return (false, false, false);
+                    return (false, false);
                 }
             }
         }
@@ -86,20 +86,51 @@ internal static partial class PowerShellS2SRunner
         // With -File, stdin stays connected to the parent terminal so the device code wait works.
         var tempFile = Path.Combine(Path.GetTempPath(), $"a365-s2s-{Guid.NewGuid():N}.ps1");
         CommandResult result;
+
+        // Cap the pwsh subprocess at 5 minutes. If Connect-MgGraph hangs (e.g. on a
+        // headless machine where the browser launch never completes), we abandon the
+        // attempt rather than blocking the CLI forever.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromMinutes(5));
+
         try
         {
             await File.WriteAllTextAsync(tempFile, script, ct);
+
+            // Remove environment variables that can cause assembly loading conflicts.
+            // This is Windows-only: the parent dotnet host injects PSModulePath /
+            // DOTNET_ROOT* values that collide with pwsh's own assembly resolution and
+            // produce "[Assembly with same name is already loaded]" failures. On
+            // Linux/Mac these vars are either unset or carry legitimate module search
+            // paths, so removing them would break module discovery instead of fixing it.
+            var envOverrides = new Dictionary<string, string?>();
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                envOverrides["PSModulePath"] = null;
+                envOverrides["DOTNET_TOOLS"] = null;
+                envOverrides["DOTNET_ROOT"] = null;
+                envOverrides["DOTNET_ROOT_X64"] = null;
+                envOverrides["DOTNET_STARTUP_HOOKS"] = null;
+                envOverrides["DOTNETSTARTUPHOOKS"] = null;
+            }
+
             result = await executor.ExecuteWithStreamingAsync(
-                "pwsh", $"-NoProfile -File \"{tempFile}\"",
-                outputPrefix: "  [pwsh] ",
+                "pwsh", $"-NoProfile -ExecutionPolicy Bypass -File \"{tempFile}\"",
                 interactive: true,
                 suppressErrorLogging: true,
-                cancellationToken: ct);
+                cancellationToken: timeoutCts.Token,
+                environmentOverrides: envOverrides,
+                redirectOutput: false);
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 2)
         {
-            logger.LogDebug("pwsh not found on this system.");
-            return (false, false, false);
+            logger.LogWarning("PowerShell 7+ ('pwsh') is not installed or not on PATH. Install from https://aka.ms/powershell, then run 'a365 setup requirements' to verify.");
+            return (false, false);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("PowerShell S2S runner timed out after 5 minutes. The 'Action Required' block at the end of setup contains manual steps you can run yourself.");
+            return (false, false);
         }
         finally
         {
@@ -107,14 +138,11 @@ internal static partial class PowerShellS2SRunner
         }
 
         logger.LogDebug("pwsh exited with code {ExitCode}", result.ExitCode);
-        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
-            logger.LogDebug("pwsh stdout:{NewLine}{Stdout}", Environment.NewLine, result.StandardOutput);
-        if (!string.IsNullOrWhiteSpace(result.StandardError))
-            logger.LogDebug("pwsh stderr:{NewLine}{Stderr}", Environment.NewLine, result.StandardError);
 
-        var missingModules = IsMissingModulesError(result.StandardError);
-        var succeeded = result.StandardOutput.Contains("A365-S2S-OK", StringComparison.Ordinal);
-        return (true, succeeded, missingModules);
+        // Note: stdout/stderr are not redirected (redirectOutput: false) so the child
+        // writes directly to the console. Success is determined by the exit code.
+        var succeeded = result.ExitCode == 0;
+        return (true, succeeded);
     }
 
     private static string BuildScript(
@@ -124,6 +152,23 @@ internal static partial class PowerShellS2SRunner
     {
         var sb = new StringBuilder();
 
+        // Stop on any non-terminating error so the script's exit code accurately reflects success/failure.
+        sb.AppendLine("$ErrorActionPreference = 'Stop'");
+        sb.AppendLine("");
+
+        // Force-load the Graph modules to avoid assembly loading conflicts. Pin the highest
+        // installed version of each module and import by absolute path so PowerShell does not
+        // silently pick up a different version through its standard probing.
+        // Authentication must be imported before Applications because Connect-MgGraph lives in
+        // Authentication and Applications transitively requires it. Exit code 2 is reserved for
+        // "modules missing" so callers can distinguish a missing-prereq from an auth failure.
+        sb.AppendLine("foreach ($name in @('Microsoft.Graph.Authentication','Microsoft.Graph.Applications')) {");
+        sb.AppendLine("  $m = Get-Module $name -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1");
+        sb.AppendLine("  if (-not $m) { Write-Error \"Required PowerShell module '$name' is not installed. Run: Install-Module $name -Scope CurrentUser\"; exit 2 }");
+        sb.AppendLine("  Import-Module $m.Path -Force");
+        sb.AppendLine("}");
+        sb.AppendLine("");
+
         // Disconnect any stale cached session first; a reused DeviceCodeCredential from a prior
         // run can leave the context in a broken state where Connect-MgGraph returns without error
         // but subsequent cmdlets throw a NullReferenceException inside the credential object.
@@ -131,7 +176,7 @@ internal static partial class PowerShellS2SRunner
         // -ContextScope Process forces an in-memory-only connection, bypassing the persistent token
         // cache. Without this, Connect-MgGraph reloads a stale DeviceCodeCredential from disk even
         // after Disconnect-MgGraph, causing a NullReferenceException in subsequent cmdlets.
-        sb.AppendLine($"Connect-MgGraph -TenantId '{tenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Directory.Read.All' -NoWelcome -ContextScope Process");
+        sb.AppendLine($"Connect-MgGraph -TenantId '{tenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All' -NoWelcome -ContextScope Process");
         // Guard: Connect-MgGraph can return without throwing even when auth did not complete.
         sb.AppendLine("$_ctx = Get-MgContext");
         sb.AppendLine("if (-not $_ctx -or [string]::IsNullOrEmpty($_ctx.Account)) { Write-Error 'Authentication did not complete - no account in context after Connect-MgGraph'; exit 1 }");
@@ -161,12 +206,4 @@ internal static partial class PowerShellS2SRunner
         return sb.ToString();
     }
 
-    private static bool IsMissingModulesError(string stderr)
-    {
-        if (string.IsNullOrEmpty(stderr)) return false;
-        return stderr.Contains("not recognized", StringComparison.OrdinalIgnoreCase)
-            || stderr.Contains("cannot find module", StringComparison.OrdinalIgnoreCase)
-            || stderr.Contains("Could not find module", StringComparison.OrdinalIgnoreCase)
-            || stderr.Contains("CommandNotFoundException", StringComparison.OrdinalIgnoreCase);
-    }
 }

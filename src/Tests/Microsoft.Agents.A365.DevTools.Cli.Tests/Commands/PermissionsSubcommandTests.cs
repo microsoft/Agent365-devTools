@@ -806,7 +806,7 @@ public class PermissionsSubcommandTests : IDisposable
         _mockBlueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(s2sSucceeds));
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Models.AppRoleGrantResult(AllSucceeded: s2sSucceeds, AllAlreadyAssigned: false)));
 
         _mockGraphApiService.GraphGetAsync(
             Arg.Any<string>(), Arg.Any<string>(),
