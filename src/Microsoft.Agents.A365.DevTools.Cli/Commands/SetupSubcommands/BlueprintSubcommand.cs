@@ -1962,45 +1962,23 @@ internal static class BlueprintSubcommand
         logger.LogInformation("If the browser does not open automatically, navigate to this URL to grant consent: {ConsentUrl}", consentUrlGraph);
         BrowserHelper.TryOpenUrl(consentUrlGraph, logger);
 
-        bool consentSuccess;
-        if (!string.IsNullOrWhiteSpace(blueprintSpId))
+        // Poll via az rest. The Graph overload of PollAdminConsentAsync cannot reliably read
+        // /oauth2PermissionGrants with the CLI's delegated token (DelegatedPermissionGrant.Read.All
+        // was removed from the CLI client app in PR #409), so it timed out into AssumedComplete on
+        // every successful consent — printing a misleading "continuing without auto-verification"
+        // hint even when the grant had actually landed. The az rest path uses the Azure CLI's GA
+        // directory-role access to read grants directly, matching the pattern used by
+        // BatchPermissionsOrchestrator's pre-check and post-consent polling.
+        var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(
+            executor, logger, appId, "Graph API Scopes", 180, 5, ct);
+        if (consentSuccess)
         {
-            var pollResult = await AdminConsentHelper.PollAdminConsentAsync(
-                graphApiService, logger, tenantId, blueprintSpId,
-                "Graph API Scopes", 180, 5, ct);
-            switch (pollResult)
-            {
-                case ConsentPollResult.Verified:
-                    consentSuccess = true;
-                    logger.LogInformation("Graph API admin consent granted successfully!");
-                    break;
-                case ConsentPollResult.AssumedComplete:
-                    // Token lacked permission to read oauth2PermissionGrants; user pressed Enter
-                    // or the wait window elapsed. We have no proof the grant landed.
-                    consentSuccess = true;
-                    logger.LogInformation("Continuing without auto-verification. Run 'a365 query-entra inheritance' later to confirm the grant.");
-                    logger.LogInformation("  If consent was not completed, open this URL manually: {ConsentUrl}", consentUrlGraph);
-                    break;
-                default:
-                    consentSuccess = false;
-                    logger.LogWarning("Graph API admin consent may not have completed.");
-                    logger.LogWarning("  Open this URL to grant consent manually: {ConsentUrl}", consentUrlGraph);
-                    break;
-            }
+            logger.LogInformation("Graph API admin consent granted successfully!");
         }
         else
         {
-            logger.LogDebug("Could not resolve blueprint service principal. Falling back to az rest polling.");
-            consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
-            if (consentSuccess)
-            {
-                logger.LogInformation("Graph API admin consent granted successfully!");
-            }
-            else
-            {
-                logger.LogWarning("Graph API admin consent may not have completed.");
-                logger.LogWarning("  Open this URL to grant consent manually: {ConsentUrl}", consentUrlGraph);
-            }
+            logger.LogWarning("Graph API admin consent may not have completed.");
+            logger.LogWarning("  Open this URL to grant consent manually: {ConsentUrl}", consentUrlGraph);
         }
 
         // Configure Graph inheritable permissions regardless of admin consent outcome.

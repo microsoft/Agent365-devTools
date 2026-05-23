@@ -19,7 +19,7 @@ public static class BrowserHelper
     /// real browser during the test run. AsyncLocal scoping prevents leaks across parallel
     /// xUnit test classes. Not intended for production code.
     /// </summary>
-    public static Action<string, ILogger?>? OpenUrlOverrideForTests
+    internal static Action<string, ILogger?>? OpenUrlOverrideForTests
     {
         get => _openUrlOverride.Value;
         set => _openUrlOverride.Value = value;

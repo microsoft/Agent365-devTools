@@ -199,8 +199,10 @@ public static class AdminConsentHelper
     /// a grant, or when the user pressed Enter to skip verification — the grant was NOT directly
     /// observed. Callers must NOT update persisted consent state on this outcome and must keep
     /// the consent URL visible so the user can verify manually.
-    /// <see cref="ConsentPollResult.NotDetected"/> when the blueprint SP id is not available,
-    /// or when polling was cancelled.
+    /// <see cref="ConsentPollResult.NotDetected"/> when the blueprint SP id is not available.
+    /// Throws <see cref="OperationCanceledException"/> when <paramref name="ct"/> is cancelled —
+    /// callers must let the exception propagate so user Ctrl+C is honored consistently with the
+    /// rest of the setup flow.
     /// </returns>
     public static async Task<ConsentPollResult> PollAdminConsentAsync(
         Services.GraphApiService graphApiService,
