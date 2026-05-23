@@ -45,9 +45,15 @@ public enum ConsentPollResult
 public static class AdminConsentHelper
 {
     /// <summary>
-    /// Optional test-only override. When set to <c>true</c>, both overloads of
-    /// <c>PollAdminConsentAsync</c> and both overloads of <c>CheckConsentExistsAsync</c>
-    /// short-circuit and return <c>true</c> immediately without performing any Graph or az-cli calls.
+    /// Optional test-only override. When set to <c>true</c>, the admin-consent helpers
+    /// short-circuit immediately without performing any Graph or az-cli calls, returning the
+    /// "success" sentinel appropriate for each overload's return type:
+    /// <list type="bullet">
+    ///   <item><c>PollAdminConsentAsync(CommandExecutor, ...)</c> returns <c>true</c>.</item>
+    ///   <item><c>PollAdminConsentAsync(GraphApiService, ...)</c> returns <see cref="ConsentPollResult.Verified"/>.</item>
+    ///   <item><c>CheckConsentExistsAsync(GraphApiService, ...)</c> returns <c>true</c>.</item>
+    ///   <item><c>CheckConsentExistsAsync(CommandExecutor, ...)</c> returns <c>true</c>.</item>
+    /// </list>
     /// This prevents unit tests that exercise the admin-consent path from polling Graph for
     /// the full timeout (180s) and from launching a real browser via <c>BrowserHelper.TryOpenUrl</c>.
     /// AsyncLocal scoping prevents leaks across parallel xUnit test classes; tests that set this
