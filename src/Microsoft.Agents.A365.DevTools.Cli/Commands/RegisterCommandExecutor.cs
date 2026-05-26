@@ -29,7 +29,7 @@ internal record RawRegisterArgs(
     string? RemoteScopes,
     string? TenantId,
     string? ServiceTreeId,
-    int? SecretLifetimeDays,
+    int? SecretLifetimeMonths,
     string? PublisherName,
     string? Description,
     bool DryRun);
@@ -72,7 +72,7 @@ internal class RegisterCommandExecutor
         public string? RemoteScopes { get; init; }
         public string? TenantId { get; init; }
         public string? ServiceTreeId { get; init; }
-        public int? SecretLifetimeDays { get; init; }
+        public int? SecretLifetimeMonths { get; init; }
         public string? IdpAuthUrl { get; init; }
         public string? IdpTokenUrl { get; init; }
         public string? IdpScopes { get; init; }
@@ -95,10 +95,10 @@ internal class RegisterCommandExecutor
         string? PublicClientsObjectId,
         string PublicClientsAppName);
 
-    internal async Task ExecuteAsync(RawRegisterArgs args, CancellationToken ct = default)
+    internal async Task<bool> ExecuteAsync(RawRegisterArgs args, CancellationToken ct = default)
     {
         var input = await ResolveInputsAsync(args);
-        if (input is null) return;
+        if (input is null) return false;
 
         DisplayRegistrationSummary(input);
 
@@ -108,7 +108,7 @@ internal class RegisterCommandExecutor
             _logger.LogInformation("[DRY RUN] Auth type: {AuthType}", input.AuthType);
             _logger.LogInformation("[DRY RUN] Tools to register: {ToolCount} ({Tools})", input.ToolList.Count, string.Join(", ", input.ToolList));
             _logger.LogInformation("[DRY RUN] Would call AddMcpServer API and configure redirect URIs");
-            return;
+            return true;
         }
 
         Console.Write("Proceed with registration? (y/N): ");
@@ -116,7 +116,7 @@ internal class RegisterCommandExecutor
         if (confirmation != "y" && confirmation != "yes")
         {
             Console.WriteLine("Registration cancelled.");
-            return;
+            return true;
         }
 
         Console.WriteLine();
@@ -127,17 +127,17 @@ internal class RegisterCommandExecutor
         Console.WriteLine($"Registering MCP server '{input.ServerName}'...");
 
         var tenantId = await DetectTenantIdAsync(input.TenantId);
-        if (tenantId is null) return;
+        if (tenantId is null) return false;
 
         if (_graphApiService is null)
         {
             _logger.LogError("Graph API service is not available. Cannot create Entra applications.");
-            return;
+            return false;
         }
 
         var warnings = new List<string>();
         var apps = await CreateEntraAppsAsync(input, tenantId, warnings);
-        if (apps is null) return;
+        if (apps is null) return false;
 
         ct.ThrowIfCancellationRequested();
 
@@ -153,7 +153,7 @@ internal class RegisterCommandExecutor
             _logger.LogError("Failed to register MCP server '{ServerName}': {Error}", input.ServerName, ex.Message);
             _logger.LogDebug("Exception details: {Exception}", ex.ToString());
             _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
-            return;
+            return false;
         }
 
         if (addResponse is null || !addResponse.IsSuccess)
@@ -178,7 +178,7 @@ internal class RegisterCommandExecutor
 
             _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
             Console.WriteLine($"Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
-            return;
+            return false;
         }
 
         _logger.LogDebug("Successfully added MCP server {ServerName}", input.ServerName);
@@ -186,6 +186,7 @@ internal class RegisterCommandExecutor
         await ConfigureEntraAppsAsync(input, apps, addResponse, tenantId, warnings, ct);
 
         DisplayResults(input, addResponse.Server?.RemoteMCPServerProxyRedirectUri, warnings);
+        return true;
     }
 
     private async Task<ResolvedInput?> ResolveInputsAsync(RawRegisterArgs args)
@@ -204,7 +205,7 @@ internal class RegisterCommandExecutor
         var remoteScopes = args.RemoteScopes;
         var userTenantId = args.TenantId;
         var serviceTreeId = args.ServiceTreeId;
-        var secretLifetimeDays = args.SecretLifetimeDays;
+        var secretLifetimeMonths = args.SecretLifetimeMonths;
         var publisherName = args.PublisherName;
         var serverDescription = args.Description;
 
@@ -238,7 +239,7 @@ internal class RegisterCommandExecutor
                 remoteScopes ??= inputFileData.RemoteScopes;
                 userTenantId ??= inputFileData.TenantId;
                 serviceTreeId ??= inputFileData.ServiceTreeId;
-                secretLifetimeDays ??= inputFileData.SecretLifetimeDays;
+                secretLifetimeMonths ??= inputFileData.SecretLifetimeMonths;
                 publisherName ??= inputFileData.PublisherName;
                 serverDescription ??= inputFileData.Description;
 
@@ -302,9 +303,9 @@ internal class RegisterCommandExecutor
                 return null;
             }
 
-            if (secretLifetimeDays is { } lifetime && (lifetime < 1 || lifetime > 730))
+            if (secretLifetimeMonths is { } lifetime && (lifetime < 1 || lifetime > 24))
             {
-                _logger.LogError("--secret-lifetime-days must be between 1 and 730 (Graph's maximum is ~2 years). Got: {Value}", lifetime);
+                _logger.LogError("--secret-lifetime-months must be between 1 and 24 (Graph's maximum is ~2 years). Got: {Value}", lifetime);
                 return null;
             }
 
@@ -496,7 +497,7 @@ internal class RegisterCommandExecutor
             RemoteScopes = remoteScopes,
             TenantId = userTenantId,
             ServiceTreeId = serviceTreeId,
-            SecretLifetimeDays = secretLifetimeDays,
+            SecretLifetimeMonths = secretLifetimeMonths,
             IdpAuthUrl = idpAuthUrl,
             IdpTokenUrl = idpTokenUrl,
             IdpScopes = idpScopes,
@@ -533,9 +534,9 @@ internal class RegisterCommandExecutor
             DevelopMcpCommand.WriteLabel("  Remote Scopes:  "); Console.WriteLine(input.RemoteScopes);
         }
 
-        if (input.SecretLifetimeDays is { } lifetime)
+        if (input.SecretLifetimeMonths is { } lifetime)
         {
-            DevelopMcpCommand.WriteLabel("  Secret Lifetime: "); Console.WriteLine($"{lifetime} day(s)");
+            DevelopMcpCommand.WriteLabel("  Secret Lifetime: "); Console.WriteLine($"{lifetime} month(s)");
         }
 
         if (input.IsExternalIdp)
@@ -594,7 +595,7 @@ internal class RegisterCommandExecutor
         }
         _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", a365AppName, a365App.Value.ClientId);
 
-        var a365Secret = await _graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId, lifetimeDays: input.SecretLifetimeDays);
+        var a365Secret = await _graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId, lifetimeMonths: input.SecretLifetimeMonths);
         if (string.IsNullOrWhiteSpace(a365Secret))
         {
             _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", a365AppName);
@@ -624,7 +625,7 @@ internal class RegisterCommandExecutor
             }
             _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", remoteProxyAppName, remoteApp.Value.ClientId);
 
-            remoteProxySecret = await _graphApiService.AddAppPasswordAsync(tenantId, remoteApp.Value.ObjectId, lifetimeDays: input.SecretLifetimeDays);
+            remoteProxySecret = await _graphApiService.AddAppPasswordAsync(tenantId, remoteApp.Value.ObjectId, lifetimeMonths: input.SecretLifetimeMonths);
             if (string.IsNullOrWhiteSpace(remoteProxySecret))
             {
                 _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", remoteProxyAppName);

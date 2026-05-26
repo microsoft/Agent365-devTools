@@ -277,7 +277,7 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("remote-scopes");
         optionNames.Should().Contain("tenant-id");
         optionNames.Should().Contain("service-tree-id");
-        optionNames.Should().Contain("secret-lifetime-days");
+        optionNames.Should().Contain("secret-lifetime-months");
         optionNames.Should().Contain("publisher");
         optionNames.Should().Contain("description");
         optionNames.Should().Contain("dry-run");

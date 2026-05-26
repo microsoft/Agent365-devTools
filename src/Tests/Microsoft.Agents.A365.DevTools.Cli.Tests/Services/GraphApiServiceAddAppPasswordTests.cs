@@ -102,10 +102,10 @@ public class GraphApiServiceAddAppPasswordTests
     }
 
     [Fact]
-    public async Task AddAppPasswordAsync_WithLifetime_PayloadHasEndDateTimeRoughlyOffsetByDays()
+    public async Task AddAppPasswordAsync_WithLifetime_PayloadHasEndDateTimeRoughlyOffsetByMonths()
     {
         // Arrange
-        const int lifetimeDays = 90;
+        const int lifetimeMonths = 3;
         using var handler = new BodyCapturingHandler
         {
             Response = new HttpResponseMessage(HttpStatusCode.OK)
@@ -119,7 +119,7 @@ public class GraphApiServiceAddAppPasswordTests
         var before = DateTimeOffset.UtcNow;
 
         // Act
-        var secret = await service.AddAppPasswordAsync(TenantId, ObjectId, lifetimeDays: lifetimeDays);
+        var secret = await service.AddAppPasswordAsync(TenantId, ObjectId, lifetimeMonths: lifetimeMonths);
 
         var after = DateTimeOffset.UtcNow;
 
@@ -132,8 +132,8 @@ public class GraphApiServiceAddAppPasswordTests
         var endDateTimeString = pwd.GetProperty("endDateTime").GetString();
         endDateTimeString.Should().NotBeNullOrWhiteSpace();
         var endDateTime = DateTimeOffset.Parse(endDateTimeString!, System.Globalization.CultureInfo.InvariantCulture);
-        endDateTime.Should().BeOnOrAfter(before.AddDays(lifetimeDays));
-        endDateTime.Should().BeOnOrBefore(after.AddDays(lifetimeDays));
+        endDateTime.Should().BeOnOrAfter(before.AddMonths(lifetimeMonths));
+        endDateTime.Should().BeOnOrBefore(after.AddMonths(lifetimeMonths));
     }
 
     [Fact]
@@ -166,13 +166,13 @@ public class GraphApiServiceAddAppPasswordTests
         logger.Received(1).Log(
             LogLevel.Error,
             Arg.Any<EventId>(),
-            Arg.Is<object>(state => state != null && state.ToString()!.Contains("--secret-lifetime-days") && state.ToString()!.Contains("Graph default")),
+            Arg.Is<object>(state => state != null && state.ToString()!.Contains("--secret-lifetime-months") && state.ToString()!.Contains("Graph default")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
 
     [Fact]
-    public async Task AddAppPasswordAsync_TenantPolicyRejectionWithLifetime_LogsRequestedDays()
+    public async Task AddAppPasswordAsync_TenantPolicyRejectionWithLifetime_LogsRequestedMonths()
     {
         // Arrange — caller passed an explicit lifetime that still exceeds policy
         var errorBody = new
@@ -194,14 +194,14 @@ public class GraphApiServiceAddAppPasswordTests
         var service = new GraphApiService(logger, FakeExecutor(), FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Act
-        var secret = await service.AddAppPasswordAsync(TenantId, ObjectId, lifetimeDays: 365);
+        var secret = await service.AddAppPasswordAsync(TenantId, ObjectId, lifetimeMonths: 12);
 
         // Assert
         secret.Should().BeNull();
         logger.Received(1).Log(
             LogLevel.Error,
             Arg.Any<EventId>(),
-            Arg.Is<object>(state => state != null && state.ToString()!.Contains("365-day") && state.ToString()!.Contains("--secret-lifetime-days")),
+            Arg.Is<object>(state => state != null && state.ToString()!.Contains("12-month") && state.ToString()!.Contains("--secret-lifetime-months")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -238,7 +238,7 @@ public class GraphApiServiceAddAppPasswordTests
             Arg.Any<EventId>(),
             Arg.Is<object>(state => state != null
                 && state.ToString()!.Contains("Failed to add password")
-                && !state.ToString()!.Contains("--secret-lifetime-days")),
+                && !state.ToString()!.Contains("--secret-lifetime-months")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -247,7 +247,10 @@ public class GraphApiServiceAddAppPasswordTests
     [InlineData(400, "Lifetime of password is too long.", true)]
     [InlineData(400, "The application credential lifetime exceeds the max value allowed by tenant administrator.", true)]
     [InlineData(403, "appManagementPolicy violation.", true)]
-    [InlineData(400, "passwordCredential policy violation: not allowed.", true)]
+    [InlineData(403, "Request blocked by appManagementPolicies on the tenant.", true)]
+    [InlineData(400, "endDateTime on passwordCredential exceeds the maximum allowed.", true)]
+    [InlineData(400, "Password did not meet the complexity policy.", false)]
+    [InlineData(400, "passwordCredential policy violation: not allowed.", false)]
     [InlineData(400, "Insufficient privileges to complete the operation.", false)]
     [InlineData(403, "Insufficient privileges to complete the operation.", false)]
     [InlineData(401, "Lifetime of password is too long.", false)]

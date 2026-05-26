@@ -2119,22 +2119,23 @@ public class GraphApiService
 
     /// <summary>
     /// Adds a password (client secret) to an Entra application.
-    /// When <paramref name="lifetimeDays"/> is null, Graph applies its default lifetime (~2 years).
-    /// When provided, an explicit endDateTime is sent so callers can fit within tenant
-    /// appManagementPolicies caps.
+    /// When <paramref name="lifetimeMonths"/> is null, Graph applies its default lifetime (~2 years).
+    /// When provided, an explicit endDateTime computed via <see cref="DateTimeOffset.AddMonths(int)"/>
+    /// is sent so callers can fit within tenant appManagementPolicies caps. Calendar-aware: e.g.
+    /// Jan 31 + 1 month resolves to Feb 28/29 rather than overflowing.
     /// </summary>
     public virtual async Task<string?> AddAppPasswordAsync(
-        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", int? lifetimeDays = null, CancellationToken ct = default)
+        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", int? lifetimeMonths = null, CancellationToken ct = default)
     {
         object payload;
-        if (lifetimeDays is { } days)
+        if (lifetimeMonths is { } months)
         {
             payload = new
             {
                 passwordCredential = new
                 {
                     displayName,
-                    endDateTime = DateTimeOffset.UtcNow.AddDays(days).ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+                    endDateTime = DateTimeOffset.UtcNow.AddMonths(months).ToString("o", System.Globalization.CultureInfo.InvariantCulture),
                 },
             };
         }
@@ -2151,11 +2152,11 @@ public class GraphApiService
             var errorMessage = TryExtractGraphErrorMessage(response.Body);
             if (IsTenantSecretLifetimePolicyRejection(response.StatusCode, errorMessage))
             {
-                var attempted = lifetimeDays is { } d
-                    ? $"the requested {d}-day lifetime"
+                var attempted = lifetimeMonths is { } m
+                    ? $"the requested {m}-month lifetime"
                     : "the Graph default (~2 years)";
                 _logger.LogError(
-                    "Tenant Entra ID policy rejected {Attempted} for the client secret on application {ObjectId}. Pass --secret-lifetime-days N with a smaller value (e.g. --secret-lifetime-days 90) that fits inside your tenant's appManagementPolicies cap. Graph response: {Error}",
+                    "Tenant Entra ID policy rejected {Attempted} for the client secret on application {ObjectId}. Pass --secret-lifetime-months N with a smaller value (e.g. --secret-lifetime-months 3) that fits inside your tenant's appManagementPolicies cap. Graph response: {Error}",
                     attempted,
                     applicationObjectId,
                     errorMessage ?? $"HTTP {response.StatusCode} {response.ReasonPhrase}");
@@ -2185,16 +2186,22 @@ public class GraphApiService
 
     // Detects the Microsoft Graph error returned when a tenant's appManagementPolicies
     // restrict the maximum lifetime of a client secret to a value shorter than the one requested.
-    // Graph returns HTTP 400/403 with an error message that mentions "lifetime" and/or "policy";
-    // there is no stable machine-readable error code for this case, so we match on the message text.
+    // Graph returns HTTP 400/403 with no stable machine-readable code, so we match on tokens
+    // that are specific to the lifetime case: "lifetime", "appManagementPolic" (matches both
+    // "appManagementPolicy" and "appManagementPolicies"), or "endDateTime" (the field we send
+    // to specify the desired expiry). A broader "policy + password" match was intentionally
+    // dropped because it also fires for password-strength / complexity rejections, which would
+    // wrongly steer users toward --secret-lifetime-months. If Graph reword changes break this
+    // matcher, update both the token list here and the GraphApiServiceAddAppPasswordTests
+    // Theory cases that pin it.
     internal static bool IsTenantSecretLifetimePolicyRejection(int statusCode, string? errorMessage)
     {
         if (statusCode != 400 && statusCode != 403) return false;
         if (string.IsNullOrWhiteSpace(errorMessage)) return false;
         var msg = errorMessage;
         return msg.Contains("lifetime", StringComparison.OrdinalIgnoreCase)
-            || msg.Contains("appManagementPolicy", StringComparison.OrdinalIgnoreCase)
-            || (msg.Contains("policy", StringComparison.OrdinalIgnoreCase) && msg.Contains("password", StringComparison.OrdinalIgnoreCase));
+            || msg.Contains("appManagementPolic", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("endDateTime", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

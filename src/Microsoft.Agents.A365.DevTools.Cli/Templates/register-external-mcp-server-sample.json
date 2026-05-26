@@ -17,7 +17,7 @@
   "remoteScopes": null,
   "tenantId": null,
   "serviceTreeId": null,
-  "secretLifetimeDays": null,
+  "secretLifetimeMonths": null,
   "force": false,
   "externalOAuth": {
     "authorizationUrl": null,
