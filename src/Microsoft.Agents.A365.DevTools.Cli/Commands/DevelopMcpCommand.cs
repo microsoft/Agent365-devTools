@@ -850,7 +850,7 @@ public static class DevelopMcpCommand
         var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
         command.AddOption(serviceTreeIdOption);
 
-        var secretLifetimeMonthsOption = new Option<int?>("--secret-lifetime-months", description: "Default is 2 years. Set a value that is smaller than the appManagementPolicies cap in your tenant.");
+        var secretLifetimeMonthsOption = new Option<int?>("--secret-lifetime-months", description: "Lifetime in months (1-24) for generated client secrets on the created Entra apps.Default is 2 years. Set a value that is smaller than the appManagementPolicies cap in your tenant.");
         command.AddOption(secretLifetimeMonthsOption);
 
         var publisherOption = new Option<string?>("--publisher", description: "Publisher name (required, used in MOS package metadata)");
