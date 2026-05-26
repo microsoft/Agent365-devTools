@@ -54,10 +54,7 @@ public class GraphApiServiceAddAppPasswordTests
     {
         public string? CapturedBody { get; private set; }
 
-        public HttpResponseMessage Response { get; set; } = new(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{}"),
-        };
+        public HttpResponseMessage? Response { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -65,14 +62,14 @@ public class GraphApiServiceAddAppPasswordTests
             {
                 CapturedBody = await request.Content.ReadAsStringAsync(cancellationToken);
             }
-            return Response;
+            return Response ?? new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent(string.Empty) };
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                Response.Dispose();
+                Response?.Dispose();
             }
             base.Dispose(disposing);
         }

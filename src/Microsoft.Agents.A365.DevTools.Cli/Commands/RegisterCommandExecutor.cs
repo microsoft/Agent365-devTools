@@ -533,7 +533,7 @@ internal class RegisterCommandExecutor
             DevelopMcpCommand.WriteLabel("  Remote Scopes:  "); Console.WriteLine(input.RemoteScopes);
         }
 
-        if (input.IsEntra && input.SecretLifetimeDays is { } lifetime)
+        if (input.SecretLifetimeDays is { } lifetime)
         {
             DevelopMcpCommand.WriteLabel("  Secret Lifetime: "); Console.WriteLine($"{lifetime} day(s)");
         }
