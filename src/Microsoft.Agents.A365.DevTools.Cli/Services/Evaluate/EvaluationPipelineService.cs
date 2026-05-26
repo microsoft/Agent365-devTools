@@ -21,6 +21,7 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
     private readonly IChecklistEvaluator _checklistEvaluator;
     private readonly IEvaluationAnalyzer _evaluationAnalyzer;
     private readonly IReportGenerator _reportGenerator;
+    private readonly IAgent365ToolingService _toolingService;
 
     public EvaluationPipelineService(
         ILogger<EvaluationPipelineService> logger,
@@ -28,7 +29,8 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
         IChecklistGenerator checklistGenerator,
         IChecklistEvaluator checklistEvaluator,
         IEvaluationAnalyzer evaluationAnalyzer,
-        IReportGenerator reportGenerator)
+        IReportGenerator reportGenerator,
+        IAgent365ToolingService toolingService)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(discoveryService);
@@ -36,12 +38,14 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
         ArgumentNullException.ThrowIfNull(checklistEvaluator);
         ArgumentNullException.ThrowIfNull(evaluationAnalyzer);
         ArgumentNullException.ThrowIfNull(reportGenerator);
+        ArgumentNullException.ThrowIfNull(toolingService);
         _logger = logger;
         _discoveryService = discoveryService;
         _checklistGenerator = checklistGenerator;
         _checklistEvaluator = checklistEvaluator;
         _evaluationAnalyzer = evaluationAnalyzer;
         _reportGenerator = reportGenerator;
+        _toolingService = toolingService;
     }
 
     /// <inheritdoc />
@@ -49,6 +53,12 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
     {
         try
         {
+            // Fire-and-forget telemetry marker so non-CLI surfaces that drive evaluations
+            // also get attributed. Identity is extracted server-side from the bearer token.
+            // CLI does not pass the evaluated server URL — that is customer content.
+            // Failures are swallowed inside the service.
+            await _toolingService.LogEvaluateUsageAsync(cancellationToken);
+
             var engine = ParseEvalEngine(evalEngine);
 
             // Brief intro so first-time users know what backing service this needs.

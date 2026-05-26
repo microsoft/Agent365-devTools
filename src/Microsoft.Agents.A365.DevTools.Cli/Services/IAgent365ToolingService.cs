@@ -98,6 +98,14 @@ public interface IAgent365ToolingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Logs telemetry for evaluate-mcp-server usage at the start of the evaluation workflow.
+    /// Body is intentionally empty: server identifies the caller from the bearer token and may
+    /// pull additional operation context from ServiceContext if upstream activities populated it.
+    /// The CLI does not send customer-private content (e.g. evaluated server URL) in the payload.
+    /// </summary>
+    Task LogEvaluateUsageAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Adds a BYO (Bring Your Own) MCP server
     /// </summary>
     /// <param name="request">Add MCP server request</param>

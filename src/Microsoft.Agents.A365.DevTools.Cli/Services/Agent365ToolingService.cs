@@ -317,6 +317,12 @@ public class Agent365ToolingService : IAgent365ToolingService
         return $"{baseUrl}/agents/externalMcpServers/logRegister";
     }
 
+    private string BuildLogEvaluateUrl(string environment)
+    {
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        return $"{baseUrl}/agents/externalMcpServers/logEvaluate";
+    }
+
     /// <summary>
     /// Builds URL for deleting a BYO MCP server
     /// </summary>
@@ -900,6 +906,45 @@ public class Agent365ToolingService : IAgent365ToolingService
             var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
 
             _logger.LogDebug("Logging register usage telemetry...");
+            using var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
+            _logger.LogDebug("Telemetry logged: {StatusCode}", response.StatusCode);
+            if (!response.IsSuccessStatusCode &&
+                response.Headers.TryGetValues("x-ms-correlation-id", out var telemetryCorrelationValues))
+            {
+                var telemetryCorrelationId = telemetryCorrelationValues.FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(telemetryCorrelationId))
+                {
+                    _logger.LogDebug("Telemetry server correlation ID: {CorrelationId}", telemetryCorrelationId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("Telemetry logging failed (non-blocking): {Error}", ex.Message);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task LogEvaluateUsageAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var endpointUrl = BuildLogEvaluateUrl(_environment);
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            if (string.IsNullOrWhiteSpace(authToken))
+            {
+                _logger.LogDebug("Skipping telemetry: failed to acquire token");
+                return;
+            }
+
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken);
+            // Empty body: server identifies the caller from the bearer token and pulls any
+            // operation context from ServiceContext. CLI does not ship customer-private content.
+            var content = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
+
+            _logger.LogDebug("Logging evaluate usage telemetry...");
             using var response = await httpClient.PostAsync(endpointUrl, content, cancellationToken);
             _logger.LogDebug("Telemetry logged: {StatusCode}", response.StatusCode);
             if (!response.IsSuccessStatusCode &&
