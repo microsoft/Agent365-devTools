@@ -29,6 +29,7 @@ internal record RawRegisterArgs(
     string? RemoteScopes,
     string? TenantId,
     string? ServiceTreeId,
+    int? SecretLifetimeDays,
     string? PublisherName,
     string? Description,
     bool DryRun);
@@ -71,6 +72,7 @@ internal class RegisterCommandExecutor
         public string? RemoteScopes { get; init; }
         public string? TenantId { get; init; }
         public string? ServiceTreeId { get; init; }
+        public int? SecretLifetimeDays { get; init; }
         public string? IdpAuthUrl { get; init; }
         public string? IdpTokenUrl { get; init; }
         public string? IdpScopes { get; init; }
@@ -202,6 +204,7 @@ internal class RegisterCommandExecutor
         var remoteScopes = args.RemoteScopes;
         var userTenantId = args.TenantId;
         var serviceTreeId = args.ServiceTreeId;
+        var secretLifetimeDays = args.SecretLifetimeDays;
         var publisherName = args.PublisherName;
         var serverDescription = args.Description;
 
@@ -235,6 +238,7 @@ internal class RegisterCommandExecutor
                 remoteScopes ??= inputFileData.RemoteScopes;
                 userTenantId ??= inputFileData.TenantId;
                 serviceTreeId ??= inputFileData.ServiceTreeId;
+                secretLifetimeDays ??= inputFileData.SecretLifetimeDays;
                 publisherName ??= inputFileData.PublisherName;
                 serverDescription ??= inputFileData.Description;
 
@@ -295,6 +299,12 @@ internal class RegisterCommandExecutor
                 (parsedUri.Scheme != "https" && parsedUri.Scheme != "http"))
             {
                 _logger.LogError("Server URL '{ServerUrl}' is not a valid HTTP/HTTPS URL", serverUrl);
+                return null;
+            }
+
+            if (secretLifetimeDays is { } lifetime && (lifetime < 1 || lifetime > 730))
+            {
+                _logger.LogError("--secret-lifetime-days must be between 1 and 730 (Graph's maximum is ~2 years). Got: {Value}", lifetime);
                 return null;
             }
 
@@ -486,6 +496,7 @@ internal class RegisterCommandExecutor
             RemoteScopes = remoteScopes,
             TenantId = userTenantId,
             ServiceTreeId = serviceTreeId,
+            SecretLifetimeDays = secretLifetimeDays,
             IdpAuthUrl = idpAuthUrl,
             IdpTokenUrl = idpTokenUrl,
             IdpScopes = idpScopes,
@@ -520,6 +531,11 @@ internal class RegisterCommandExecutor
         if (!input.IsNoAuth && !input.IsApiKey && !string.IsNullOrWhiteSpace(input.RemoteScopes))
         {
             DevelopMcpCommand.WriteLabel("  Remote Scopes:  "); Console.WriteLine(input.RemoteScopes);
+        }
+
+        if (input.IsEntra && input.SecretLifetimeDays is { } lifetime)
+        {
+            DevelopMcpCommand.WriteLabel("  Secret Lifetime: "); Console.WriteLine($"{lifetime} day(s)");
         }
 
         if (input.IsExternalIdp)
@@ -578,7 +594,7 @@ internal class RegisterCommandExecutor
         }
         _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", a365AppName, a365App.Value.ClientId);
 
-        var a365Secret = await _graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId);
+        var a365Secret = await _graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId, lifetimeDays: input.SecretLifetimeDays);
         if (string.IsNullOrWhiteSpace(a365Secret))
         {
             _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", a365AppName);
@@ -608,7 +624,7 @@ internal class RegisterCommandExecutor
             }
             _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", remoteProxyAppName, remoteApp.Value.ClientId);
 
-            remoteProxySecret = await _graphApiService.AddAppPasswordAsync(tenantId, remoteApp.Value.ObjectId);
+            remoteProxySecret = await _graphApiService.AddAppPasswordAsync(tenantId, remoteApp.Value.ObjectId, lifetimeDays: input.SecretLifetimeDays);
             if (string.IsNullOrWhiteSpace(remoteProxySecret))
             {
                 _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", remoteProxyAppName);

@@ -2119,26 +2119,60 @@ public class GraphApiService
 
     /// <summary>
     /// Adds a password (client secret) to an Entra application.
+    /// When <paramref name="lifetimeDays"/> is null, Graph applies its default lifetime (~2 years).
+    /// When provided, an explicit endDateTime is sent so callers can fit within tenant
+    /// appManagementPolicies caps.
     /// </summary>
     public virtual async Task<string?> AddAppPasswordAsync(
-        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", CancellationToken ct = default)
+        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", int? lifetimeDays = null, CancellationToken ct = default)
     {
-        var payload = new
+        object payload;
+        if (lifetimeDays is { } days)
         {
-            passwordCredential = new
+            payload = new
             {
-                displayName,
-            },
-        };
-
-        using var doc = await GraphPostAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/addPassword", payload, ct);
-        if (doc == null)
+                passwordCredential = new
+                {
+                    displayName,
+                    endDateTime = DateTimeOffset.UtcNow.AddDays(days).ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+                },
+            };
+        }
+        else
         {
-            _logger.LogError("Failed to add password to application {ObjectId}", applicationObjectId);
+            payload = new { passwordCredential = new { displayName } };
+        }
+
+        var response = await GraphPostWithResponseAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/addPassword", payload, ct);
+
+        if (!response.IsSuccess)
+        {
+            using var _ = response.Json;
+            var errorMessage = TryExtractGraphErrorMessage(response.Body);
+            if (IsTenantSecretLifetimePolicyRejection(response.StatusCode, errorMessage))
+            {
+                var attempted = lifetimeDays is { } d
+                    ? $"the requested {d}-day lifetime"
+                    : "the Graph default (~2 years)";
+                _logger.LogError(
+                    "Tenant Entra ID policy rejected {Attempted} for the client secret on application {ObjectId}. Pass --secret-lifetime-days N with a smaller value (e.g. --secret-lifetime-days 90) that fits inside your tenant's appManagementPolicies cap. Graph response: {Error}",
+                    attempted,
+                    applicationObjectId,
+                    errorMessage ?? $"HTTP {response.StatusCode} {response.ReasonPhrase}");
+            }
+            else
+            {
+                _logger.LogError(
+                    "Failed to add password to application {ObjectId}: {Error}",
+                    applicationObjectId,
+                    errorMessage ?? $"HTTP {response.StatusCode} {response.ReasonPhrase}");
+            }
+
             return null;
         }
 
-        if (!doc.RootElement.TryGetProperty("secretText", out var secretTextElement))
+        using var doc = response.Json;
+        if (doc == null || !doc.RootElement.TryGetProperty("secretText", out var secretTextElement))
         {
             _logger.LogError("Graph response for application {ObjectId} did not contain secretText", applicationObjectId);
             return null;
@@ -2147,6 +2181,20 @@ public class GraphApiService
         var secretText = secretTextElement.GetString();
         _logger.LogDebug("Added password to application {ObjectId}", applicationObjectId);
         return secretText;
+    }
+
+    // Detects the Microsoft Graph error returned when a tenant's appManagementPolicies
+    // restrict the maximum lifetime of a client secret to a value shorter than the one requested.
+    // Graph returns HTTP 400/403 with an error message that mentions "lifetime" and/or "policy";
+    // there is no stable machine-readable error code for this case, so we match on the message text.
+    internal static bool IsTenantSecretLifetimePolicyRejection(int statusCode, string? errorMessage)
+    {
+        if (statusCode != 400 && statusCode != 403) return false;
+        if (string.IsNullOrWhiteSpace(errorMessage)) return false;
+        var msg = errorMessage;
+        return msg.Contains("lifetime", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("appManagementPolicy", StringComparison.OrdinalIgnoreCase)
+            || (msg.Contains("policy", StringComparison.OrdinalIgnoreCase) && msg.Contains("password", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

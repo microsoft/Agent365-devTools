@@ -850,6 +850,9 @@ public static class DevelopMcpCommand
         var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
         command.AddOption(serviceTreeIdOption);
 
+        var secretLifetimeDaysOption = new Option<int?>("--secret-lifetime-days", description: "Lifetime in days for generated client secrets on the created Entra apps. Omit to use the default (~2 years). Set a smaller value when the target tenant enforces an appManagementPolicies cap that the default exceeds.");
+        command.AddOption(secretLifetimeDaysOption);
+
         var publisherOption = new Option<string?>("--publisher", description: "Publisher name (required, used in MOS package metadata)");
         command.AddOption(publisherOption);
 
@@ -880,6 +883,7 @@ public static class DevelopMcpCommand
                 RemoteScopes: context.ParseResult.GetValueForOption(remoteScopesOption),
                 TenantId: context.ParseResult.GetValueForOption(tenantIdOption),
                 ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption),
+                SecretLifetimeDays: context.ParseResult.GetValueForOption(secretLifetimeDaysOption),
                 PublisherName: context.ParseResult.GetValueForOption(publisherOption),
                 Description: context.ParseResult.GetValueForOption(descriptionOption),
                 DryRun: context.ParseResult.GetValueForOption(dryRunOption));

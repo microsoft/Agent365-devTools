@@ -65,6 +65,14 @@ public class RegisterExternalMcpServerInput
     public string? ServiceTreeId { get; set; }
 
     /// <summary>
+    /// Lifetime (in days) of generated client secrets on the Entra apps created for this registration.
+    /// When null the Graph default (2 years) is used. Set a smaller value when the target tenant
+    /// enforces an appManagementPolicies cap that the default exceeds.
+    /// </summary>
+    [JsonPropertyName("secretLifetimeDays")]
+    public int? SecretLifetimeDays { get; set; }
+
+    /// <summary>
     /// External OAuth configuration (required when authType is ExternalOAuth)
     /// </summary>
     [JsonPropertyName("externalOAuth")]
