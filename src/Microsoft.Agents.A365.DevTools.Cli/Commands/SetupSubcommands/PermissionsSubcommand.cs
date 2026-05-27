@@ -138,20 +138,30 @@ internal static class PermissionsSubcommand
                 var dryRunAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(dryRunConfig.Environment);
                 if (removeLegacyScopes)
                 {
+                    // Source-of-truth: drive both the "Would CONFIGURE" and "Would REMOVE" sets
+                    // from the same GetScopesByAudienceAsync(excludeLegacyAtg: true) call that the
+                    // non-dry-run flow uses. The diff is computed per-scope (not per-audience) so
+                    // the ATG audience correctly shows McpServersMetadata.Read.All under CONFIGURE
+                    // and only the legacy McpServers.*.All scopes under REMOVE.
                     var allScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false, resolvedAtgAppId: dryRunAtgAppId);
-                    var remainingScopes = allScopes
-                        .Where(kvp => !string.Equals(kvp.Key, dryRunAtgAppId, StringComparison.OrdinalIgnoreCase))
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
-                    var removedAudiences = allScopes.Keys
-                        .Where(k => !remainingScopes.ContainsKey(k))
-                        .ToList();
+                    var remainingScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: true, resolvedAtgAppId: dryRunAtgAppId);
 
-                    if (removedAudiences.Count > 0)
+                    var removedByAudience = new SortedDictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (audience, scopes) in allScopes)
+                    {
+                        remainingScopes.TryGetValue(audience, out var kept);
+                        var keptSet = new HashSet<string>(kept ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+                        var dropped = scopes.Where(s => !keptSet.Contains(s)).ToArray();
+                        if (dropped.Length > 0)
+                            removedByAudience[audience] = dropped;
+                    }
+
+                    if (removedByAudience.Count > 0)
                     {
                         logger.LogInformation("Would REMOVE (--remove-legacy-scopes):");
-                        foreach (var audience in removedAudiences)
+                        foreach (var (audience, scopes) in removedByAudience)
                             logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
-                                audience, string.Join(", ", allScopes[audience]));
+                                audience, string.Join(", ", scopes));
                     }
 
                     logger.LogInformation("Would CONFIGURE:");
