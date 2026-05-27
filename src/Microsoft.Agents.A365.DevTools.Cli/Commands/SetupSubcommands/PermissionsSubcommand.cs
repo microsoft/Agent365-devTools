@@ -202,9 +202,11 @@ internal static class PermissionsSubcommand
             if (removeLegacyScopes)
             {
                 logger.LogWarning(
-                    "WARNING: --remove-legacy-scopes will permanently remove the shared ATG audience ({AtgAppId}) " +
-                    "from the agent blueprint. Any agent instances still using the old SDK will immediately lose " +
-                    "access to MCP tools. Ensure all agent instances have been upgraded to the new SDK before proceeding.",
+                    "WARNING: --remove-legacy-scopes will permanently remove the legacy per-server scopes that resolve " +
+                    "to the shared ATG audience ({AtgAppId}) from the agent blueprint. The Agent 365 Tools resource " +
+                    "itself remains with the required McpServersMetadata.Read.All scope. Any agent instances still using " +
+                    "the old SDK will immediately lose access to MCP tools. Ensure all agent instances have been upgraded " +
+                    "to the new SDK before proceeding.",
                     McpConstants.WorkIQToolsProdAppId);
 
                 var confirmed = await confirmationProvider.ConfirmAsync("Continue? [y/N]: ");

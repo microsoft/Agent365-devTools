@@ -282,8 +282,10 @@ public static class ManifestHelper
     /// </summary>
     /// <param name="manifestPath">Path to ToolingManifest.json</param>
     /// <param name="excludeLegacyAtg">
-    /// When true, omits all entries whose resolved audience is the shared ATG AppId.
-    /// Only pass true when V2 SDK is confirmed live (--remove-legacy-scopes flag).
+    /// When true, omits legacy per-server scopes whose resolved audience is the shared ATG AppId.
+    /// The ATG audience itself is still seeded with <c>McpServersMetadata.Read.All</c> because that
+    /// scope is required on the Agent 365 Tools resource regardless of SDK version — it is not a
+    /// legacy V1 scope. Only pass true when V2 SDK is confirmed live (--remove-legacy-scopes flag).
     /// </param>
     /// <param name="resolvedAtgAppId">
     /// Environment-resolved ATG resource app ID. Defaults to <see cref="McpConstants.WorkIQToolsProdAppId"/>
@@ -299,14 +301,13 @@ public static class ManifestHelper
         var atgAppId = resolvedAtgAppId ?? McpConstants.WorkIQToolsProdAppId;
         var scopesByAudience = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
-        // McpServersMetadata.Read.All is always required and belongs to the ATG AppId
-        if (!excludeLegacyAtg)
+        // McpServersMetadata.Read.All is always required on the ATG AppId — it is a scope on the
+        // Agent 365 Tools resource itself (used for tool discovery), not a legacy V1 MCP scope, so
+        // it is seeded unconditionally even when excludeLegacyAtg drops the other ATG-mapped scopes.
+        scopesByAudience[atgAppId] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            scopesByAudience[atgAppId] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "McpServersMetadata.Read.All"
-            };
-        }
+            "McpServersMetadata.Read.All"
+        };
 
         var parsed = await ReadManifestAsync(manifestPath);
         if (parsed is null)

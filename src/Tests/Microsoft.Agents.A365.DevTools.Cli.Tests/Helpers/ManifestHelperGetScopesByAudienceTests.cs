@@ -186,7 +186,7 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
     }
 
     [Fact]
-    public async Task MixedManifest_ExcludeLegacyAtg_RemovesAtgKey()
+    public async Task MixedManifest_ExcludeLegacyAtg_DropsLegacyAtgScopesButKeepsMetadataReadAll()
     {
         // Arrange
         var path = WriteManifest($$"""
@@ -209,8 +209,12 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
         // Act
         var result = await ManifestHelper.GetScopesByAudienceAsync(path, excludeLegacyAtg: true);
 
-        // Assert — ATG key gone, per-server key remains
-        Assert.False(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
+        // Assert — ATG key retained with only the always-required metadata read scope (legacy
+        // per-server scopes mapped to the ATG audience are dropped); per-server key still present
+        Assert.True(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
+        Assert.Equal(new[] { "McpServersMetadata.Read.All" }, result[McpConstants.WorkIQToolsProdAppId]);
+        Assert.DoesNotContain("McpServers.Mail.All", result[McpConstants.WorkIQToolsProdAppId]);
+
         Assert.True(result.ContainsKey("2cc60bb0-1024-48c8-95f0-1fce211a04d8"));
         Assert.Contains("Tools.ListInvoke.All", result["2cc60bb0-1024-48c8-95f0-1fce211a04d8"]);
     }
@@ -232,7 +236,7 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
     }
 
     [Fact]
-    public async Task ExcludeLegacyAtg_AllV1Entries_ReturnsEmptyDictionary()
+    public async Task ExcludeLegacyAtg_AllV1Entries_RetainsAtgWithOnlyMetadataReadAll()
     {
         // Arrange — all entries are V1 (ATG audience)
         var path = WriteManifest($$"""
@@ -250,7 +254,10 @@ public class ManifestHelperGetScopesByAudienceTests : IDisposable
         // Act
         var result = await ManifestHelper.GetScopesByAudienceAsync(path, excludeLegacyAtg: true);
 
-        // Assert — all entries excluded, empty result
-        Assert.Empty(result);
+        // Assert — legacy per-server ATG scopes excluded, but ATG audience still carries the
+        // always-required McpServersMetadata.Read.All (a scope on the Agent 365 Tools resource itself)
+        Assert.Single(result);
+        Assert.True(result.ContainsKey(McpConstants.WorkIQToolsProdAppId));
+        Assert.Equal(new[] { "McpServersMetadata.Read.All" }, result[McpConstants.WorkIQToolsProdAppId]);
     }
 }
