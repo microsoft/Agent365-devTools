@@ -1,6 +1,10 @@
 # Agent 365 CLI Setup Instructions for AI Agents
 
-> **SCOPE — THIS FILE ONLY:** This file covers provisioning and deploying an agent using the Agent 365 CLI (`a365 setup`, `a365 publish`, `a365 deploy`). It does **NOT** cover adding observability, telemetry, or SDK integrations to the agent's code. If the user asked to add observability, close this file and open `a365-observability-instructions.md` instead.
+> **SCOPE — THIS FILE ONLY:** This file covers provisioning and deploying an agent using the Agent 365 CLI (`a365 setup`, `a365 publish`, `a365 deploy`). It does **NOT** cover:
+> - adding observability, telemetry, or SDK integrations to the agent's code → use `a365-observability-instructions.md`
+> - evaluating an MCP server's tool schema quality (`a365 develop-mcp evaluate`) → use `a365-evaluate-instructions.md`
+>
+> If the user asked for either of those, close this file and open the matching one instead.
 
 ---
 
