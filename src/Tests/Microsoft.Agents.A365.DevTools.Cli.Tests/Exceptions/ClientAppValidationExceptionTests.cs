@@ -80,23 +80,23 @@ public class ClientAppValidationExceptionTests
     public void MissingPermissions_WithMultiplePermissions_ListsAllMissingPermissions()
     {
         // Arrange
-        var missingPermissions = new List<string> 
-        { 
-            "Application.ReadWrite.All", 
-            "Directory.Read.All",
-            "DelegatedPermissionGrant.ReadWrite.All"
+        var missingPermissions = new List<string>
+        {
+            "AgentIdentityBlueprint.ReadWrite.All",
+            "Application.Read.All",
+            "AgentRegistration.ReadWrite.All"
         };
 
         // Act
         var exception = ClientAppValidationException.MissingPermissions(TestClientAppId, missingPermissions);
 
         // Assert
-        exception.ErrorDetails[0].Should().Contain("Application.ReadWrite.All");
-        exception.ErrorDetails[0].Should().Contain("Directory.Read.All");
-        exception.ErrorDetails[0].Should().Contain("DelegatedPermissionGrant.ReadWrite.All");
-        exception.Context["missingPermissions"].Should().Contain("Application.ReadWrite.All");
-        exception.Context["missingPermissions"].Should().Contain("Directory.Read.All");
-        exception.Context["missingPermissions"].Should().Contain("DelegatedPermissionGrant.ReadWrite.All");
+        exception.ErrorDetails[0].Should().Contain("AgentIdentityBlueprint.ReadWrite.All");
+        exception.ErrorDetails[0].Should().Contain("Application.Read.All");
+        exception.ErrorDetails[0].Should().Contain("AgentRegistration.ReadWrite.All");
+        exception.Context["missingPermissions"].Should().Contain("AgentIdentityBlueprint.ReadWrite.All");
+        exception.Context["missingPermissions"].Should().Contain("Application.Read.All");
+        exception.Context["missingPermissions"].Should().Contain("AgentRegistration.ReadWrite.All");
     }
 
     [Fact]

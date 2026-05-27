@@ -85,7 +85,6 @@ internal class BlueprintCreationResult
 /// <summary>
 /// Blueprint subcommand - Creates agent blueprint (Entra ID application)
 /// Required Permissions: Agent ID Developer role
-/// COMPLETE IMPLEMENTATION of A365SetupRunner Phase 2 blueprint creation
 /// </summary>
 internal static class BlueprintSubcommand
 {
@@ -103,6 +102,9 @@ internal static class BlueprintSubcommand
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
         {
             new ClientAppRequirementCheck(clientAppValidator),
+            // Verify the wids optional claim too — its absence is what silently breaks GA role detection
+            // in the batch permissions orchestrator and leaves the blueprint with no granted scopes/roles.
+            new WidsOptionalClaimRequirementCheck(clientAppValidator),
         };
 
         return checks;
@@ -165,8 +167,15 @@ internal static class BlueprintSubcommand
 
         var m365Option = new Option<bool>(
             "--m365",
-            description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint " +
-                        "via MCP Platform. Default is false (opt-in); omit this flag for non-M365 agents.");
+            description: "Treat this agent as an M365 agent. Only affects --endpoint-only and --update-endpoint " +
+                        "on this command. To configure the messaging endpoint as part of full setup, use " +
+                        "'a365 setup all --m365'.");
+
+        var showSecretOption = new Option<bool>(
+            "--show-secret",
+            description: "Display the stored blueprint client secret in plaintext.\n" +
+                         "No setup steps are performed.\n" +
+                         "On Windows, requires the same machine and user account that ran setup.");
 
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
@@ -177,6 +186,7 @@ internal static class BlueprintSubcommand
         command.AddOption(updateEndpointOption);
         command.AddOption(skipRequirementsOption);
         command.AddOption(m365Option);
+        command.AddOption(showSecretOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -190,7 +200,70 @@ internal static class BlueprintSubcommand
             var updateEndpoint = context.ParseResult.GetValueForOption(updateEndpointOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
+            var showSecret = context.ParseResult.GetValueForOption(showSecretOption);
             var ct = context.GetCancellationToken();
+
+            // --show-secret: read-only local operation — reads generated config directly so it works
+            // even when a365.config.json is absent (e.g. retrieving from a different machine copy).
+            if (showSecret)
+            {
+                var generatedConfigPath = ConfigService.GetGeneratedConfigFilePath();
+
+                string? storedSecret = null;
+                bool storedIsProtected = false;
+
+                if (generatedConfigPath != null)
+                {
+                    try
+                    {
+                        var json = await File.ReadAllTextAsync(generatedConfigPath);
+                        var node = JsonNode.Parse(json)?.AsObject();
+                        storedSecret = node?["agentBlueprintClientSecret"]?.GetValue<string>();
+                        storedIsProtected = node?["agentBlueprintClientSecretProtected"]?.GetValue<bool>() ?? false;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(ex, "Could not read stored secret");
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(storedSecret))
+                {
+                    logger.LogError("No blueprint client secret found.");
+                    logger.LogInformation("");
+                    logger.LogInformation("To generate one, run:");
+                    logger.LogInformation("  a365 setup blueprint --agent-name <name>");
+                    logger.LogInformation("");
+                    logger.LogInformation("The secret is displayed at creation time.");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                var plaintext = Helpers.SecretProtectionHelper.UnprotectSecret(storedSecret, storedIsProtected, logger);
+
+                // If the secret was stored as DPAPI-protected but the result equals the input,
+                // decryption did not succeed (non-Windows host, different machine/user, or DPAPI error).
+                // Print an error rather than writing the encrypted blob to the terminal.
+                if (storedIsProtected && string.Equals(plaintext, storedSecret, StringComparison.Ordinal))
+                {
+                    logger.LogError("Cannot decrypt the stored blueprint client secret.");
+                    logger.LogInformation("");
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                        logger.LogInformation("The secret was encrypted for a different Windows user account or machine.");
+                    else
+                        logger.LogInformation("The secret was encrypted with Windows DPAPI and cannot be decrypted on this platform.");
+                    logger.LogInformation("To generate a new client secret, run:");
+                    logger.LogInformation("  a365 setup blueprint --agent-name <name>");
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                logger.LogInformation("");
+                Console.WriteLine($"  Blueprint client secret: {plaintext}");
+                logger.LogDebug("  Blueprint client secret: [displayed to terminal]");
+                logger.LogInformation("");
+                return;
+            }
 
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -289,6 +362,15 @@ internal static class BlueprintSubcommand
             }
 
             logger.LogInformation("Starting blueprint setup... (TraceId: {TraceId})", correlationId);
+
+            // --m365 only affects --endpoint-only / --update-endpoint paths. Surface a one-line note when the flag
+            // was passed in isolation so the user does not assume it triggered messaging endpoint registration.
+            if (isM365 && !endpointOnly && string.IsNullOrWhiteSpace(updateEndpoint))
+            {
+                logger.LogInformation(
+                    "Note: --m365 has no effect on 'setup blueprint' by itself. Use 'a365 setup all --m365' to register the messaging endpoint, " +
+                    "or 'a365 setup blueprint --endpoint-only --m365' after the blueprint exists.");
+            }
 
             // Handle --endpoint-only flag — only wired up for --m365 agents.
             if (endpointOnly)
@@ -588,6 +670,7 @@ internal static class BlueprintSubcommand
                     setupConfig,
                     configService,
                     logger,
+                    generatedConfigPath: generatedConfigPath,
                     loginHintResolver: loginHintResolver);
                 clientSecretManualActionRequired = !secretCreated;
             }
@@ -601,6 +684,7 @@ internal static class BlueprintSubcommand
                 setupConfig,
                 configService,
                 logger,
+                generatedConfigPath: generatedConfigPath,
                 loginHintResolver: loginHintResolver);
             clientSecretManualActionRequired = !secretCreated;
         }
@@ -665,7 +749,6 @@ internal static class BlueprintSubcommand
 
     /// <summary>
     /// Ensures AgentApplication.Create permission with retry logic
-    /// Used by: BlueprintSubcommand and A365SetupRunner Phase 2.1
     /// </summary>
     public static async Task<bool> EnsureDelegatedConsentWithRetriesAsync(
         DelegatedConsentService delegatedConsentService,
@@ -720,7 +803,7 @@ internal static class BlueprintSubcommand
         {
             logger.LogError(ex, "Error during delegated consent: {Message}", ex.Message);
             logger.LogError("Common causes:");
-            logger.LogError("  1. Insufficient permissions - You need Application.ReadWrite.All and DelegatedPermissionGrant.ReadWrite.All");
+            logger.LogError("  1. Insufficient permissions - You need AgentIdentityBlueprint.ReadWrite.All consented on your client app");
             logger.LogError("  2. Not a Global Administrator or similar privileged role");
             logger.LogError("  3. Azure CLI authentication expired - Run 'az login' and retry");
             logger.LogError("  4. Network connectivity issues");
@@ -732,7 +815,6 @@ internal static class BlueprintSubcommand
     /// Creates Agent Blueprint application using Graph API
     /// Implements displayName-first discovery for idempotency: always searches by displayName from a365.config.json (the source of truth).
     /// Cached objectIds are only used for dependent resources (FIC, etc.) after blueprint existence is confirmed.
-    /// Used by: BlueprintSubcommand and A365SetupRunner Phase 2.2
     /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted, graphPermissionsConfigured, graphInheritablePermissionsFailed, graphInheritablePermissionsError, ficConfigured, ficError, adminConsentUrl)
     /// </summary>
     public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError, bool ficConfigured, string? ficError, string? adminConsentUrl)> CreateAgentBlueprintAsync(
@@ -828,19 +910,33 @@ internal static class BlueprintSubcommand
                         // requires the SP to appear in a different replication index.
                         // Probe oauth2PermissionGrants directly: a 200 (even empty list) means the grants
                         // API can now see the SP's clientId and creation will succeed.
+                        //
+                        // When the caller lacks DelegatedPermissionGrant.Read.All the GET returns 403
+                        // permanently. Detect that and exit the retry loop instead of burning ~8 minutes
+                        // on a check that cannot ever succeed for this caller. The subsequent grants
+                        // POST will hit its own propagation/consent handling.
                         logger.LogInformation("Waiting for service principal to propagate in directory...");
+                        bool spAuthDenied = false;
                         var spPropagated = await spRetryHelper.ExecuteWithRetryAsync(
                             async token =>
                             {
+                                if (spAuthDenied) return true;
                                 using var checkResp = await spHttpClient.GetAsync(
                                     $"{Constants.GraphApiConstants.BaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{existingServicePrincipalId}'", token);
+                                if (checkResp.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                                {
+                                    spAuthDenied = true;
+                                    return true;
+                                }
                                 return checkResp.IsSuccessStatusCode;
                             },
                             result => !result,
                             maxRetries: 12,
                             baseDelaySeconds: 5,
                             ct);
-                        if (spPropagated)
+                        if (spAuthDenied)
+                            logger.LogDebug("Skipping SP propagation verification — caller lacks DelegatedPermissionGrant.Read.All. Subsequent operations will retry on their own if propagation is incomplete.");
+                        else if (spPropagated)
                             logger.LogDebug("Service principal propagated and verified");
                         else
                             logger.LogWarning("Service principal propagation check timed out — grants may fail");
@@ -897,6 +993,33 @@ internal static class BlueprintSubcommand
         // ========================================================================
         // Blueprint Creation: No existing blueprint found
         // ========================================================================
+        // The blueprint is the root of every dynamic identifier stored in
+        // a365.generated.config.json (agent identity, registration, SP IDs, client secret,
+        // resource consents, bot state, infra). Creating a new blueprint orphans every one
+        // of those fields by construction. Back up the existing generated config and reset
+        // both the on-disk file and the in-memory mirrors (Agent365Config + the JsonObject
+        // the caller will write blueprint identifiers into) so nothing downstream acts on
+        // stale state.
+        var generatedConfigPathForInvalidation = Path.Combine(
+            configFile.DirectoryName ?? Environment.CurrentDirectory,
+            "a365.generated.config.json");
+        var invalidationBackup = await configService.InvalidateGeneratedConfigAsync(
+            setupConfig,
+            reason: "newblueprint",
+            statePath: generatedConfigPathForInvalidation);
+        logger.LogDebug(
+            "Invalidating generated configuration before creating a new blueprint. Backup: {Backup}",
+            invalidationBackup ?? "(no prior file)");
+        // Clear the JsonObject the caller will mutate next. SaveStateAsync above has already
+        // persisted an empty file; the in-memory JsonObject was loaded earlier in the call
+        // chain and must be reset to match, otherwise the subsequent writes (e.g.
+        // generatedConfig["agentBlueprintId"] = ...) would re-introduce stale entries.
+        var jsonKeysToClear = generatedConfig.Select(kvp => kvp.Key).ToList();
+        foreach (var key in jsonKeysToClear)
+        {
+            generatedConfig.Remove(key);
+        }
+
         try
         {
             logger.LogInformation("Creating blueprint application...");
@@ -951,7 +1074,9 @@ internal static class BlueprintSubcommand
             // Explicit scopes — NOT .default. Using .default bundles all consented scopes including
             // AgentIdentityBlueprint.*, which Entra rejects for POST /v1.0/servicePrincipals
             // ("backing application must be in the local tenant").
-            // AgentIdentityBlueprintPrincipal.Create is the correct scope per Agent ID team (Kyle Marsh).
+            // AgentIdentityBlueprintPrincipal.Create is required for POST /v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal.
+            // AgentIdentityBlueprint.ReadWrite.All is the umbrella for blueprint app operations but does NOT cover
+            // blueprint SP creation — that is a separate resource requiring Principal.Create (confirmed Run 1, 2026-05-08).
             logger.LogDebug("Acquiring blueprint httpClient token — scope: AgentIdentityBlueprintPrincipal.Create, loginHint: {LoginHint}", blueprintLoginHint ?? "(none)");
             var graphToken = await AcquireMsalGraphTokenAsync(tenantId, setupConfig.ClientAppId, logger, ct,
                 scope: AuthenticationConstants.AgentIdentityBlueprintPrincipalCreateScope,
@@ -1100,20 +1225,73 @@ internal static class BlueprintSubcommand
                 }
             };
 
-            var patchResponse = await httpClient.PatchAsync(
-                patchAppUrl,
-                new StringContent(patchBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+            // PATCH /v1.0/applications/{id} for newly created blueprint apps frequently returns
+            // 404 Request_ResourceNotFound for several seconds after creation, even after the GET
+            // propagation check above succeeds — the write replica lags the read replica. Retry
+            // with backoff until the write replica catches up, otherwise we silently leave the
+            // blueprint without an identifier URI or the OBO scope.
+            var patchBodyJson = patchBody.ToJsonString();
+            var patchSucceeded = false;
+            string? lastPatchError = null;
+            await retryHelper.ExecuteWithRetryAsync(
+                async innerCt =>
+                {
+                    using var patchContent = new StringContent(patchBodyJson, System.Text.Encoding.UTF8, "application/json");
+                    using var patchResponse = await httpClient.PatchAsync(patchAppUrl, patchContent, innerCt);
+                    if (patchResponse.IsSuccessStatusCode)
+                    {
+                        patchSucceeded = true;
+                        lastPatchError = null;
+                        return true;
+                    }
+                    lastPatchError = await patchResponse.Content.ReadAsStringAsync(innerCt);
+
+                    // Only the read-replica-lag race is worth retrying: HTTP 404 with
+                    // Request_ResourceNotFound after a freshly created application. Any other
+                    // failure (400 invalid body, 403 missing permission, 5xx server error) is
+                    // unlikely to clear on its own and should fall through to the post-loop
+                    // SetupValidationException so the user sees the real error immediately
+                    // instead of waiting 10 * 3s of pointless retries.
+                    var isReplicaLag = patchResponse.StatusCode == System.Net.HttpStatusCode.NotFound
+                        && lastPatchError != null
+                        && lastPatchError.Contains("Request_ResourceNotFound", StringComparison.Ordinal);
+                    if (isReplicaLag)
+                    {
+                        logger.LogDebug("Identifier URI / scope PATCH attempt failed (404 Request_ResourceNotFound); waiting for write replica to catch up...");
+                        return false;
+                    }
+
+                    logger.LogDebug(
+                        "Identifier URI / scope PATCH failed with non-retryable status {Status}; aborting retry loop.",
+                        (int)patchResponse.StatusCode);
+                    // Returning a non-default success token signals 'don't retry'. The post-loop
+                    // 'if (!patchSucceeded)' branch will throw with lastPatchError.
+                    return true;
+                },
+                result => !result,
+                maxRetries: 10,
+                baseDelaySeconds: 3,
                 ct);
 
-            if (!patchResponse.IsSuccessStatusCode)
+            if (patchSucceeded)
             {
-                var patchError = await patchResponse.Content.ReadAsStringAsync(ct);
-                logger.LogDebug("Waiting for application propagation before setting identifier URI...");
-                logger.LogDebug("Identifier URI / scope update deferred (propagation delay): {Error}", patchError);
+                logger.LogDebug("Identifier URI set to {Uri}; {Scope} scope added", identifierUri, Constants.ConfigConstants.BlueprintOboScope);
             }
             else
             {
-                logger.LogDebug("Identifier URI set to {Uri}; {Scope} scope added", identifierUri, Constants.ConfigConstants.BlueprintOboScope);
+                // Blueprint without an identifier URI cannot perform on-behalf-of token exchange,
+                // so the agent will fail at runtime. Surface this as a hard error with a clear
+                // remediation step rather than continuing setup silently. The blueprint app object
+                // already exists, so re-running the setup command will retry the PATCH against a
+                // (by now) caught-up write replica.
+                logger.LogError("Identifier URI / scope update did not complete after retries: {Error}", lastPatchError);
+                throw new Exceptions.SetupValidationException(
+                    issueDescription: $"Blueprint application '{appId}' was created but the identifier URI / OBO scope PATCH did not complete after retries. The blueprint is incomplete and OBO token exchange will fail.",
+                    mitigationSteps: new List<string>
+                    {
+                        "Re-run: a365 setup blueprint --agent-name <name>",
+                        "If the failure repeats, wait a few minutes for Entra replication to settle and try again."
+                    });
             }
 
             // Create service principal
@@ -1137,27 +1315,47 @@ internal static class BlueprintSubcommand
             if (!string.IsNullOrWhiteSpace(servicePrincipalId))
             {
                 logger.LogDebug("Verifying blueprint service principal...");
+                // Probe oauth2PermissionGrants for the new SP — a 200 (even empty list) confirms
+                // the grants API replica has seen the SP and grants creation will succeed.
+                //
+                // When the caller lacks DelegatedPermissionGrant.Read.All the GET returns 403
+                // permanently. Detect that via GraphGetWithResponseAsync and exit the retry loop
+                // instead of burning ~8 minutes on a check that cannot succeed for this caller.
+                // Subsequent grants ops handle their own consistency.
+                bool propagationAuthDenied = false;
                 var spPropagated = await retryHelper.ExecuteWithRetryAsync(
                     async ct =>
                     {
-                        // Probe oauth2PermissionGrants via GraphApiService with explicit delegated
-                        // scopes (DelegatedPermissionGrant.ReadWrite.All). A non-null response —
-                        // even an empty list — confirms the SP's clientId is visible to the grants
-                        // API replication layer. Using the raw httpClient here (Application.ReadWrite.All
-                        // scope only) caused 403s on every probe, wasting 8+ minutes of retries.
-                        using var checkDoc = await graphApiService.GraphGetAsync(
+                        if (propagationAuthDenied) return true;
+                        var resp = await graphApiService.GraphGetWithResponseAsync(
                             setupConfig.TenantId!,
                             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{servicePrincipalId}'",
-                            ct,
-                            scopes: AuthenticationConstants.RequiredPermissionGrantScopes);
-                        return checkDoc != null;
+                            scopes: AuthenticationConstants.RequiredPermissionGrantScopes,
+                            ct: ct);
+                        try
+                        {
+                            if (resp.StatusCode == 403)
+                            {
+                                propagationAuthDenied = true;
+                                return true;
+                            }
+                            return resp.IsSuccess;
+                        }
+                        finally
+                        {
+                            resp.Json?.Dispose();
+                        }
                     },
                     result => !result,
                     maxRetries: 12,
                     baseDelaySeconds: 5,
                     ct);
 
-                if (spPropagated)
+                if (propagationAuthDenied)
+                {
+                    logger.LogDebug("Skipping SP propagation verification — caller lacks DelegatedPermissionGrant.Read.All. Subsequent operations will retry on their own if propagation is incomplete.");
+                }
+                else if (spPropagated)
                 {
                     logger.LogDebug("Service principal verified in directory");
                 }
@@ -1230,7 +1428,7 @@ internal static class BlueprintSubcommand
                 if (response.IsSuccessStatusCode) return false;
                 if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
                 {
-                    logger.LogDebug("SP creation returned 400 BadRequest — Entra appId index not yet replicated, retrying...");
+                    logger.LogDebug("SP creation returned 400 (Entra appId index not yet replicated) — retrying...");
                     return true;
                 }
                 if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
@@ -1242,7 +1440,7 @@ internal static class BlueprintSubcommand
                         && forbiddenRetries < maxForbiddenRetries)
                     {
                         forbiddenRetries++;
-                        logger.LogDebug("SP creation returned 403 Forbidden (replication lag, attempt {Attempt}/{Max}) — retrying...", forbiddenRetries, maxForbiddenRetries);
+                        logger.LogDebug("SP creation returned 403 (owner propagation lag, attempt {Attempt}/{Max}) — retrying...", forbiddenRetries, maxForbiddenRetries);
                         return true;
                     }
                 }
@@ -1321,9 +1519,9 @@ internal static class BlueprintSubcommand
                 objectId,
                 userObjectId: null,
                 ct,
-                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+                scopes: AuthenticationConstants.BlueprintOperationScopes);
 
-            if (isOwner)
+            if (isOwner == true)
             {
                 logger.LogDebug("Current user is confirmed as blueprint owner");
             }
@@ -1442,7 +1640,7 @@ internal static class BlueprintSubcommand
                 ficError = ficCreateResult?.ErrorMessage
                     ?? "Federated Identity Credential creation failed";
                 logger.LogWarning("[WARN] Federated Identity Credential creation failed - you may need to create it manually in Entra ID");
-                logger.LogWarning("  Ensure the client app has 'AgentIdentityBlueprint.UpdateAuthProperties.All' permission consented.");
+                logger.LogWarning("  Ensure the client app has 'AgentIdentityBlueprint.ReadWrite.All' permission consented.");
             }
         }
         else if (!useManagedIdentity)
@@ -1488,13 +1686,9 @@ internal static class BlueprintSubcommand
 
         generatedConfig["resourceConsents"] = resourceConsents;
 
-        if (!consentSuccess && !string.IsNullOrEmpty(consentUrlGraph))
-        {
-            logger.LogWarning("");
-            logger.LogWarning("Admin consent may not have been detected");
-            logger.LogWarning("The setup will continue, but you may need to grant consent manually.");
-            logger.LogWarning("Consent URL: {Url}", consentUrlGraph);
-        }
+        // Caller-side fallback warning removed — the inner consent function now emits a single
+        // self-contained message (with URL) in every failure path. Keeping it here would print
+        // the same URL a second time.
 
         // Track Graph permissions status - this is critical for agent token exchange
         bool graphPermissionsFailed = !graphInheritablePermissionsConfigured;
@@ -1518,7 +1712,7 @@ internal static class BlueprintSubcommand
         {
             using var appDoc = await graphApiService.GraphGetAsync(
                 tenantId, $"/v1.0/applications/{objectId}?$select=api", ct,
-                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+                scopes: AuthenticationConstants.BlueprintOperationScopes);
 
             var existingScopes = new JsonArray();
 
@@ -1560,9 +1754,17 @@ internal static class BlueprintSubcommand
                 }
             };
 
-            var patched = await graphApiService.GraphPatchAsync(
-                tenantId, $"/v1.0/applications/{objectId}", patch, ct,
-                scopes: AuthenticationConstants.RequiredClientAppPermissions);
+            // Retry on transient PATCH failure: write replica may lag the read replica for newly
+            // created blueprint apps. See note in BlueprintSubcommand.CreateBlueprintAsync.
+            var retryHelper = new RetryHelper(logger);
+            var patched = await retryHelper.ExecuteWithRetryAsync(
+                async innerCt => await graphApiService.GraphPatchAsync(
+                    tenantId, $"/v1.0/applications/{objectId}", patch, innerCt,
+                    scopes: AuthenticationConstants.BlueprintOperationScopes),
+                result => !result,
+                maxRetries: 2,
+                baseDelaySeconds: 2,
+                ct);
 
             if (patched)
                 logger.LogInformation("{Scope} scope added to blueprint", ConfigConstants.BlueprintOboScope);
@@ -1740,11 +1942,10 @@ internal static class BlueprintSubcommand
         var adminCheck = await graphApiService.IsCurrentUserAdminAsync(tenantId, ct);
         if (adminCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
-            logger.LogWarning("Admin consent is required but the current user does not have the Global Administrator role.");
-            logger.LogWarning("Ask a tenant administrator to complete the following:");
-            logger.LogWarning("");
-            logger.LogWarning("  1. Grant admin consent for the agent blueprint:");
-            logger.LogWarning("     {ConsentUrl}", consentUrlGraph);
+            logger.LogWarning("Tenant-wide admin consent is needed for the agent blueprint's delegated scopes (per-blueprint).");
+            logger.LogWarning("  Reason: the blueprint's API permissions require tenant-wide consent, which only an admin can grant.");
+            logger.LogWarning("  Ask a tenant administrator to open this URL to grant consent:");
+            logger.LogWarning("    {ConsentUrl}", consentUrlGraph);
 
             return (false, consentUrlGraph, false, null);
         }
@@ -1761,26 +1962,23 @@ internal static class BlueprintSubcommand
         logger.LogInformation("If the browser does not open automatically, navigate to this URL to grant consent: {ConsentUrl}", consentUrlGraph);
         BrowserHelper.TryOpenUrl(consentUrlGraph, logger);
 
-        bool consentSuccess;
-        if (!string.IsNullOrWhiteSpace(blueprintSpId))
-        {
-            consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(
-                graphApiService, logger, tenantId, blueprintSpId,
-                "Graph API Scopes", 180, 5, ct);
-        }
-        else
-        {
-            logger.LogDebug("Could not resolve blueprint service principal. Falling back to az rest polling.");
-            consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, appId, "Graph API Scopes", 180, 5, ct);
-        }
-
+        // Poll via az rest. The Graph overload of PollAdminConsentAsync cannot reliably read
+        // /oauth2PermissionGrants with the CLI's delegated token (DelegatedPermissionGrant.Read.All
+        // was removed from the CLI client app in PR #409), so it timed out into AssumedComplete on
+        // every successful consent — printing a misleading "continuing without auto-verification"
+        // hint even when the grant had actually landed. The az rest path uses the Azure CLI's GA
+        // directory-role access to read grants directly, matching the pattern used by
+        // BatchPermissionsOrchestrator's pre-check and post-consent polling.
+        var consentSuccess = await AdminConsentHelper.PollAdminConsentAsync(
+            executor, logger, appId, "Graph API Scopes", 180, 5, ct);
         if (consentSuccess)
         {
             logger.LogInformation("Graph API admin consent granted successfully!");
         }
         else
         {
-            logger.LogWarning("Graph API admin consent may not have completed");
+            logger.LogWarning("Graph API admin consent may not have completed.");
+            logger.LogWarning("  Open this URL to grant consent manually: {ConsentUrl}", consentUrlGraph);
         }
 
         // Configure Graph inheritable permissions regardless of admin consent outcome.
@@ -1935,8 +2133,7 @@ internal static class BlueprintSubcommand
 
 
     /// <summary>
-    /// Creates client secret for Agent Blueprint (Phase 2.5)
-    /// Used by: BlueprintSubcommand and A365SetupRunner
+    /// Creates a client secret for the Agent Blueprint application.
     /// </summary>
     /// <returns>True if the secret was created successfully; false if it failed and manual action is required.</returns>
     public static async Task<bool> CreateBlueprintClientSecretAsync(
@@ -1946,14 +2143,31 @@ internal static class BlueprintSubcommand
         Models.Agent365Config setupConfig,
         IConfigService configService,
         ILogger logger,
-        CancellationToken ct = default,
-        Func<Task<string?>>? loginHintResolver = null)
+        string generatedConfigPath,
+        Func<Task<string?>>? loginHintResolver = null,
+        CancellationToken ct = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(generatedConfigPath);
         logger.LogInformation("");
         logger.LogInformation("Creating blueprint client secret...");
         using var clientSecretScope = logger.Indent();
         try
         {
+            // Check ownership before attempting creation — warn early if the current user is not an
+            // owner so they know why the POST /addPassword will return 403 Authorization_RequestDenied.
+            if (!string.IsNullOrWhiteSpace(setupConfig.TenantId) && !string.IsNullOrWhiteSpace(blueprintObjectId))
+            {
+                var isOwner = await graphService.IsApplicationOwnerAsync(
+                    setupConfig.TenantId, blueprintObjectId, ct: ct,
+                    scopes: AuthenticationConstants.BlueprintOperationScopes);
+                if (isOwner == false)
+                {
+                    logger.LogWarning("You are not an owner of this blueprint. Client secret creation will fail.");
+                    logger.LogWarning("Ask a blueprint owner to run setup, or add yourself as an owner first:");
+                    logger.LogWarning("  https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Overview/appId/{AppId}", blueprintAppId);
+                }
+            }
+
             // Resolve login hint so WAM targets the az-logged-in user, not the OS default account.
             // Without this, WAM may return a cached token for a different user who is not the owner.
             var loginHint = loginHintResolver != null
@@ -2038,26 +2252,30 @@ internal static class BlueprintSubcommand
                 throw new InvalidOperationException("Client secret creation returned empty secret");
             }
 
-            var protectedSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.ProtectSecret(secretTextNode.GetValue<string>(), logger);
+            var secretText = secretTextNode.GetValue<string>(); // lgtm[cs/cleartext-storage-of-sensitive-information] - immediately protected by ProtectSecret below
+            var protectedSecret = Microsoft.Agents.A365.DevTools.Cli.Helpers.SecretProtectionHelper.ProtectSecret(secretText, logger);
 
             var isProtected = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             setupConfig.AgentBlueprintClientSecret = protectedSecret;
             setupConfig.AgentBlueprintClientSecretProtected = isProtected;
 
-            // Single consolidated save: persists blueprint identifiers (objectId, servicePrincipalId, appId) + client secret
-            // This ensures all blueprint-related state is saved atomically
-            await configService.SaveStateAsync(setupConfig);
+            // Save to the explicit path so the write always lands in the same file that the
+            // generatedConfig JsonObject write above targeted - prevents a path divergence on
+            // macOS where Environment.CurrentDirectory (getcwd, symlink-resolved) can differ
+            // from config.DirectoryName (unresolved) when a symlink is in the path.
+            await configService.SaveStateAsync(setupConfig, generatedConfigPath);
 
             logger.LogInformation("Client secret created successfully!");
-            logger.LogInformation($"  - Secret stored in generated config (encrypted: {isProtected})");
-            logger.LogWarning("IMPORTANT: The client secret has been stored in a365.generated.config.json");
-            logger.LogWarning("Keep this file secure and do not commit it to source control!");
-
-            if (!isProtected)
-            {
-                logger.LogWarning("WARNING: Secret encryption is only available on Windows. The secret is stored in plaintext.");
-                logger.LogWarning("Consider using environment variables or Azure Key Vault for production deployments.");
-            }
+            logger.LogInformation("");
+            Console.WriteLine($"  Blueprint client secret: {secretText}");
+            logger.LogDebug("  Blueprint client secret: [displayed to terminal]");
+            logger.LogWarning("Copy this value now — it will not be shown again automatically.");
+            if (isProtected)
+                logger.LogWarning("To retrieve it later, run 'a365 setup blueprint --show-secret' from the same folder, Windows machine, and user account.");
+            else
+                logger.LogWarning("To retrieve it later, run 'a365 setup blueprint --show-secret' from the same folder.");
+            logger.LogInformation("");
+            logger.LogWarning("Keep your credentials secure and do not commit them to source control!");
 
             return true;
         }

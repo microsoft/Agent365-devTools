@@ -95,6 +95,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Read-only pre-flight: collect what redirect URIs and public client settings need fixing
             var missingRedirectUris = await CollectMissingRedirectUrisAsync(clientAppId, tenantId, ct);
             var publicClientNeedsEnabling = await IsPublicClientFlowsDisabledAsync(clientAppId, tenantId, ct);
+            var widsClaimMissing = await IsWidsOptionalClaimMissingAsync(clientAppId, tenantId, ct);
 
             // Check whether the existing consent grant is per-user (Principal) rather than tenant-wide (AllPrincipals).
             // A Principal grant only covers the specific admin who first consented; other users (e.g. developers
@@ -105,16 +106,51 @@ public sealed class ClientAppValidator : IClientAppValidator
             bool hasMissingPermissions = missingPermissions.Count > 0;
             bool hasMissingRedirectUris = missingRedirectUris.Count > 0;
             bool needsPublicClientEnabled = publicClientNeedsEnabling;
-            bool hasPendingMutations = hasMissingPermissions || hasMissingRedirectUris || needsPublicClientEnabled || needsConsentUpgrade;
+            bool needsWidsClaim = widsClaimMissing;
+            bool hasPendingMutations = hasMissingPermissions || hasMissingRedirectUris || needsPublicClientEnabled || needsConsentUpgrade || needsWidsClaim;
 
             // Prompt the user before making any changes (unless skipConfirmation or no confirmation provider)
             bool applyFixes = true;
+            // True when admin status was confirmed by successfully PATCHing the wids optional claim
+            // (the Unknown-path probe). We then short-circuit the wids fix later — already applied.
+            bool widsAlreadyApplied = false;
             if (hasPendingMutations && _confirmationProvider != null && !skipConfirmation)
             {
-                // Check if the user has admin privileges before offering to make changes.
-                // Non-admin users cannot modify app registrations — skip the prompt and fail immediately
-                // with actionable guidance including the admin consent URL.
-                var (isAdmin, _) = await _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(tenantId, ct);
+                // Determine the signed-in user's directory role via the wids claim on the MSAL token.
+                // Branches:
+                //   HasRole          → existing prompt + apply-fixes path.
+                //   DoesNotHaveRole  → existing non-admin guidance.
+                //   Unknown          → wids isn't on the token yet. Skip the prompt and use the wids
+                //                      PATCH itself as the admin probe (an admin succeeds with 2xx;
+                //                      a non-admin fails with 403/Authorization_RequestDenied).
+                //                      Anything else surfaces as the real error.
+                var roleCheck = await _graphApiService.IsCurrentUserAdminAsync(tenantId, ct);
+
+                if (roleCheck == Models.RoleCheckResult.Unknown && needsWidsClaim)
+                {
+                    _logger.LogInformation("Cannot determine admin role from the access token (the 'wids' optional claim is missing). Attempting the wids fix as an admin probe — a successful PATCH confirms admin authority; a 403 reveals non-admin.");
+                    var probe = await TryProbeAdminViaWidsPatchAsync(clientAppId, tenantId, ct);
+                    if (probe == ProbeResult.Admin)
+                    {
+                        widsAlreadyApplied = true;
+                        // The PATCH that just succeeded invalidates the cached access token (it
+                        // lacks the new wids claim). Cache clear is performed inside the patch helper
+                        // (see EnsureWidsOptionalClaimAsync). Subsequent calls re-acquire silently
+                        // via WAM/refresh-token and receive tokens that carry wids.
+                    }
+                    else
+                    {
+                        // Both NotAdmin and Inconclusive fall through to the existing non-admin guidance.
+                        // Inconclusive means a transient error during the probe — converting that to a
+                        // hard ClientAppValidationException turns a network blip into a worse failure
+                        // than the baseline Unknown path, with no actionable hint for the operator.
+                        // Routing both to the non-admin branch surfaces the standard 3-option guidance
+                        // (run as GA / portal / consent URL), which is correct for either case.
+                        roleCheck = Models.RoleCheckResult.DoesNotHaveRole;
+                    }
+                }
+
+                bool isAdmin = roleCheck == Models.RoleCheckResult.HasRole || widsAlreadyApplied;
                 if (!isAdmin)
                 {
                     _logger.LogDebug("User does not have admin privileges to modify app registration — skipping auto-provision prompt");
@@ -125,16 +161,26 @@ public sealed class ClientAppValidator : IClientAppValidator
                         missingDetails.Add($"Missing redirect URIs: {string.Join(", ", missingRedirectUris)}");
                     if (needsPublicClientEnabled)
                         missingDetails.Add("Public client flows ('Allow public client flows') must be enabled");
+                    if (needsConsentUpgrade)
+                        missingDetails.Add("OAuth2 consent grant must be upgraded from per-user (Principal) to tenant-wide (AllPrincipals)");
+                    if (needsWidsClaim)
+                        missingDetails.Add("'wids' optional claim missing on access tokens — without it, role detection always returns Unknown and the AllPrincipals grant phase silently skips, leaving the agent blueprint with no permissions granted on its service principal");
                     var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
                     var steps = new List<string>
                     {
                         "Next Steps — Global Administrator action required:",
-                        "  Option 1 — Run the CLI as a Global Administrator:",
-                        "    a365 setup requirements"
+                        "  Option 1 (recommended) — Have a Global Administrator run the CLI:",
+                        "    a365 setup requirements",
+                        "    (This is the only path that fixes the 'wids' optional claim. The consent URL below does NOT add 'wids'.)"
                     };
-                    if (consentUrl != null)
+                    if (needsWidsClaim)
                     {
-                        steps.Add("  Option 2 — Share this consent URL with your Global Administrator:");
+                        steps.Add("  Option 2 — Have a Global Administrator add 'wids' manually in the Azure portal:");
+                        steps.Add($"    App registrations > <Agent 365 CLI app> > Token configuration > Add optional claim > Access > wids");
+                    }
+                    if (consentUrl != null && (hasMissingPermissions || needsConsentUpgrade))
+                    {
+                        steps.Add("  Option 3 — Share this consent URL with your Global Administrator (covers permissions/consent grant only, NOT 'wids'):");
                         steps.Add($"    {consentUrl}");
                     }
                     throw new ClientAppValidationException(
@@ -165,10 +211,27 @@ public sealed class ClientAppValidator : IClientAppValidator
                 }
                 if (needsPublicClientEnabled)
                     _logger.LogInformation("  - Enable 'Allow public client flows' (required for device code fallback)");
+                if (needsWidsClaim)
+                {
+                    _logger.LogInformation("  - Add 'wids' optional claim to access tokens");
+                    _logger.LogInformation("    (Without this, the CLI cannot detect Global Administrator role and silently skips AllPrincipals OAuth2 grants on the blueprint SP — agents created from the blueprint inherit no permissions.)");
+                }
                 _logger.LogInformation("For more information: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/custom-client-app-registration");
                 _logger.LogInformation("");
 
-                applyFixes = await _confirmationProvider.ConfirmAsync("Do you want to proceed? (y/N): ");
+                // Skip the prompt when the Unknown-probe path already proved admin authority by
+                // landing the wids PATCH (per H8 of the design). The probe IS the confirmation:
+                // an admin's PATCH succeeded; a non-admin would have already been routed to the
+                // non-admin error above. Prompting again would be redundant and confuses the
+                // workflow (the mutation is already partially applied).
+                if (widsAlreadyApplied)
+                {
+                    applyFixes = true;
+                }
+                else
+                {
+                    applyFixes = await _confirmationProvider.ConfirmAsync("Do you want to proceed? (y/N): ");
+                }
                 if (!applyFixes)
                 {
                     _logger.LogInformation("App registration was not modified. Re-run and accept the prompt, or configure manually.");
@@ -236,6 +299,15 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Step 6: Verify and fix public client flows (required for device code fallback)
             if (applyFixes)
                 await EnsurePublicClientFlowsEnabledAsync(clientAppId, tenantId, ct);
+
+            // Step 7: Verify and fix the 'wids' optional claim on access tokens.
+            // Required so the CLI can read the signed-in user's directory roles from the token
+            // (instead of returning Unknown, which causes the orchestrator to silently skip the
+            // AllPrincipals OAuth2 grant phase — leaving the blueprint with inheritable=allAllowed
+            // configured but no permissions actually granted on the blueprint SP).
+            // Skipped when widsAlreadyApplied — the Unknown-probe path above already PATCHed it.
+            if (applyFixes && needsWidsClaim && !widsAlreadyApplied)
+                await EnsureWidsOptionalClaimAsync(clientAppId, tenantId, ct);
 
             _logger.LogDebug("Client app validation successful for {ClientAppId}", clientAppId);
         }
@@ -358,6 +430,149 @@ public sealed class ClientAppValidator : IClientAppValidator
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error ensuring redirect URIs (non-fatal)");
+        }
+    }
+
+    /// <summary>
+    /// Ensures the client app's <c>optionalClaims.accessToken</c> includes the <c>wids</c> claim.
+    /// Preserves any existing optional claims and appends <c>wids</c> when absent. Without this
+    /// claim on the access token, role detection (<see cref="GraphApiService.IsCurrentUserAdminAsync"/>)
+    /// always returns <c>Unknown</c> and the AllPrincipals grant phase of the permissions orchestrator
+    /// is silently skipped — the symptom the user sees is "blueprint has inheritable=allAllowed but
+    /// no permissions granted on the blueprint SP".
+    /// </summary>
+    private async Task EnsureWidsOptionalClaimAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            _logger.LogDebug("Checking 'wids' optional claim for client app {ClientAppId}", clientAppId);
+
+            var (hasWids, objectId, existingClaims) = await ReadWidsOptionalClaimStateAsync(clientAppId, tenantId, ct);
+
+            if (string.IsNullOrWhiteSpace(objectId))
+            {
+                _logger.LogWarning("Could not get application object ID for 'wids' optional claim update");
+                return;
+            }
+
+            if (hasWids)
+            {
+                _logger.LogDebug("'wids' optional claim is already present on accessToken");
+                return;
+            }
+
+            // Build the merged accessToken claims array: any existing claims + wids. PATCH replaces
+            // the entire optionalClaims object, so preserve idToken / saml2Token entries too.
+            var existingAccessTokenClaims = existingClaims?["accessToken"]?.AsArray();
+            var mergedAccessToken = new JsonArray();
+            if (existingAccessTokenClaims != null)
+            {
+                foreach (var claimNode in existingAccessTokenClaims)
+                {
+                    if (claimNode == null) continue;
+                    mergedAccessToken.Add(JsonNode.Parse(claimNode.ToJsonString())!);
+                }
+            }
+            mergedAccessToken.Add(new JsonObject
+            {
+                ["name"] = "wids",
+                ["essential"] = false,
+                ["additionalProperties"] = new JsonArray()
+            });
+
+            var idTokenClaims = existingClaims?["idToken"]?.AsArray();
+            var saml2TokenClaims = existingClaims?["saml2Token"]?.AsArray();
+
+            var patchPayload = new JsonObject
+            {
+                ["optionalClaims"] = new JsonObject
+                {
+                    ["accessToken"] = mergedAccessToken,
+                    ["idToken"] = idTokenClaims != null
+                        ? JsonNode.Parse(idTokenClaims.ToJsonString())!
+                        : new JsonArray(),
+                    ["saml2Token"] = saml2TokenClaims != null
+                        ? JsonNode.Parse(saml2TokenClaims.ToJsonString())!
+                        : new JsonArray()
+                }
+            };
+
+            _logger.LogInformation(
+                "Adding 'wids' optional claim to the access token on app registration " +
+                "(required so the CLI can detect Global Administrator role and apply tenant-wide consent grants).");
+            _logger.LogInformation("Re-run 'a365 setup requirements' at any time to re-verify this setting.");
+
+            var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
+                $"/v1.0/applications/{objectId}",
+                patchPayload,
+                ct);
+
+            if (!patchSuccess)
+            {
+                _logger.LogWarning("Failed to add 'wids' optional claim. Role detection will return Unknown and AllPrincipals grants may be silently skipped. " +
+                    "Add it manually via Azure portal: App registrations > {ClientAppId} > Token configuration > Add optional claim > Access > wids.", clientAppId);
+                return;
+            }
+
+            _logger.LogInformation("Successfully added 'wids' optional claim to app registration. New tokens issued for this client will include the claim.");
+
+            // The cached access token still lacks 'wids'. Clear the persistent MSAL token cache so
+            // the next acquisition (silent via WAM / refresh-token) issues a fresh token that
+            // carries the new claim. Subsequent role checks in this same process will then return
+            // HasRole instead of Unknown.
+            await _graphApiService.ClearTokenCacheAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Error ensuring 'wids' optional claim is configured (non-fatal)");
+        }
+    }
+
+    /// <summary>
+    /// Outcome of the wids-PATCH admin probe used when the wids optional claim isn't yet on the
+    /// access token (role detection returns Unknown). The probe IS the wids fix — on success the
+    /// app is mutated; on 403 we learn the caller isn't admin without changing anything.
+    /// </summary>
+    private enum ProbeResult { Admin, NotAdmin, Inconclusive }
+
+    /// <summary>
+    /// Attempts to add the 'wids' optional claim and reports admin authority based on the result.
+    /// Used only when <see cref="GraphApiService.IsCurrentUserAdminAsync"/> returns Unknown — i.e.
+    /// the token can't tell us the role because wids isn't configured yet. A successful PATCH
+    /// implies admin (Application.ReadWrite-scope-on-app via directory role); a 403 with
+    /// <c>Authorization_RequestDenied</c> implies non-admin; anything else is inconclusive.
+    /// </summary>
+    private async Task<ProbeResult> TryProbeAdminViaWidsPatchAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct)
+    {
+        try
+        {
+            await EnsureWidsOptionalClaimAsync(clientAppId, tenantId, ct);
+
+            // EnsureWidsOptionalClaimAsync logs but doesn't propagate the HTTP outcome.
+            // Re-read the app's optionalClaims to determine whether the PATCH actually landed.
+            var stillMissing = await IsWidsOptionalClaimMissingAsync(clientAppId, tenantId, ct);
+            if (!stillMissing)
+            {
+                _logger.LogInformation("Admin authority confirmed via wids PATCH probe (claim now present on app).");
+                return ProbeResult.Admin;
+            }
+
+            // Wids still missing after the attempt — most commonly Authorization_RequestDenied
+            // (caller lacks directory-role write authority on the app). Treat as non-admin so the
+            // existing non-admin error surface runs with full guidance.
+            _logger.LogInformation("Admin authority NOT confirmed: wids PATCH did not land. Treating caller as non-admin.");
+            return ProbeResult.NotAdmin;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "wids PATCH probe failed with an unexpected error — admin status is inconclusive: {Message}", ex.Message);
+            return ProbeResult.Inconclusive;
         }
     }
 
@@ -687,6 +902,19 @@ public sealed class ClientAppValidator : IClientAppValidator
         CancellationToken ct = default)
         => TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
 
+    /// <inheritdoc />
+    public async Task<bool> HasWidsAccessTokenOptionalClaimAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+        var (hasWids, _, _) = await ReadWidsOptionalClaimStateAsync(clientAppId, tenantId, ct);
+        return hasWids;
+    }
+
 
     /// <summary>
     /// Read-only check: returns the redirect URIs that are missing from the app registration
@@ -758,6 +986,68 @@ public sealed class ClientAppValidator : IClientAppValidator
             _logger.LogDebug("IsPublicClientFlowsDisabledAsync failed — assuming public client flows need enabling: {Message}", ex.Message);
             return true;
         }
+    }
+
+    /// <summary>
+    /// Single source of truth for reading the client app's optionalClaims state — used by every
+    /// wids-related callsite. Returns <c>HasWids</c> (whether <c>wids</c> appears under
+    /// <c>optionalClaims.accessToken</c>), <c>ObjectId</c> (the application object ID, needed for
+    /// PATCH callers), and the raw <c>OptionalClaims</c> JsonObject (also for PATCH callers that
+    /// need to preserve <c>idToken</c>/<c>saml2Token</c> entries). On any failure all three return
+    /// values are null/false — callers decide how to surface that (most fail-closed and assume wids
+    /// is missing so the standard guidance fires).
+    /// </summary>
+    private async Task<(bool HasWids, string? ObjectId, JsonObject? OptionalClaims)> ReadWidsOptionalClaimStateAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,optionalClaims", ct);
+
+            if (appDoc == null) return (false, null, null);
+
+            var response = JsonNode.Parse(appDoc.RootElement.GetRawText());
+            var apps = response?["value"]?.AsArray();
+            if (apps == null || apps.Count == 0) return (false, null, null);
+
+            var app = apps[0]!.AsObject();
+            var objectId = app["id"]?.GetValue<string>();
+            var optionalClaims = app["optionalClaims"]?.AsObject();
+            var accessTokenClaims = optionalClaims?["accessToken"]?.AsArray();
+
+            if (accessTokenClaims == null)
+                return (false, objectId, optionalClaims);
+
+            foreach (var claimNode in accessTokenClaims)
+            {
+                var name = claimNode?["name"]?.GetValue<string>();
+                if (string.Equals(name, "wids", StringComparison.OrdinalIgnoreCase))
+                    return (true, objectId, optionalClaims);
+            }
+            return (false, objectId, optionalClaims);
+        }
+        catch (Exception ex)
+        {
+            // Fail closed: callers assume wids is missing so the standard guidance fires.
+            _logger.LogDebug("ReadWidsOptionalClaimStateAsync failed: {Message}", ex.Message);
+            return (false, null, null);
+        }
+    }
+
+    /// <summary>
+    /// Read-only check: returns true when the client app's <c>optionalClaims.accessToken</c> does
+    /// not include the <c>wids</c> claim. Thin wrapper over <see cref="ReadWidsOptionalClaimStateAsync"/>.
+    /// </summary>
+    private async Task<bool> IsWidsOptionalClaimMissingAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct)
+    {
+        var (hasWids, _, _) = await ReadWidsOptionalClaimStateAsync(clientAppId, tenantId, ct);
+        return !hasWids;
     }
 
     /// <summary>
@@ -1090,13 +1380,26 @@ public sealed class ClientAppValidator : IClientAppValidator
                 return consentedPermissions;
             }
 
-            // Get oauth2PermissionGrants
-            using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+            // Get oauth2PermissionGrants. When the caller lacks DelegatedPermissionGrant.Read.All
+            // the GET returns 403 permanently — fail-open and assume all required permissions
+            // are consented rather than reporting an empty set (which would trigger a false
+            // "permissions not consented" prompt for non-admin developers who can never read
+            // the grants table by design).
+            var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
+            using var grantsDoc = grantsResp.Json;
+
+            if (grantsResp.StatusCode == 403)
+            {
+                _logger.LogDebug("Cannot read oauth2PermissionGrants (caller lacks DelegatedPermissionGrant.Read.All). Treating all required permissions as consented to avoid false prompts. Real consent failures will surface from downstream operations.");
+                foreach (var p in AuthenticationConstants.RequiredClientAppPermissions)
+                    consentedPermissions.Add(p);
+                return consentedPermissions;
+            }
 
             if (grantsDoc == null)
             {
-                _logger.LogDebug("Could not query oauth2PermissionGrants");
+                _logger.LogDebug("Could not query oauth2PermissionGrants (status: {Status})", grantsResp.StatusCode);
                 return consentedPermissions;
             }
 
@@ -1166,25 +1469,34 @@ public sealed class ClientAppValidator : IClientAppValidator
             return true; // Best-effort check
         }
 
-        // Check OAuth2 permission grants
-        using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+        // Check OAuth2 permission grants. Use GraphGetWithResponseAsync so we can distinguish
+        // "caller lacks DelegatedPermissionGrant.Read.All" (403) from other failure modes
+        // (token acquisition, network, 5xx) — the user-facing message differs and lumping them
+        // together would either misattribute the cause or hide real failures.
+        var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
+            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
+        using var grantsDoc = grantsResp.Json;
+
+        if (grantsResp.StatusCode == 403)
+        {
+            // The grants-read 403 only signals the caller lacks DelegatedPermissionGrant.Read.All —
+            // it tells us nothing about whether tenant-wide consent is actually granted. Don't
+            // emit a user-visible warning here: it would be a false positive on every developer
+            // run (developers don't have that scope by design). Real consent failures surface
+            // with actionable errors from the operations that need them.
+            _logger.LogDebug("Skipping tenant-wide consent verification — caller lacks DelegatedPermissionGrant.Read.All. Downstream operations will surface any actual consent issues.");
+            return true;
+        }
 
         if (grantsDoc == null)
         {
-            _logger.LogDebug("Could not verify admin consent status");
-            _logger.LogWarning(
-                "Admin consent status could not be verified — insufficient permissions to read consent grants.");
-            _logger.LogWarning(
-                "If you see 'Need admin approval' during blueprint creation, admin consent has not been granted.");
-            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
-            if (consentUrl != null)
-            {
-                _logger.LogWarning("A Global Administrator must either:");
-                _logger.LogWarning("  1. Run 'a365 setup requirements' with an admin account to auto-grant consent, OR");
-                _logger.LogWarning("  2. Open this URL to grant consent: {ConsentUrl}", consentUrl);
-            }
-            return true; // Best-effort — still allow developer to proceed
+            // Best-effort skip on transient/auth/network failures other than 403. Treat as
+            // "cannot verify, assume consented" — the same operation will retry with its own
+            // error handling. Logging both the status and reason helps diagnose real failures.
+            _logger.LogDebug(
+                "Skipping tenant-wide consent verification — grants read returned no data (status: {Status} {Reason}). Downstream operations will surface any actual consent issues.",
+                grantsResp.StatusCode, grantsResp.ReasonPhrase);
+            return true;
         }
 
         var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());

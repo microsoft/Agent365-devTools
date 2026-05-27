@@ -915,6 +915,9 @@ public static class DevelopMcpCommand
         var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
         command.AddOption(serviceTreeIdOption);
 
+        var secretLifetimeMonthsOption = new Option<int?>(["--secret-lifetime-months", "-l"], description: "Lifetime in months (1-24) for generated client secrets on the created Entra apps. Default is 2 years. Set a value that is smaller than the appManagementPolicies cap in your tenant.");
+        command.AddOption(secretLifetimeMonthsOption);
+
         var publisherOption = new Option<string?>("--publisher", description: "Publisher name (required, used in MOS package metadata)");
         command.AddOption(publisherOption);
 
@@ -945,12 +948,17 @@ public static class DevelopMcpCommand
                 RemoteScopes: context.ParseResult.GetValueForOption(remoteScopesOption),
                 TenantId: context.ParseResult.GetValueForOption(tenantIdOption),
                 ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption),
+                SecretLifetimeMonths: context.ParseResult.GetValueForOption(secretLifetimeMonthsOption),
                 PublisherName: context.ParseResult.GetValueForOption(publisherOption),
                 Description: context.ParseResult.GetValueForOption(descriptionOption),
                 DryRun: context.ParseResult.GetValueForOption(dryRunOption));
 
             var executor = new RegisterCommandExecutor(logger, toolingService, graphApiService);
-            await executor.ExecuteAsync(args);
+            var success = await executor.ExecuteAsync(args, context.GetCancellationToken());
+            if (!success)
+            {
+                context.ExitCode = 1;
+            }
         });
 
         return command;

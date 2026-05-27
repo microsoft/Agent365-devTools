@@ -1,0 +1,416 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Xunit;
+
+namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
+
+public class LogRedactionServiceTests
+{
+    private readonly LogRedactionService _sut = new();
+    private const string Source = "/logs/a365.setup.log";
+
+    [Fact]
+    public void Redact_JwtToken_IsReplaced()
+    {
+        var log = "[DBG] Token scp: openid | token: eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.abc123-XYZ_";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<JWT-TOKEN>",
+            because: "JWT tokens must be replaced with the JWT placeholder so secrets are never shared");
+        result.RedactedContent.Should().NotContain("eyJhbGciOiJSUzI1NiJ9",
+            because: "the original JWT header must not survive in redacted output (security/privacy invariant)");
+        result.TokensRedacted.Should().Be(1,
+            because: "exactly one JWT token was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_EmailAddress_IsReplacedWithAlias()
+    {
+        var log = "[INF] Current user: aarthi-dev <aarthi-dev@agent365002.onmicrosoft.com>";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<email-1>",
+            because: "email addresses must be replaced with stable aliases in redacted output");
+        result.RedactedContent.Should().NotContain("aarthi-dev@agent365002.onmicrosoft.com",
+            because: "the original email address must not survive in redacted output (privacy invariant)");
+        result.EmailsRedacted.Should().Be(1,
+            because: "exactly one email was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_SameEmailAppearsMultipleTimes_SameAliasUsed()
+    {
+        var log = "[INF] User: user@contoso.com\n[INF] Sponsor: user@contoso.com";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().NotContain("user@contoso.com",
+            because: "no occurrence of the original email may survive in redacted output (privacy invariant)");
+        result.EmailsRedacted.Should().Be(1,
+            because: "the same email value must count once even when it appears multiple times");
+        // Both lines replaced with the same alias
+        var lines = result.RedactedContent.Split('\n').Where(l => l.StartsWith("[INF]")).ToList();
+        var alias1 = lines[0].Split(' ').Last().Trim();
+        var alias2 = lines[1].Split(' ').Last().Trim();
+        alias1.Should().Be(alias2,
+            because: "the same email value must always map to the same alias so log correlation is preserved");
+    }
+
+    [Fact]
+    public void Redact_TwoDistinctEmails_GetDifferentAliases()
+    {
+        var log = "[INF] User: alice@contoso.com\n[INF] Owner: bob@contoso.com";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<email-1>",
+            because: "the first distinct email must receive the email-1 alias");
+        result.RedactedContent.Should().Contain("<email-2>",
+            because: "the second distinct email must receive a different alias to preserve identity separation");
+        result.EmailsRedacted.Should().Be(2,
+            because: "two distinct emails were present and both must be counted");
+    }
+
+    [Fact]
+    public void Redact_Guid_IsReplacedWithAlias()
+    {
+        var log = "[INF] Blueprint ID: 48e7c63c-15f8-42ff-9df9-7adb43889e34";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<id-1>",
+            because: "GUIDs must be replaced with stable id aliases in redacted output");
+        result.RedactedContent.Should().NotContain("48e7c63c-15f8-42ff-9df9-7adb43889e34",
+            because: "the original GUID must not survive in redacted output (privacy invariant)");
+        result.IdsRedacted.Should().Be(1,
+            because: "exactly one GUID was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_SameGuidAppearsMultipleTimes_SameAliasUsed()
+    {
+        var guid = "48e7c63c-15f8-42ff-9df9-7adb43889e34";
+        var log = $"[INF] Blueprint ID: {guid}\n[INF] Confirmed: {guid}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.IdsRedacted.Should().Be(1,
+            because: "the same GUID must count once even when it appears multiple times");
+        result.RedactedContent.Should().NotContain(guid,
+            because: "no occurrence of the original GUID may survive in redacted output (privacy invariant)");
+    }
+
+    [Fact]
+    public void Redact_TwoDistinctGuids_GetDifferentAliases()
+    {
+        var log = "[INF] Blueprint: 48e7c63c-15f8-42ff-9df9-7adb43889e34\n[INF] User ID: 2cd3a148-4462-4f3c-8a8e-0c6f051c6a27";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<id-1>",
+            because: "the first distinct GUID must receive the id-1 alias");
+        result.RedactedContent.Should().Contain("<id-2>",
+            because: "the second distinct GUID must receive a different alias to preserve identity separation");
+        result.IdsRedacted.Should().Be(2,
+            because: "two distinct GUIDs were present and both must be counted");
+    }
+
+    [Fact]
+    public void Redact_NonSensitiveLine_IsPreservedVerbatim()
+    {
+        var log = "[INF] Requirements: 3 passed, 1 warnings, 0 failed";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("[INF] Requirements: 3 passed, 1 warnings, 0 failed");
+        result.EmailsRedacted.Should().Be(0);
+        result.IdsRedacted.Should().Be(0);
+        result.TokensRedacted.Should().Be(0);
+        result.UsernamesRedacted.Should().Be(0);
+    }
+
+    [Fact]
+    public void Redact_SummaryHeader_PrependedWithCounts()
+    {
+        var log = "[INF] User: dev@contoso.com\n[INF] ID: 48e7c63c-15f8-42ff-9df9-7adb43889e34";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().StartWith("# Redacted by a365 logs export");
+        result.RedactedContent.Should().Contain("1 email(s), 1 id(s), 0 JWT token(s), 0 username(s)");
+        result.RedactedContent.Should().Contain($"# Original: {Source}");
+    }
+
+    [Fact]
+    public void Redact_MixedRealLogLine_FullyRedacted()
+    {
+        var log = "[INF] Current user: Aarthi-dev <aarthi-dev@agent365002.onmicrosoft.com>\n" +
+                  "[INF] Sponsor and Owner: User ID 2cd3a148-4462-4f3c-8a8e-0c6f051c6a27\n" +
+                  "[INF] Blueprint ID: 48e7c63c-15f8-42ff-9df9-7adb43889e34\n" +
+                  "[INF] Requirements: 3 passed, 1 warnings, 0 failed";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().NotContain("aarthi-dev@agent365002.onmicrosoft.com",
+            because: "the original email must not survive in redacted output (privacy invariant)");
+        result.RedactedContent.Should().NotContain("2cd3a148-4462-4f3c-8a8e-0c6f051c6a27",
+            because: "the original user GUID must not survive in redacted output (privacy invariant)");
+        result.RedactedContent.Should().NotContain("48e7c63c-15f8-42ff-9df9-7adb43889e34",
+            because: "the original blueprint GUID must not survive in redacted output (privacy invariant)");
+        result.RedactedContent.Should().Contain("[INF] Requirements: 3 passed, 1 warnings, 0 failed",
+            because: "non-sensitive lines must be preserved verbatim so the log remains useful for support");
+        result.EmailsRedacted.Should().Be(1,
+            because: "exactly one distinct email was present and must be counted accurately");
+        result.IdsRedacted.Should().Be(2,
+            because: "two distinct GUIDs were present and both must be counted accurately");
+    }
+
+    [Fact]
+    public void Redact_GuidAliasIsCaseInsensitive()
+    {
+        // Same GUID in different cases should map to the same alias
+        var lower = "48e7c63c-15f8-42ff-9df9-7adb43889e34";
+        var upper = "48E7C63C-15F8-42FF-9DF9-7ADB43889E34";
+        var log = $"[INF] A: {lower}\n[INF] B: {upper}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.IdsRedacted.Should().Be(1);
+    }
+
+    [Fact]
+    public void Redact_EmptyLog_ReturnsHeaderOnly()
+    {
+        var result = _sut.Redact(string.Empty, Source);
+
+        result.RedactedContent.Should().StartWith("# Redacted by a365 logs export");
+        result.EmailsRedacted.Should().Be(0);
+        result.IdsRedacted.Should().Be(0);
+        result.TokensRedacted.Should().Be(0);
+        result.UsernamesRedacted.Should().Be(0);
+    }
+
+    [Fact]
+    public void Redact_NullLogContent_ThrowsArgumentNullException()
+    {
+        var act = () => _sut.Redact(null!, Source);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("logContent");
+    }
+
+    [Fact]
+    public void Redact_JwtAndEmailOnSameLine_BothRedactedWithoutCrossContamination()
+    {
+        // The @ in a JWT payload must not be matched by the email pattern after JWT redaction
+        var jwt = "eyJhbGciOiJSUzI1NiJ9.eyJ1cG4iOiJ1c2VyQGNvbnRvc28uY29tIn0.sig";
+        var log = $"[DBG] Token: {jwt} | contact: admin@contoso.com";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<JWT-TOKEN>",
+            because: "the JWT token must be replaced with the JWT placeholder");
+        result.RedactedContent.Should().Contain("<email-1>",
+            because: "the standalone email must still be aliased even when a JWT appears on the same line");
+        result.TokensRedacted.Should().Be(1,
+            because: "exactly one JWT token was present and the count must match");
+        // The email inside the JWT payload must not be counted separately
+        result.EmailsRedacted.Should().Be(1,
+            because: "the email-like substring inside the JWT payload must NOT be re-counted after JWT redaction (cross-contamination would inflate the count)");
+    }
+
+    [Fact]
+    public void Redact_WindowsPathInSourceFilePath_UsernameIsRedactedInHeader()
+    {
+        var windowsSource = @"C:\Users\me\AppData\Local\Microsoft.Agents.A365.DevTools.Cli\logs\a365.setup.log";
+        var log = "[INF] Setup complete";
+
+        var result = _sut.Redact(log, windowsSource);
+
+        result.RedactedContent.Should().Contain(@"# Original: C:\Users\<username-1>\AppData\Local\Microsoft.Agents.A365.DevTools.Cli\logs\a365.setup.log",
+            because: "the OS username in the source file path must be redacted in the header so the exported log is safe to share");
+        result.RedactedContent.Should().NotContain(@"C:\Users\me\",
+            because: "the original OS username in the source path must not survive in the header (privacy invariant)");
+        result.UsernamesRedacted.Should().Be(1,
+            because: "the username from the source path must be counted in the redaction summary");
+    }
+
+    [Fact]
+    public void Redact_MacOsUserPath_UsernameIsRedacted()
+    {
+        var log = "[INF] Config: /Users/aarthisaravanakumar/code/Sample-Agents/appsettings.json";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<username-1>",
+            because: "the OS username in a macOS /Users/ path must be replaced with a stable alias");
+        result.RedactedContent.Should().NotContain("aarthisaravanakumar",
+            because: "the original OS username must not survive in redacted output (privacy invariant)");
+        result.RedactedContent.Should().Contain("/Users/<username-1>/code/Sample-Agents/appsettings.json",
+            because: "the rest of the path must be preserved verbatim for debugging context");
+        result.UsernamesRedacted.Should().Be(1,
+            because: "exactly one username was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_WindowsUserPath_UsernameIsRedacted()
+    {
+        var log = @"[INF] Config: C:\Users\johndoe\source\repos\project\appsettings.json";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<username-1>",
+            because: "the OS username in a Windows C:\\Users\\ path must be replaced with a stable alias");
+        result.RedactedContent.Should().NotContain("johndoe",
+            because: "the original OS username must not survive in redacted output (privacy invariant)");
+        result.UsernamesRedacted.Should().Be(1,
+            because: "exactly one username was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_LinuxHomePath_UsernameIsRedacted()
+    {
+        var log = "[INF] Config: /home/ubuntu/project/appsettings.json";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<username-1>",
+            because: "the OS username in a Linux /home/ path must be replaced with a stable alias");
+        result.RedactedContent.Should().NotContain("/home/ubuntu",
+            because: "the original OS username must not survive in redacted output (privacy invariant)");
+        result.UsernamesRedacted.Should().Be(1,
+            because: "exactly one username was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Fact]
+    public void Redact_SameUsernameAppearsMultipleTimes_SameAliasUsed()
+    {
+        var log = "[INF] Config: /Users/alice/project/appsettings.json\n[INF] Key: /Users/alice/project/key.pem";
+
+        var result = _sut.Redact(log, Source);
+
+        result.UsernamesRedacted.Should().Be(1,
+            because: "the same OS username must count once even when it appears multiple times");
+        result.RedactedContent.Should().NotContain("/Users/alice",
+            because: "no occurrence of the original OS username may survive in redacted output (privacy invariant)");
+    }
+
+    [Fact]
+    public void Redact_TwoDistinctPathUsernames_GetDifferentAliases()
+    {
+        var log = "[INF] A: /Users/alice/project\n[INF] B: /Users/bob/project";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain("<username-1>",
+            because: "the first distinct OS username must receive the username-1 alias");
+        result.RedactedContent.Should().Contain("<username-2>",
+            because: "the second distinct OS username must receive a different alias to preserve identity separation");
+        result.UsernamesRedacted.Should().Be(2,
+            because: "two distinct usernames were present and both must be counted");
+    }
+
+    [Fact]
+    public void Redact_CorrelationIdGuid_PreservedVerbatim()
+    {
+        var traceGuid = "3b3c813b-b994-46e8-a276-1d6d2233bafd";
+        var log = $"[DBG] Starting setup all (CorrelationId: {traceGuid})";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(traceGuid,
+            because: "CorrelationId values are session-local debug identifiers — they aren't sensitive and Microsoft support needs them to correlate with server-side logs");
+        result.IdsRedacted.Should().Be(0,
+            because: "preserved diagnostic IDs must not be counted as redactions in the header summary");
+    }
+
+    [Fact]
+    public void Redact_TraceIdGuid_PreservedVerbatim()
+    {
+        var traceGuid = "3b3c813b-b994-46e8-a276-1d6d2233bafd";
+        var log = $"[DBG] TraceId: {traceGuid}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(traceGuid,
+            because: "TraceId values pair the CLI log with server-side traces for diagnosis — preserving them keeps the log useful for support");
+    }
+
+    [Fact]
+    public void Redact_GraphRequestId_PreservedVerbatim()
+    {
+        var requestId = "68d4be1a-a52a-4303-a013-95879cbab3a4";
+        var log = $"[WRN] OAuth2 grant failed. Graph response: {{\"error\":{{\"code\":\"Authorization_RequestDenied\",\"innerError\":{{\"request-id\":\"{requestId}\"}}}}}}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(requestId,
+            because: "Microsoft Graph request-id values are needed by support to look up the exact server-side request — preserving them is safe (they're random per call) and essential for escalation");
+    }
+
+    [Fact]
+    public void Redact_ClientRequestIdInQuotes_PreservedVerbatim()
+    {
+        var clientRequestId = "8b1d308d-a322-4fff-a778-c6f8cac85642";
+        var log = $"[DBG] response: {{\"client-request-id\":\"{clientRequestId}\"}}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(clientRequestId,
+            because: "client-request-id appears inside JSON error bodies and is equally useful for support escalation — the redactor must handle the quoted JSON form");
+    }
+
+    [Fact]
+    public void Redact_MicrosoftGraphAppId_PreservedVerbatim()
+    {
+        var graphAppId = "00000003-0000-0000-c000-000000000000";
+        var log = $"[INF] Successfully added required resource access for {graphAppId} to application abc12345-1234-1234-1234-123456789012";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(graphAppId,
+            because: "the Microsoft Graph well-known appId is a public constant in product documentation — preserving it makes the log readable while tenant-specific GUIDs remain redacted");
+        result.RedactedContent.Should().NotContain("abc12345-1234-1234-1234-123456789012",
+            because: "tenant-specific application IDs must still be redacted even when other GUIDs on the same line are preserved");
+    }
+
+    [Fact]
+    public void Redact_TenantSpecificGuidWithSameValueAsCorrelationId_PreservedByContext()
+    {
+        // Edge case: if a tenant ID happens to equal a session CorrelationId (highly unlikely),
+        // preservation by context wins over redaction. This keeps the redactor predictable.
+        var sharedGuid = "3b3c813b-b994-46e8-a276-1d6d2233bafd";
+        var log = $"[DBG] CorrelationId: {sharedGuid}\n[DBG] Tenant: {sharedGuid}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().NotContain("<id-",
+            because: "when a GUID appears anywhere in a diagnostic-ID context, all occurrences are preserved — collisions between CorrelationId and tenant ID are vanishingly rare in practice");
+    }
+
+    [Fact]
+    public void Redact_DiagnosticIdsAndSensitiveGuids_OnlySensitiveAreAliased()
+    {
+        var correlationId = "3b3c813b-b994-46e8-a276-1d6d2233bafd";
+        var tenantId = "bc51ddf2-9c8b-45e7-8e08-c7ac238f6520";
+        var blueprintSpId = "06f722e1-3d94-471e-8758-d965ef268d5d";
+        var log = $"[DBG] CorrelationId: {correlationId}\n" +
+                  $"[DBG] Tenant: {tenantId}\n" +
+                  $"[DBG] Blueprint SP: {blueprintSpId}";
+
+        var result = _sut.Redact(log, Source);
+
+        result.RedactedContent.Should().Contain(correlationId,
+            because: "the CorrelationId must be preserved for diagnosis");
+        result.RedactedContent.Should().NotContain(tenantId,
+            because: "the tenant ID identifies the customer org and must remain redacted");
+        result.RedactedContent.Should().NotContain(blueprintSpId,
+            because: "tenant-specific service principal object IDs must remain redacted");
+        result.IdsRedacted.Should().Be(2,
+            because: "the tenant ID and blueprint SP ID are the only IDs that should be counted as redactions");
+    }
+}

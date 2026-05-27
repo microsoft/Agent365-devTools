@@ -55,6 +55,14 @@ public interface IBootstrapConfigResolver
     /// without inheriting stale resource IDs from a previous run.
     /// </summary>
     Task BackupAndClearStaleConfigAsync(string configPath, string resolvedTenantId);
+
+    /// <summary>
+    /// Detects the current az CLI tenant via <c>az account show</c> and compares it against the
+    /// tenant stored in <paramref name="configPath"/>. If they differ, backs up both config files
+    /// and returns <c>true</c> so the caller can start fresh. Returns <c>false</c> when az CLI is
+    /// unavailable, not signed in, or the tenants match — in all cases the caller may proceed normally.
+    /// </summary>
+    Task<bool> CheckAndBackupStaleConfigAsync(string configPath, CancellationToken ct = default);
 }
 
 /// <inheritdoc/>
@@ -94,15 +102,30 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
 
         if (configFile.Exists)
         {
+            // Before loading, detect whether the user switched az login tenants since the last
+            // setup run. If so, silently back up stale config files and start clean so this run
+            // does not inherit resource IDs from a different tenant.
+            var currentTenant = await TryGetCurrentAzTenantAsync();
+            if (!string.IsNullOrWhiteSpace(currentTenant))
+                await BackupAndClearStaleConfigAsync(configFile.FullName, currentTenant);
+
+            if (!File.Exists(configFile.FullName))
+            {
+                // Config was backed up because the tenant changed. The user must supply
+                // --agent-name to set up fresh for the new tenant.
+                _logger.LogInformation("Run 'a365 setup all --agent-name <name>' to set up for the new tenant.");
+                return null;
+            }
+
             try
             {
                 var config = await _configService.LoadAsync(configFile.FullName);
                 _logger.LogDebug("Loaded configuration from {ConfigFile}", configFile.FullName);
                 return config;
             }
-            catch (ConfigFileNotFoundException ex)
+            catch (ConfigFileNotFoundException)
             {
-                _logger.LogError("{Message}", ex.IssueDescription);
+                _logger.LogError("Agent configuration could not be loaded. Use --agent-name to specify the agent name.");
                 return null;
             }
             catch (Exception ex)
@@ -112,11 +135,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
             }
         }
 
-        _logger.LogError(
-            "No configuration file found at {Path}. " +
-            "Pass --agent-name <name> to run without a config file, " +
-            "or run 'a365 setup all --agent-name <name>' to perform a full setup.",
-            configFile.FullName);
+        _logger.LogError("Agent name required. Use --agent-name <name> to specify the agent name.");
         return null;
     }
 
@@ -169,9 +188,9 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         if (!shouldBackup)
             return;
 
-        _logger.LogWarning(
-            "Existing config files belong to tenant {OldTenant} but the current az login session " +
-            "is for tenant {NewTenant}. Backing up and removing stale config files to start clean.",
+        _logger.LogInformation(
+            "Detected tenant change — previous setup was for tenant {OldTenant}, " +
+            "current session is tenant {NewTenant}. Starting fresh setup for the new tenant.",
             existingTenantId, resolvedTenantId);
 
         var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
@@ -179,14 +198,41 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
 
         var configBackup = configPath + ".bak." + timestamp;
         File.Move(configPath, configBackup);
-        _logger.LogInformation("  Backed up: {File}", Path.GetFileName(configBackup));
+        _logger.LogDebug("Backed up: {File}", Path.GetFileName(configBackup));
 
         var generatedPath = Path.Combine(configDir, "a365.generated.config.json");
         if (File.Exists(generatedPath))
         {
             var generatedBackup = generatedPath + ".bak." + timestamp;
             File.Move(generatedPath, generatedBackup);
-            _logger.LogInformation("  Backed up: {File}", Path.GetFileName(generatedBackup));
+            _logger.LogDebug("Backed up: {File}", Path.GetFileName(generatedBackup));
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> CheckAndBackupStaleConfigAsync(string configPath, CancellationToken ct = default)
+    {
+        var currentTenant = await TryGetCurrentAzTenantAsync();
+        if (string.IsNullOrWhiteSpace(currentTenant))
+            return false;
+        await BackupAndClearStaleConfigAsync(configPath, currentTenant);
+        return !File.Exists(configPath);
+    }
+
+    private async Task<string?> TryGetCurrentAzTenantAsync()
+    {
+        try
+        {
+            var result = await _executor.ExecuteAsync(
+                "az", "account show --query tenantId -o tsv",
+                captureOutput: true, suppressErrorLogging: true);
+            var tenant = result.StandardOutput?.Trim();
+            return string.IsNullOrWhiteSpace(tenant) ? null : tenant;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve current Azure CLI tenant.");
+            return null;
         }
     }
 
@@ -267,9 +313,7 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         }
 
         // Step 4: Load generated config and cross-validate blueprint IDs.
-        var localGeneratedPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
-        var globalGeneratedPath = Path.Combine(ConfigService.GetGlobalConfigDirectory(), "a365.generated.config.json");
-        var generatedConfigPath = File.Exists(localGeneratedPath) ? localGeneratedPath : globalGeneratedPath;
+        var generatedConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
 
         string? agentRegistrationId = null;
         string? agenticAppId = null;
@@ -299,14 +343,21 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
                         "Generated config blueprint ID ({ConfigId}) does not match Entra-resolved ID ({ResolvedId}). Skipping resource IDs from file.",
                         configBlueprintId, resolvedBlueprintId);
                 }
-                else if (string.IsNullOrWhiteSpace(resolvedBlueprintId))
+                else if (string.IsNullOrWhiteSpace(resolvedBlueprintId) && !string.IsNullOrWhiteSpace(configBlueprintId))
                 {
-                    // Entra lookup failed — fall back to file values for all IDs.
-                    agentRegistrationId = SetupHelpers.GetJsonString(root, "agentRegistrationId");
-                    agenticAppId = SetupHelpers.GetJsonString(root, "AgenticAppId");
-                    agentBlueprintSpObjectId = SetupHelpers.GetJsonString(root, "agentBlueprintServicePrincipalObjectId");
-                    _logger.LogInformation(
-                        "Loaded resource IDs from {Path} (Entra lookup unavailable)", generatedConfigPath);
+                    // Entra returned no match for '{agentName} Blueprint' but the local generated
+                    // config has a different blueprint ID. This is the typo case — a typo'd
+                    // --agent-name would otherwise silently delete the previous agent's resources.
+                    // Refuse to proceed and require the user to be explicit.
+                    _logger.LogError(
+                        "Blueprint '{Name}' not found in Entra, and the local a365.generated.config.json references a different blueprint ({ConfigId}).",
+                        blueprintDisplayName, configBlueprintId);
+                    _logger.LogInformation("");
+                    _logger.LogInformation("To clean up the blueprint referenced by the local config, run without --agent-name:");
+                    _logger.LogInformation("  a365 cleanup");
+                    _logger.LogInformation("");
+                    _logger.LogInformation("To clean up a specific agent by name, ensure --agent-name matches an existing Entra blueprint, or delete a365.generated.config.json first.");
+                    return null;
                 }
             }
             catch (Exception ex)

@@ -59,10 +59,15 @@ public class CleanupCommand
             ["--verbose", "-v"],
             description: "Enable verbose logging");
 
+        var dryRunOption = new Option<bool>(
+            "--dry-run",
+            description: "Show resources that would be deleted without making any changes");
+
         cleanupCommand.AddOption(agentNameOption);
         cleanupCommand.AddOption(tenantIdOption);
         cleanupCommand.AddOption(yesOption);
         cleanupCommand.AddOption(verboseOption);
+        cleanupCommand.AddOption(dryRunOption);
 
         // Set default handler for 'a365 cleanup' (without subcommand) - cleans up everything
         cleanupCommand.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
@@ -71,7 +76,44 @@ public class CleanupCommand
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var yes = context.ParseResult.GetValueForOption(yesOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             _ = context.ParseResult.GetValueForOption(verboseOption); // consumed by Program.cs startup via args
+
+            if (dryRun)
+            {
+                var dryRunConfig = await DryRunHelper.TryLoadConfigForDryRunAsync(
+                    agentName, tenantIdFlag, configFile, resolver, configService, isCleanupMode: true, context.GetCancellationToken());
+
+                logger.LogInformation("Dry run: a365 cleanup --dry-run");
+                logger.LogInformation("");
+                logger.LogInformation("Full cleanup preview (would run blueprint, azure, and instance steps):");
+                if (!string.IsNullOrWhiteSpace(dryRunConfig?.AgentBlueprintId))
+                {
+                    logger.LogInformation("  Would delete blueprint application: {Name} ({Id})",
+                        dryRunConfig.AgentBlueprintDisplayName, dryRunConfig.AgentBlueprintId);
+                    if (!string.IsNullOrWhiteSpace(dryRunConfig.AgenticAppId))
+                        logger.LogInformation("  Would delete agent identity SP: {SpId}", dryRunConfig.AgenticAppId);
+                    if (!string.IsNullOrWhiteSpace(dryRunConfig.AgentInstanceId))
+                        logger.LogInformation("  Would deregister agent instance: {InstanceId}", dryRunConfig.AgentInstanceId);
+                    if (!string.IsNullOrWhiteSpace(dryRunConfig.BotId))
+                        logger.LogInformation("  Would delete Azure Bot: {BotId}", dryRunConfig.BotId);
+                }
+                else
+                {
+                    logger.LogInformation("  Would delete: blueprint Entra ID application (if present)");
+                    logger.LogInformation("  Would delete: agent identity service principal (if present)");
+                    logger.LogInformation("  Would deregister: agent instance (if present)");
+                    logger.LogInformation("  Would delete: Azure Bot (if present)");
+                    logger.LogInformation("");
+                    logger.LogInformation("  Pass --agent-name <name> to preview specific resource IDs.");
+                }
+                logger.LogInformation("");
+                logger.LogInformation("No changes made. Run without --dry-run to proceed, or use a subcommand for granular cleanup:");
+                logger.LogInformation("  a365 cleanup blueprint --dry-run");
+                logger.LogInformation("  a365 cleanup azure     --dry-run");
+                logger.LogInformation("  a365 cleanup instance  --dry-run");
+                return;
+            }
 
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -91,9 +133,15 @@ public class CleanupCommand
             }
             else
             {
-                // No --agent-name and no static config file — fail fast with a clear exit code
-                // so cleanup does not silently report success to scripts or CI.
-                bootstrapConfig = await LoadConfigAsync(configFile, logger, configService);
+                try
+                {
+                    bootstrapConfig = await LoadConfigAsync(configFile, logger, configService);
+                }
+                catch (ConfigFileNotFoundException ex)
+                {
+                    context.ExitCode = ex.ExitCode;
+                    return;
+                }
                 if (bootstrapConfig is null)
                 {
                     context.ExitCode = 1;
@@ -155,12 +203,17 @@ public class CleanupCommand
 
         var dryRunOption = new Option<bool>("--dry-run", "Show what would be deleted without making any changes");
 
+        var yesOption = new Option<bool>(
+            ["--yes", "-y"],
+            description: "Skip confirmation prompts and proceed automatically");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(endpointOnlyOption);
         command.AddOption(m365Option);
+        command.AddOption(yesOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -171,6 +224,7 @@ public class CleanupCommand
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
+            var yes = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
             // Dry-run: attempt config resolution gracefully so the flag works without a config file.
@@ -301,7 +355,10 @@ public class CleanupCommand
 
                 logger.LogInformation("");
 
-                if (!await confirmationProvider.ConfirmAsync("Continue with blueprint cleanup? (y/N): "))
+                IConfirmationProvider effectiveConfirmationProvider = yes
+                    ? new NonInteractiveConfirmationProvider()
+                    : confirmationProvider;
+                if (!await effectiveConfirmationProvider.ConfirmAsync("Continue with blueprint cleanup? (y/N): "))
                 {
                     logger.LogInformation("Cleanup cancelled by user");
                     return;
@@ -497,6 +554,10 @@ public class CleanupCommand
                     logger.LogInformation("Blueprint cleanup completed successfully!");
                 }
             }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Blueprint cleanup failed");
@@ -536,10 +597,15 @@ public class CleanupCommand
 
         var dryRunOption = new Option<bool>("--dry-run", "Show resources that would be deleted without making any changes");
 
+        var yesOption = new Option<bool>(
+            ["--yes", "-y"],
+            description: "Skip confirmation prompts and proceed automatically");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
+        command.AddOption(yesOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -548,6 +614,7 @@ public class CleanupCommand
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var yes = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
             // Dry-run: attempt config resolution gracefully so the flag works without a config file.
@@ -590,17 +657,28 @@ public class CleanupCommand
                     logger.LogInformation("    Azure Bot: {BotId}", config.BotId);
                 logger.LogInformation("");
 
-                Console.Write("Continue with Azure cleanup? (y/N): ");
-                var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-                if (response != "y" && response != "yes")
+                if (yes)
                 {
-                    logger.LogInformation("Cleanup cancelled by user");
-                    return;
+                    logger.LogInformation("Skipping confirmation (--yes).");
+                }
+                else
+                {
+                    Console.Write("Continue with Azure cleanup? (y/N): ");
+                    var response = Console.ReadLine()?.Trim().ToLowerInvariant();
+                    if (response != "y" && response != "yes")
+                    {
+                        logger.LogInformation("Cleanup cancelled by user");
+                        return;
+                    }
                 }
 
                 logger.LogInformation("No Azure Web App resources to clean up.");
                 logger.LogInformation("Azure infrastructure is managed externally.");
                 logger.LogInformation("Azure cleanup completed!");
+            }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
             }
             catch (Exception ex)
             {
@@ -634,10 +712,15 @@ public class CleanupCommand
 
         var dryRunOption = new Option<bool>("--dry-run", "Show what would be deleted without making any changes");
 
+        var yesOption = new Option<bool>(
+            ["--yes", "-y"],
+            description: "Skip confirmation prompts and proceed automatically");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
+        command.AddOption(yesOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -646,6 +729,7 @@ public class CleanupCommand
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var yes = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
             // Dry-run: attempt config resolution gracefully so the flag works without a config file.
@@ -699,12 +783,19 @@ public class CleanupCommand
                 logger.LogInformation("    Generated configuration file");
                 logger.LogInformation("");
 
-                Console.Write("Continue with instance cleanup? (y/N): ");
-                var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-                if (response != "y" && response != "yes")
+                if (yes)
                 {
-                    logger.LogInformation("Cleanup cancelled by user");
-                    return;
+                    logger.LogInformation("Skipping confirmation (--yes).");
+                }
+                else
+                {
+                    Console.Write("Continue with instance cleanup? (y/N): ");
+                    var response = Console.ReadLine()?.Trim().ToLowerInvariant();
+                    if (response != "y" && response != "yes")
+                    {
+                        logger.LogInformation("Cleanup cancelled by user");
+                        return;
+                    }
                 }
 
                 // Delete agent identity service principal
@@ -765,6 +856,10 @@ public class CleanupCommand
                 }
                 
                 logger.LogInformation("Instance cleanup completed");
+            }
+            catch (ConfigFileNotFoundException ex)
+            {
+                context.ExitCode = ex.ExitCode;
             }
             catch (Exception ex)
             {
@@ -1267,9 +1362,12 @@ public class CleanupCommand
         // Step 4: Load generated config.
         // Only take agentRegistrationId from the file when the blueprint IDs match,
         // confirming the file belongs to this agent.
-        var localGeneratedPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
-        var globalGeneratedPath = Path.Combine(ConfigService.GetGlobalConfigDirectory(), "a365.generated.config.json");
-        var generatedConfigPath = File.Exists(localGeneratedPath) ? localGeneratedPath : globalGeneratedPath;
+        // Project-local only — the global-directory fallback was removed because it could
+        // pull resource IDs from a different project's leftover state. Mirrors the same
+        // policy applied to BootstrapConfigResolver.BuildBootstrapConfigForCleanupAsync.
+        // TODO: this method is a near-duplicate of the resolver copy; collapse into a single
+        // shared helper in a follow-up PR.
+        var generatedConfigPath = Path.Combine(Environment.CurrentDirectory, "a365.generated.config.json");
 
         string? agentRegistrationId = null;
         string? agenticAppId = null;
@@ -1362,10 +1460,12 @@ public class CleanupCommand
             logger.LogInformation("Loaded configuration successfully from {ConfigFile}", configPath);
             return config;
         }
-        catch (ConfigFileNotFoundException ex)
+        catch (ConfigFileNotFoundException)
         {
-            logger.LogError("{Message}", ex.IssueDescription);
-            return null;
+            logger.LogError("Agent name required. Use --agent-name to specify it:");
+            logger.LogInformation("");
+            logger.LogInformation("  a365 cleanup --agent-name <name>");
+            throw;
         }
         catch (Exception ex)
         {

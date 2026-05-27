@@ -1,8 +1,10 @@
 # Internal working documents
 docs/plans/
+docs/min-permissions/
 docs/Permissions-Review.md
 docs/Testing.md
 scripts/skills/
+Other/
 
 # IDE launch profiles (developer-specific)
 **/Properties/launchSettings.json

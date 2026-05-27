@@ -282,7 +282,7 @@ public sealed class A365CreateInstanceRunner
                     _logger.LogError("");
                     _logger.LogError("RECOMMENDED ACTIONS:");
                     _logger.LogError("  1. Wait 5-10 minutes and run: a365 setup createinstance --step user");
-                    _logger.LogError("  2. Verify User.ReadWrite.All permission is granted");
+                    _logger.LogError("  2. Verify AgentIdUser.ReadWrite.All permission is granted");
                     _logger.LogError("  3. Check Azure AD audit logs for detailed error information");
                     return false;
                 }
@@ -568,7 +568,7 @@ public sealed class A365CreateInstanceRunner
                 _logger.LogError("");
                 _logger.LogError("RECOMMENDED ACTIONS:");
                 _logger.LogError("  1. Ensure you have completed MSAL sign-in (the CLI authenticates via browser or device code, not Azure CLI)");
-                _logger.LogError("  2. Verify your custom client app has the required delegated scopes (User.ReadWrite.All)");
+                _logger.LogError("  2. Verify your custom client app has the required delegated scopes (AgentIdUser.ReadWrite.All)");
                 _logger.LogError("  3. Re-run the command");
                 return (false, null);
             }

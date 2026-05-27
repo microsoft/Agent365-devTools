@@ -501,6 +501,29 @@ public static class DevelopCommand
                 return;
             }
 
+            // Resolve manifest path without requiring a365.config.json.
+            // Resolution and the --project-path typo-guard MUST run before the --dry-run
+            // short-circuit below: dry-run is a preview of what the real command would do,
+            // so a typo'd --project-path must fail dry-run too — otherwise users get a
+            // misleading exit-0 preview and a confusing exit-1 when they run for real.
+            var manifestPath = await ResolveToolingManifestPath(projectPath, configService, logger);
+
+            if (!File.Exists(manifestPath))
+            {
+                var manifestDir = Path.GetDirectoryName(manifestPath);
+                if (!string.IsNullOrEmpty(manifestDir) && !Directory.Exists(manifestDir))
+                {
+                    logger.LogError(
+                        "Directory '{Directory}' does not exist. Create it first or run with --project-path <existing path>.",
+                        manifestDir);
+                    context.ExitCode = 1;
+                    return;
+                }
+
+                logger.LogInformation("{FileName} not found at {Path}; will create a new manifest.",
+                    McpConstants.ToolingManifestFileName, manifestPath);
+            }
+
             // Dry run mode
             if (dryRun)
             {
@@ -509,19 +532,9 @@ public static class DevelopCommand
                 {
                     logger.LogInformation("[DRY RUN]   - {Server}", serverName);
                 }
-                logger.LogInformation("[DRY RUN] Would update {FileName}", McpConstants.ToolingManifestFileName);
+                logger.LogInformation("[DRY RUN] Would update {FileName} at {Path}",
+                    McpConstants.ToolingManifestFileName, manifestPath);
                 await Task.CompletedTask;
-                return;
-            }
-
-            // Resolve manifest path without requiring a365.config.json
-            var manifestPath = await ResolveToolingManifestPath(projectPath, configService, logger);
-
-            if (!File.Exists(manifestPath))
-            {
-                logger.LogError(
-                    "ToolingManifest.json not found. Run with --project-path <path> to specify your agent project directory.");
-                context.ExitCode = 1;
                 return;
             }
 

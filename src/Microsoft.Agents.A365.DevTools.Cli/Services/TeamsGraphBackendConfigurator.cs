@@ -344,10 +344,10 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         if (!string.IsNullOrEmpty(errorContent) &&
             errorContent.Contains("not the owner", StringComparison.OrdinalIgnoreCase))
         {
-            return "NotOwner";
+            return MessagingEndpointFailureReasons.NotOwner;
         }
 
-        return "Other";
+        return MessagingEndpointFailureReasons.Other;
     }
 
     private static bool ResponseDetailsContains(string? content, string substring)

@@ -43,6 +43,7 @@ public sealed class MsalBrowserCredential : TokenCredential
     private readonly bool _useWam;
     private readonly IntPtr _windowHandle;
     private readonly string? _loginHint;
+    private readonly bool _forceRefresh;
 
     // Shared persistent cache helper - initialized once and reused across all instances.
     // This is the key to reducing multiple WAM prompts during setup operations.
@@ -88,7 +89,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         ILogger? logger = null,
         bool useWam = true,
         string? authority = null,
-        string? loginHint = null)
+        string? loginHint = null,
+        bool forceRefresh = false)
     {
         if (string.IsNullOrWhiteSpace(clientId))
         {
@@ -104,6 +106,7 @@ public sealed class MsalBrowserCredential : TokenCredential
         _tenantId = tenantId;
         _logger = logger;
         _loginHint = loginHint;
+        _forceRefresh = forceRefresh;
 
         // Get window handle for WAM on Windows
         // Try multiple sources: console window, foreground window, or desktop window
@@ -257,10 +260,10 @@ public sealed class MsalBrowserCredential : TokenCredential
         }
         catch (Exception ex)
         {
-            // Cache registration failure is non-fatal - authentication will still work,
-            // but users may see more prompts during multi-step operations
-            logger?.LogDebug(ex, "Failed to register persistent token cache");
-            logger?.LogWarning("Failed to register persistent token cache. Authentication prompts may be repeated.");
+            // Cache registration failure is non-fatal — authentication still works and
+            // the user can do nothing to remediate (no D-Bus/Keychain on headless Linux is
+            // the common cause), so this stays at Debug rather than surfacing as a warning.
+            logger?.LogDebug(ex, "Failed to register persistent token cache; auth prompts may be repeated within this session.");
         }
     }
 
@@ -330,6 +333,7 @@ public sealed class MsalBrowserCredential : TokenCredential
                     _logger?.LogDebug("Attempting to acquire token silently from cache...");
                     var silentResult = await _publicClientApp
                         .AcquireTokenSilent(scopes, account)
+                        .WithForceRefresh(_forceRefresh)
                         .ExecuteAsync(cancellationToken);
 
                     _logger?.LogDebug("Successfully acquired token from cache.");
@@ -353,6 +357,7 @@ public sealed class MsalBrowserCredential : TokenCredential
                     _logger?.LogDebug("Probing consent status silently via WAM OS account...");
                     var probeResult = await _publicClientApp
                         .AcquireTokenSilent(scopes, PublicClientApplication.OperatingSystemAccount)
+                        .WithForceRefresh(_forceRefresh)
                         .ExecuteAsync(cancellationToken);
                     _logger?.LogDebug("WAM OS account probe succeeded — consent is granted.");
                     // Only return the OS account token when no login hint is set.
@@ -491,17 +496,17 @@ public sealed class MsalBrowserCredential : TokenCredential
     {
         var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(_clientAppId, _tenantId);
         _logger?.LogWarning("Admin consent has not been granted for this application.");
-        _logger?.LogWarning("You are running as a non-admin user and cannot grant admin consent.");
+        _logger?.LogWarning("An administrator must grant tenant-wide consent to proceed.");
         if (consentUrl != null)
         {
-            _logger?.LogWarning("Share this URL with a Global Administrator to grant consent:");
+            _logger?.LogWarning("Share this URL with an administrator to grant consent:");
             _logger?.LogWarning("  {ConsentUrl}", consentUrl);
         }
         _logger?.LogWarning("After consent is granted, re-run the command.");
         throw new MsalAuthenticationFailedException(
             consentUrl != null
-                ? $"Admin consent required. Share this URL with a Global Administrator: {consentUrl}"
-                : "Admin consent required. A Global Administrator must grant tenant-wide consent for this application.",
+                ? $"Admin consent required. Share this URL with an administrator: {consentUrl}"
+                : "Admin consent required. An administrator must grant tenant-wide consent for this application.",
             inner);
     }
 

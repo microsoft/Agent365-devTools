@@ -28,6 +28,25 @@ class Program
         var isVerbose = args.Contains("--verbose") || args.Contains("-v");
         var logLevel = isVerbose ? LogLevel.Debug : LogLevel.Information;
 
+        // Write a run-start separator directly to the log file before the DI logger is ready.
+        // This makes it easy to find where each invocation begins when reviewing the log.
+        if (!string.IsNullOrEmpty(logFilePath))
+        {
+            try
+            {
+                // args are CLI arguments only — no secrets are passed as args (API keys, passwords are read from config/env).
+                var commandLine = "a365 " + string.Join(" ", args);
+                var separator =
+                    Environment.NewLine +
+                    "============================================================" + Environment.NewLine +
+                    $"Command : {commandLine}" + Environment.NewLine +
+                    $"Started : {DateTime.Now:yyyy-MM-dd HH:mm:ss}" + Environment.NewLine +
+                    "============================================================" + Environment.NewLine;
+                File.AppendAllText(logFilePath, separator);
+            }
+            catch { }
+        }
+
         // Configure Microsoft.Extensions.Logging with clean console formatter
         var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
         var startupLogger = loggerFactory.CreateLogger("Program");
@@ -106,6 +125,13 @@ class Program
                     startupLogger.LogWarning("To update, run: {Command}", result.UpdateCommand);
                     startupLogger.LogWarning("");
                 }
+                else if (result.NewerPreviewVersion is not null)
+                {
+                    startupLogger.LogInformation("");
+                    startupLogger.LogInformation("A preview release is also available: {Preview}", result.NewerPreviewVersion);
+                    startupLogger.LogInformation("To try it: {Command}", Services.Internal.VersionCheckHelper.GetUpdateCommand(result.NewerPreviewVersion));
+                    startupLogger.LogInformation("");
+                }
             }
             catch (OperationCanceledException)
             {
@@ -121,7 +147,6 @@ class Program
 
             // Get loggers and services
             var setupLogger = serviceProvider.GetRequiredService<ILogger<SetupCommand>>();
-            var createInstanceLogger = serviceProvider.GetRequiredService<ILogger<CreateInstanceCommand>>();
             var queryEntraLogger = serviceProvider.GetRequiredService<ILogger<QueryEntraCommand>>();
             var cleanupLogger = serviceProvider.GetRequiredService<ILogger<CleanupCommand>>();
             var publishLogger = serviceProvider.GetRequiredService<ILogger<PublishCommand>>();
@@ -153,13 +178,13 @@ class Program
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
-            rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor,
-                graphApiService, resolver: bootstrapResolver));
-
             var manifestTemplateService = serviceProvider.GetRequiredService<ManifestTemplateService>();
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService, resolver: bootstrapResolver));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService, resolver: bootstrapResolver));
-            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, graphApiService, resolver: bootstrapResolver));
+            rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, resolver: bootstrapResolver));
+            var logsLogger = serviceProvider.GetRequiredService<ILogger<LogsCommand>>();
+            var logRedactionService = serviceProvider.GetRequiredService<ILogRedactionService>();
+            rootCommand.AddCommand(LogsCommand.CreateCommand(logsLogger, logRedactionService));
 
             // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
             // and UseParseErrorReporting() (full help dump on any parse error), replacing both
@@ -220,10 +245,12 @@ class Program
 
             // Validate the configured clientAppId still exists in the tenant before any command runs.
             // If not found, falls back to the well-known display name and patches a365.config.json.
-            // Skip for help/version requests — these never make Graph calls and must work offline.
+            // Skip for help/version/show-secret — these never make Graph calls and must work offline.
             var isHelpOrVersion = args.Length == 0
                 || args.Any(a => a is "--help" or "-h" or "--version");
-            if (!isHelpOrVersion)
+            var isShowSecret = args.Any(a => a.Equals("--show-secret", StringComparison.Ordinal)
+                || a.StartsWith("--show-secret=", StringComparison.Ordinal));
+            if (!isHelpOrVersion && !isShowSecret)
             {
                 try
                 {
@@ -266,7 +293,12 @@ class Program
         services.AddLogging(builder =>
         {
             builder.ClearProviders();
-            builder.SetMinimumLevel(minimumLevel);
+
+            // Global minimum is Debug so the file logger always captures debug messages.
+            // The console provider is gated separately at minimumLevel (Information by default,
+            // Debug when -v is passed), so debug output never clutters the console unexpectedly.
+            builder.SetMinimumLevel(LogLevel.Debug);
+            builder.AddFilter<Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider>(null, minimumLevel);
 
             // Console logging with clean formatter
             builder.AddConsoleFormatter<CleanConsoleFormatter, Microsoft.Extensions.Logging.Console.SimpleConsoleFormatterOptions>();
@@ -278,8 +310,6 @@ class Program
             // File logging if path provided
             if (!string.IsNullOrEmpty(logFilePath))
             {
-                // Always use Trace level for file logging to capture all diagnostic information
-                // This ensures comprehensive logs for debugging, regardless of console verbosity
                 builder.Services.AddSingleton<ILoggerProvider>(provider =>
                     new FileLoggerProvider(logFilePath));
             }
@@ -287,6 +317,7 @@ class Program
 
         // Add core services
         services.AddSingleton<IConfigService, ConfigService>();
+        services.AddSingleton<ILogRedactionService, LogRedactionService>();
         services.AddSingleton<CommandExecutor>();
         services.AddSingleton<AuthenticationService>();
         services.AddSingleton<IAuthenticationService>(sp => sp.GetRequiredService<AuthenticationService>());

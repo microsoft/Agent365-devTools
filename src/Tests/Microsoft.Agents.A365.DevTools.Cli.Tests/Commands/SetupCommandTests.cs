@@ -474,11 +474,13 @@ public class SetupCommandTests
 
         // Assert
         result.Should().Be(0);
-        // Blueprint plan logs "Inheritable Permissions" at step 3; AI Teammate plan does not.
+        // Both blueprint and AI Teammate plans now use the unified "Inheritable Permissions" label,
+        // so use the non-DW-only "Agent Registration" step as the distinguishing marker (AI Teammate
+        // plan has no Agent Registration row).
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Agent Registration")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
         // AI Teammate plan's distinctive "Azure hosting" step must be absent.
@@ -525,11 +527,12 @@ public class SetupCommandTests
 
         // Assert
         result.Should().Be(0, because: "--aiteammate false is a valid parse and dry-run exits 0");
-        // Blueprint plan must be shown despite config AiTeammate = true.
+        // Both blueprint and AI Teammate plans now use the unified "Inheritable Permissions" label,
+        // so use the non-DW-only "Agent Registration" step as the distinguishing marker.
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Agent Registration")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
         _mockLogger.DidNotReceive().Log(
@@ -579,18 +582,49 @@ public class SetupCommandTests
     }
 
     /// <summary>
-    /// --authmode is only meaningful for blueprint agents. Passing it with --aiteammate true
-    /// must be rejected because the combination is undefined.
+    /// --authmode obo with --aiteammate is redundant (obo is the AI Teammate default) but not
+    /// conflicting. It must emit a warning and continue — not exit with an error before setup runs.
+    /// --dry-run is used to avoid hitting real Azure auth in the test environment.
     /// </summary>
     [Fact]
-    public async Task SetupAll_AuthMode_WithAiteammateTrue_ExitsWithCode1()
+    public async Task SetupAll_AuthMode_Obo_WithAiteammateTrue_WarnsAndContinues()
     {
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
         var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
 
-        var result = await parser.InvokeAsync("all --aiteammate true --authmode obo", new TestConsole());
+        var result = await parser.InvokeAsync("all --aiteammate true --authmode obo --dry-run", new TestConsole());
 
-        result.Should().Be(1, because: "--authmode is not supported with --aiteammate");
+        result.Should().Be(0, because: "--authmode obo with --aiteammate must warn and continue, not exit with error");
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("not supported with --aiteammate")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("redundant with --aiteammate")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>
+    /// --authmode s2s and --authmode both are incompatible with --aiteammate because AI Teammate
+    /// agents always use OBO via agent user identity. These combinations must exit with code 1.
+    /// </summary>
+    [Theory]
+    [InlineData("s2s")]
+    [InlineData("both")]
+    public async Task SetupAll_AuthMode_NonObo_WithAiteammateTrue_ExitsWithCode1(string authMode)
+    {
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync($"all --aiteammate true --authmode {authMode}", new TestConsole());
+
+        result.Should().Be(1,
+            because: $"--authmode {authMode} is incompatible with --aiteammate — AI Teammate agents always use OBO");
         _mockLogger.Received().Log(
             LogLevel.Error,
             Arg.Any<EventId>(),
@@ -619,7 +653,7 @@ public class SetupCommandTests
 
     /// <summary>
     /// Omitting --authmode defaults to OBO behaviour — the dry-run plan must show
-    /// delegated grants (step 5) and must not show S2S app permission grants.
+    /// delegated grants (step 4 'Blueprint Permission Grants') and must not show S2S app role grants.
     /// </summary>
     [Fact]
     public async Task SetupAll_NoAuthMode_DefaultsToOboBehaviour()
@@ -633,7 +667,7 @@ public class SetupCommandTests
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Permission Grants") && o.ToString()!.Contains("delegated")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint Permission Grants") && o.ToString()!.Contains("delegated")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
         _mockLogger.DidNotReceive().Log(

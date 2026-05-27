@@ -33,15 +33,11 @@ public class ClientAppValidatorTests
 
     // Stable test GUIDs for required permissions — must match between SetupPermissionResolution
     // and SetupAppInfoWithAllPermissions so the validation resolves all permissions as present.
-    private const string AgentBlueprintPrincipalCreateId = "aaaa0001-0000-0000-0000-000000000000";
     private const string AgentBlueprintReadWriteAllId = "aaaa0002-0000-0000-0000-000000000000";
-    private const string AgentBlueprintUpdateAuthId = "aaaa0003-0000-0000-0000-000000000000";
-    private const string AgentBlueprintAddRemoveCredsId = "aaaa0004-0000-0000-0000-000000000000";
-    private const string DelegatedPermissionGrantReadWriteAllId = "aaaa0005-0000-0000-0000-000000000000";
-    private const string DirectoryReadAllId = "aaaa0006-0000-0000-0000-000000000000";
-    private const string AgentInstanceReadWriteAllId = "aaaa0007-0000-0000-0000-000000000000";
+    private const string AgentBlueprintPrincipalCreateId = "aaaa0003-0000-0000-0000-000000000000";
     private const string UserReadId = "aaaa0008-0000-0000-0000-000000000000";
-    private const string UserReadWriteAllId = "aaaa0009-0000-0000-0000-000000000000";
+    private const string AgentRegistrationReadWriteAllId = "aaaa000a-0000-0000-0000-000000000000";
+    private const string ApplicationReadAllId = "aaaa000b-0000-0000-0000-000000000000";
 
     // Separate SP object ID used only by the consent-grant path (GetConsentedPermissionsAsync)
     // so it does not conflict with SetupAdminConsentSp / SetupAdminConsentGrantsEmpty.
@@ -191,13 +187,13 @@ public class ClientAppValidatorTests
     [Fact]
     public async Task EnsureValidClientAppAsync_WhenAppMissingSomePermissions_ThrowsClientAppValidationException()
     {
-        // Only AgentIdentityBlueprintPrincipal.Create present — missing the other required permissions
+        // Only AgentIdentityBlueprint.ReadWrite.All present — missing the other required permissions
         var requiredResourceAccess = $$"""
         [
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"}
+                    {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -208,6 +204,36 @@ public class ClientAppValidatorTests
 
         await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenMissingAgentRegistrationPermission_ThrowsNamingThatPermission()
+    {
+        // App has all permissions except AgentRegistration.ReadWrite.All
+        var requiredResourceAccess = $$"""
+        [
+            {
+                "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
+                "resourceAccess": [
+                    {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
+                    {"id": "{{ApplicationReadAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadId}}", "type": "Scope"}
+                ]
+            }
+        ]
+        """;
+
+        SetupAppInfoGet(ValidClientAppId, requiredResourceAccess: requiredResourceAccess);
+        SetupPermissionResolution();
+        SetupConsentGrantForAgentIdentityCreate();
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.ErrorCode.Should().Be(ErrorCodes.ClientAppValidationFailed);
+        exception.ErrorDetails.Should().Contain(d => d.Contains("AgentRegistration.ReadWrite.All"),
+            because: "the missing permission must be identified by name in the error details");
     }
 
     #endregion
@@ -343,15 +369,11 @@ public class ClientAppValidatorTests
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
-                    {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
-                    {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
-                    {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{UserReadId}}", "type": "Scope"},
-                    {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
+                    {"id": "{{AgentRegistrationReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{ApplicationReadAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -386,15 +408,10 @@ public class ClientAppValidatorTests
             "value": [{
                 "id": "graph-sp-id-123",
                 "oauth2PermissionScopes": [
-                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "value": "AgentIdentityBlueprint.ReadWrite.All"},
-                    {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
-                    {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
-                    {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
-                    {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
-                    {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
-                    {"id": "{{UserReadId}}", "value": "User.Read"},
-                    {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
+                    {"id": "{{AgentRegistrationReadWriteAllId}}", "value": "AgentRegistration.ReadWrite.All"},
+                    {"id": "{{ApplicationReadAllId}}", "value": "Application.Read.All"},
+                    {"id": "{{UserReadId}}", "value": "User.Read"}
                 ]
             }]
         }
@@ -449,8 +466,7 @@ public class ClientAppValidatorTests
             "value": [{
                 "id": "graph-sp-id-123",
                 "oauth2PermissionScopes": [
-                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
-                    {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"}
+                    {"id": "{{AgentBlueprintReadWriteAllId}}", "value": "AgentIdentityBlueprint.ReadWrite.All"}
                 ]
             }]
         }
@@ -463,8 +479,8 @@ public class ClientAppValidatorTests
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(permJson)));
 
-        graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
+        graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Cli.Models.RoleCheckResult.HasRole));
 
         var validator = new ClientAppValidator(_logger, graphApiService, confirmationProvider);
 
@@ -512,8 +528,8 @@ public class ClientAppValidatorTests
         // Build a fresh validator wired to _graphApiService so the redirect URI mock is reachable
         SetupAppInfoWithAllPermissions(ValidClientAppId);
         SetupPermissionResolution();
-        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
+        _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Cli.Models.RoleCheckResult.HasRole));
         var validatorWithSharedGraph = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
@@ -536,8 +552,8 @@ public class ClientAppValidatorTests
         SetupAppInfoWithAllPermissions(ValidClientAppId);
         SetupPermissionResolution();
         SetupPublicClientFlowsGet(enabled: false);
-        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
+        _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Cli.Models.RoleCheckResult.HasRole));
 
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
@@ -578,8 +594,8 @@ public class ClientAppValidatorTests
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(redirectUriJson)));
 
-        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
+        _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Cli.Models.RoleCheckResult.HasRole));
 
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
@@ -605,8 +621,8 @@ public class ClientAppValidatorTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult(true));
-        _graphApiService.CheckServicePrincipalCreationPrivilegesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult((true, new List<string> { "Global Administrator" })));
+        _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Cli.Models.RoleCheckResult.HasRole));
 
         var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
 
@@ -619,6 +635,234 @@ public class ClientAppValidatorTests
             Arg.Any<object>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<IEnumerable<string>?>());
+    }
+
+    // ── Unknown-role probe tests ────────────────────────────────────────────────
+    //
+    // When IsCurrentUserAdminAsync returns Unknown (wids claim absent from the access token),
+    // the validator falls back to using the wids PATCH itself as the admin probe:
+    //   - PATCH succeeds → caller is admin → continue applying remaining fixes (no prompt)
+    //   - PATCH fails to land wids → caller is non-admin → throw the existing GA-required error
+    // This keeps wids-only role detection while breaking the chicken-and-egg in tenants where
+    // the app was provisioned before wids was a required optional claim.
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenAdminRoleUnknownAndWidsProbeSucceeds_DoesNotPrompt()
+    {
+        // Arrange
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+
+        // First GET on /v1.0/applications?$select=id,optionalClaims returns "no wids" so the
+        // pre-flight reports it missing. Second GET (after the PATCH) returns "wids present" so
+        // TryProbeAdminViaWidsPatchAsync concludes Admin.
+        var noWidsJson = $$"""{ "value": [ { "id": "{{AppObjId}}", "optionalClaims": null } ] }""";
+        var withWidsJson = $$"""
+        { "value": [ { "id": "{{AppObjId}}", "optionalClaims": { "accessToken": [ { "name": "wids", "essential": false, "additionalProperties": [] } ] } } ] }
+        """;
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("optionalClaims")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(
+                _ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(noWidsJson)),    // pre-flight read
+                _ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(noWidsJson)),    // inside EnsureWids read
+                _ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(withWidsJson))); // post-probe read
+
+        _graphApiService.GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
+
+        // First call returns Unknown to exercise the probe path; subsequent calls (if any)
+        // return HasRole so downstream code can verify admin authority normally.
+        var adminCheckCallCount = 0;
+        _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                var result = adminCheckCallCount == 0 ? Cli.Models.RoleCheckResult.Unknown : Cli.Models.RoleCheckResult.HasRole;
+                adminCheckCallCount++;
+                return Task.FromResult(result);
+            });
+
+        var confirmationProvider = Substitute.For<IConfirmationProvider>();
+        var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
+
+        // Act
+        await validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
+
+        // Assert
+        // The Unknown-probe path skips the confirmation prompt — the PATCH itself proves admin authority.
+        await confirmationProvider.DidNotReceive().ConfirmAsync(Arg.Any<string>());
+
+        await _graphApiService.Received().GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+
+        // Cache must be invalidated after the successful wids PATCH (per D1) so subsequent
+        // token acquisitions pick up the new claim.
+        await _graphApiService.Received().ClearTokenCacheAsync();
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenAdminRoleUnknownAndWidsProbeFails_ThrowsGlobalAdministratorRequiredError()
+    {
+        // Arrange
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+
+        // GET always returns "no wids" — simulating a PATCH that didn't land (caller lacks
+        // directory-role write authority on the app, i.e. not admin).
+        var noWidsJson = $$"""{ "value": [ { "id": "{{AppObjId}}", "optionalClaims": null } ] }""";
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("optionalClaims")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(noWidsJson)));
+
+        _graphApiService.GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(false));  // PATCH returns false — wids does not land
+
+        _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Cli.Models.RoleCheckResult.Unknown));
+
+        var confirmationProvider = Substitute.For<IConfirmationProvider>();
+        var validator = new ClientAppValidator(_logger, _graphApiService, confirmationProvider);
+
+        // Act + Assert
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Contain("Global Administrator",
+            because: "when the probe cannot land wids, the validator must surface the existing non-admin error");
+
+        // The Unknown-probe path skips the prompt whether the probe succeeds or fails.
+        await confirmationProvider.DidNotReceive().ConfirmAsync(Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenAdminRoleUnknownAndProbeIsInconclusive_ThrowsGlobalAdministratorRequiredError()
+    {
+        // Arrange — TryProbeAdminViaWidsPatchAsync returns ProbeResult.Inconclusive only when an
+        // exception escapes the helpers it calls. The internal helpers all catch internally, but
+        // the probe's own LogInformation call ("Admin authority confirmed..." / "Admin authority
+        // NOT confirmed...") is outside any catch, so an exception there reaches the probe's outer
+        // catch (Exception) → returns Inconclusive. We use a logger that throws on those two
+        // specific probe-internal messages to force the Inconclusive branch.
+        //
+        // Contract under test: when the probe is Inconclusive, the validator must NOT propagate a
+        // wrapped "Unexpected error" exception; it must degrade gracefully and surface the same
+        // Global-Administrator-required error as the NotAdmin branch (per the HIGH-1 review fix).
+        var throwingLogger = new ThrowOnProbeAuthorityLogger();
+        var graphApiService = BuildGraphApiServiceForProbe();
+
+        var confirmationProvider = Substitute.For<IConfirmationProvider>();
+        var validator = new ClientAppValidator(throwingLogger, graphApiService, confirmationProvider);
+
+        // Act + Assert — must throw the validation exception, NOT a raw InvalidOperationException
+        // from the logger and NOT a "Unexpected error during client app validation" wrapper.
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.ErrorCode.Should().Be(ErrorCodes.ClientAppValidationFailed,
+            because: "Inconclusive must surface the standard validation error, not a wrapped 'unexpected error' from the probe failure");
+        exception.IssueDescription.Should().Contain("Global Administrator",
+            because: "Inconclusive must route to the same non-admin guidance as NotAdmin per the HIGH-1 review fix (graceful degradation)");
+        exception.IssueDescription.Should().NotContain("Unexpected error",
+            because: "the probe's transient failure must not be re-wrapped as a generic unexpected error — that would convert a network blip into a worse failure than the baseline Unknown path");
+
+        throwingLogger.AdminAuthorityLogAttempted.Should().BeTrue(
+            because: "the probe must reach its outer LogInformation call so that our injected exception forces the Inconclusive branch");
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenAdminRoleUnknownAndProbeIsInconclusive_DoesNotPromptUser()
+    {
+        // Arrange — same setup as the Inconclusive throws-correctly test. The user has already
+        // been categorised as non-admin (Inconclusive → DoesNotHaveRole), so a confirmation prompt
+        // would be meaningless (there is nothing for the non-admin user to confirm: the existing
+        // non-admin guidance is unconditional).
+        var throwingLogger = new ThrowOnProbeAuthorityLogger();
+        var graphApiService = BuildGraphApiServiceForProbe();
+
+        var confirmationProvider = Substitute.For<IConfirmationProvider>();
+        var validator = new ClientAppValidator(throwingLogger, graphApiService, confirmationProvider);
+
+        // Act
+        await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        // Assert
+        await confirmationProvider.DidNotReceive().ConfirmAsync(Arg.Any<string>());
+    }
+
+    /// <summary>
+    /// Builds a GraphApiService substitute wired up so the Unknown-probe path is reached:
+    /// app exists with all required permissions, IsCurrentUserAdminAsync returns Unknown,
+    /// and the optionalClaims read reports wids missing (so needsWidsClaim=true).
+    /// Used by the Inconclusive-branch tests.
+    /// </summary>
+    private GraphApiService BuildGraphApiServiceForProbe()
+    {
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+
+        // Wids optional claim is missing — triggers the Unknown-probe path.
+        var noWidsJson = $$"""{ "value": [ { "id": "{{AppObjId}}", "optionalClaims": null } ] }""";
+        _graphApiService.GraphGetAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("optionalClaims")),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>())
+            .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(noWidsJson)));
+
+        // PATCH succeeds (so the probe's success-path LogInformation is reached and our injected
+        // logger exception fires there — exercising the Inconclusive catch). The choice of true
+        // vs. false on the PATCH itself does not matter for this test, since the logger exception
+        // is what forces Inconclusive, not the PATCH outcome.
+        _graphApiService.GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult(true));
+
+        _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(Cli.Models.RoleCheckResult.Unknown));
+
+        return _graphApiService;
+    }
+
+    /// <summary>
+    /// Test-only ILogger that throws on the probe-internal "Admin authority..." log messages
+    /// (both "Admin authority confirmed via wids PATCH probe" and "Admin authority NOT confirmed").
+    /// These two LogInformation calls sit outside any try/catch inside
+    /// TryProbeAdminViaWidsPatchAsync, so throwing there is the only realistic way to force the
+    /// ProbeResult.Inconclusive branch (every helper the probe calls catches exceptions internally).
+    /// Other log messages pass through silently.
+    /// </summary>
+    private sealed class ThrowOnProbeAuthorityLogger : ILogger<ClientAppValidator>
+    {
+        public bool AdminAuthorityLogAttempted { get; private set; }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            if (message.Contains("Admin authority", StringComparison.Ordinal))
+            {
+                AdminAuthorityLogAttempted = true;
+                throw new InvalidOperationException("simulated probe-internal logger fault");
+            }
+        }
     }
 
     [Fact]
@@ -822,10 +1066,9 @@ public class ClientAppValidatorTests
     }
 
     /// <summary>
-    /// Sets up the app info GET with all required permissions (8 with GUIDs + AgentIdentity.Create.All,
-    /// AgentIdentityBlueprint.DeleteRestore.All, and AgentIdentity.DeleteRestore.All via consent grant).
-    /// The permission GUIDs match those returned by SetupPermissionResolution so validation passes.
-    /// The three no-GUID scopes are resolved via GetConsentedPermissionsAsync fallback.
+    /// Sets up the app info GET with all required permissions. The 5 GUID-resolvable permissions
+    /// match those returned by SetupPermissionResolution; AgentIdentity.Read.All and
+    /// AgentIdentity.DeleteRestore.All are resolved via the GetConsentedPermissionsAsync fallback.
     /// </summary>
     private void SetupAppInfoWithAllPermissions(string appId)
     {
@@ -834,15 +1077,11 @@ public class ClientAppValidatorTests
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
                 "resourceAccess": [
-                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
                     {"id": "{{AgentBlueprintReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{AgentBlueprintUpdateAuthId}}", "type": "Scope"},
-                    {"id": "{{AgentBlueprintAddRemoveCredsId}}", "type": "Scope"},
-                    {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{DirectoryReadAllId}}", "type": "Scope"},
-                    {"id": "{{AgentInstanceReadWriteAllId}}", "type": "Scope"},
-                    {"id": "{{UserReadId}}", "type": "Scope"},
-                    {"id": "{{UserReadWriteAllId}}", "type": "Scope"}
+                    {"id": "{{AgentBlueprintPrincipalCreateId}}", "type": "Scope"},
+                    {"id": "{{AgentRegistrationReadWriteAllId}}", "type": "Scope"},
+                    {"id": "{{ApplicationReadAllId}}", "type": "Scope"},
+                    {"id": "{{UserReadId}}", "type": "Scope"}
                 ]
             }
         ]
@@ -854,7 +1093,7 @@ public class ClientAppValidatorTests
 
     /// <summary>
     /// Sets up the Microsoft Graph SP permission resolution GET (select includes oauth2PermissionScopes).
-    /// Returns the 7 required permissions with GUIDs matching the test constants.
+    /// Returns the 5 required permissions with GUIDs matching the test constants.
     /// </summary>
     private void SetupPermissionResolution()
     {
@@ -864,15 +1103,11 @@ public class ClientAppValidatorTests
                 {
                     "id": "graph-sp-id-123",
                     "oauth2PermissionScopes": [
-                        {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
                         {"id": "{{AgentBlueprintReadWriteAllId}}", "value": "AgentIdentityBlueprint.ReadWrite.All"},
-                        {"id": "{{AgentBlueprintUpdateAuthId}}", "value": "AgentIdentityBlueprint.UpdateAuthProperties.All"},
-                        {"id": "{{AgentBlueprintAddRemoveCredsId}}", "value": "AgentIdentityBlueprint.AddRemoveCreds.All"},
-                        {"id": "{{DelegatedPermissionGrantReadWriteAllId}}", "value": "DelegatedPermissionGrant.ReadWrite.All"},
-                        {"id": "{{DirectoryReadAllId}}", "value": "Directory.Read.All"},
-                        {"id": "{{AgentInstanceReadWriteAllId}}", "value": "AgentInstance.ReadWrite.All"},
-                        {"id": "{{UserReadId}}", "value": "User.Read"},
-                        {"id": "{{UserReadWriteAllId}}", "value": "User.ReadWrite.All"}
+                        {"id": "{{AgentBlueprintPrincipalCreateId}}", "value": "AgentIdentityBlueprintPrincipal.Create"},
+                        {"id": "{{AgentRegistrationReadWriteAllId}}", "value": "AgentRegistration.ReadWrite.All"},
+                        {"id": "{{ApplicationReadAllId}}", "value": "Application.Read.All"},
+                        {"id": "{{UserReadId}}", "value": "User.Read"}
                     ]
                 }
             ]
@@ -913,6 +1148,22 @@ public class ClientAppValidatorTests
             Arg.Any<CancellationToken>(),
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(grantsJson)));
+        // Also mock GraphGetWithResponseAsync for the same grants endpoint — production code now
+        // uses this method to detect 403 (caller lacks DelegatedPermissionGrant.Read.All) without
+        // burying the status code. Returning a 200 with parsed JSON preserves the original
+        // consent-resolution behavior these tests rely on.
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(ConsentSpObjId)),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDocument.Parse(grantsJson)
+            }));
     }
 
     /// <summary>
@@ -950,6 +1201,19 @@ public class ClientAppValidatorTests
             Arg.Any<CancellationToken>(),
             Arg.Any<IEnumerable<string>?>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse("""{"value": []}""")));
+        // Mirror for GraphGetWithResponseAsync (used by GetConsentedPermissionsAsync to detect 403).
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(spObjectId)),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDocument.Parse("""{"value": []}""")
+            }));
     }
 
     /// <summary>

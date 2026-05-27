@@ -214,157 +214,6 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     // -------------------------------------------------------------------------
-    // GrantAgentIdentityPermissionsAsync tests
-    // -------------------------------------------------------------------------
-
-    private static (SetupContext ctx, GraphApiService graph) BuildGrantTestContext()
-    {
-        var graph = Substitute.ForPartsOf<GraphApiService>();
-
-        // Prevent real HTTP calls: return null for existing-grant lookup in CreateOrUpdateOauth2PermissionGrantAsync.
-        graph.GraphGetAsync(
-            Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns((System.Text.Json.JsonDocument?)null);
-
-        var config = new Agent365Config
-        {
-            AiTeammate = false,
-            TenantId = "tenant-id",
-            AgentIdentityDisplayName = "Test Agent",
-            ClientAppId = "client-app-id",
-            AgenticAppId = "agentic-app-id",
-        };
-
-        var mockExecutor = BuildMockExecutor();
-        var configService = Substitute.For<IConfigService>();
-        configService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
-            .Returns(Task.CompletedTask);
-
-        var ctx = new SetupContext(
-            config: config,
-            results: new SetupResults(),
-            logger: Substitute.For<ILogger>(),
-            configFile: new FileInfo("a365.config.json"),
-            generatedConfigPath: "a365.generated.config.json",
-            correlationId: "test-correlation-id",
-            skipInfrastructure: true,
-            skipRequirements: true,
-            cancellationToken: CancellationToken.None,
-            configService: configService,
-            executor: mockExecutor,
-            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
-            authValidator: Substitute.For<AzureAuthValidator>(
-                NullLogger<AzureAuthValidator>.Instance, mockExecutor),
-            platformDetector: Substitute.ForPartsOf<PlatformDetector>(
-                Substitute.For<ILogger<PlatformDetector>>()),
-            graphApiService: graph,
-            blueprintService: Substitute.ForPartsOf<AgentBlueprintService>(
-                Substitute.For<ILogger<AgentBlueprintService>>(), graph),
-            blueprintLookupService: Substitute.ForPartsOf<BlueprintLookupService>(
-                Substitute.For<ILogger<BlueprintLookupService>>(), graph),
-            federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(
-                Substitute.For<ILogger<FederatedCredentialService>>(), graph),
-            clientAppValidator: Substitute.For<IClientAppValidator>(),
-            loginHintResolver: () => Task.FromResult<string?>(null));
-
-        return (ctx, graph);
-    }
-
-    private static List<ResourcePermissionSpec> OneSpec() =>
-        [new ResourcePermissionSpec("resource-app-id", "Test Resource", ["user_impersonation"], false)];
-
-    /// <summary>
-    /// When all SP lookups and grant POSTs succeed, no warnings are added to SetupResults.
-    /// </summary>
-    [Fact]
-    public async Task GrantAgentIdentityPermissions_HappyPath_NoWarningsAdded()
-    {
-        var (ctx, graph) = BuildGrantTestContext();
-
-        graph.GetCurrentUserObjectIdAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns("user-object-id");
-
-        graph.EnsureServicePrincipalForAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
-            .Returns("sp-object-id");
-
-        graph.GraphPostWithResponseAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, Body = "{}" });
-
-        await NonDwBlueprintSetupOrchestrator.GrantAgentIdentityPermissionsAsync(ctx, OneSpec());
-
-        ctx.Results.HasWarnings.Should().BeFalse(because: "all grants succeeded — no warnings expected");
-    }
-
-    /// <summary>
-    /// When the agent identity SP cannot be resolved, no grant POSTs are made and the method
-    /// returns early without adding a warning to SetupResults (SP lookup failure is logged, not a Results entry).
-    /// </summary>
-    [Fact]
-    public async Task GrantAgentIdentityPermissions_AgentIdentitySpNotFound_NoGrantCallsMade()
-    {
-        var (ctx, graph) = BuildGrantTestContext();
-
-        graph.EnsureServicePrincipalForAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
-            .Returns((string?)null);
-
-        await NonDwBlueprintSetupOrchestrator.GrantAgentIdentityPermissionsAsync(ctx, OneSpec());
-
-        await graph.DidNotReceive().GraphPostWithResponseAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
-    }
-
-    /// <summary>
-    /// When a permission grant POST fails, anyFailed is set and a warning is added to
-    /// ctx.Results.Warnings so the setup summary reflects the partial failure.
-    /// </summary>
-    [Fact]
-    public async Task GrantAgentIdentityPermissions_GrantFails_AddsWarningToResults()
-    {
-        var (ctx, graph) = BuildGrantTestContext();
-
-        graph.EnsureServicePrincipalForAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
-            .Returns("sp-object-id");
-
-        graph.GraphPostWithResponseAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(new GraphApiService.GraphResponse { IsSuccess = false, Body = "Unauthorized" });
-
-        await NonDwBlueprintSetupOrchestrator.GrantAgentIdentityPermissionsAsync(ctx, OneSpec());
-
-        ctx.Results.HasWarnings.Should().BeTrue(because: "a grant failure must surface in setup results");
-        ctx.Results.Warnings.Should().ContainSingle()
-            .Which.Should().Contain("Entra portal",
-                because: "the warning must tell the user where to manually grant permissions");
-    }
-
-    /// <summary>
-    /// When specs is empty the method returns immediately — no SP lookups or grant calls made.
-    /// </summary>
-    [Fact]
-    public async Task GrantAgentIdentityPermissions_EmptySpecs_NoCallsAndNoSideEffects()
-    {
-        var (ctx, graph) = BuildGrantTestContext();
-
-        await NonDwBlueprintSetupOrchestrator.GrantAgentIdentityPermissionsAsync(ctx, []);
-
-        ctx.Results.HasWarnings.Should().BeFalse();
-        await graph.DidNotReceive().EnsureServicePrincipalForAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>());
-    }
-
-    // -------------------------------------------------------------------------
     // Idempotency tests — Steps 5 & 6
     // -------------------------------------------------------------------------
 
@@ -474,10 +323,11 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// Step 5: When the lookup returns null, CreateAgentIdentityDelegatedAsync must be called.
+    /// Step 5 (--agent-registration-only): When the API lookup returns null, the path must error out
+    /// rather than create a new identity — identity creation is not the responsibility of this flag.
     /// </summary>
     [Fact]
-    public async Task Step5_CreatesNewIdentity_WhenNotFoundByApiLookup()
+    public async Task Step5_FailsWithError_WhenIdentityNotFoundByApiLookup()
     {
         var (ctx, graph, blueprintService) = BuildIdempotencyTestContext();
 
@@ -485,20 +335,15 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns((string?)null);
 
-        graph.CreateAgentIdentityDelegatedAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns("new-sp-id");
+        var exitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
-        graph.RegisterAgentInstanceAsyncV2(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
-            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
-            .Returns(("new-reg-id", false));
-
-        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
-
-        ctx.Results.AgentIdentityId.Should().Be("new-sp-id",
-            because: "a new agent identity must be created when no existing one is found");
-        await graph.Received(1).CreateAgentIdentityDelegatedAsync(
+        exitCode.Should().Be(1,
+            because: "missing agent identity is a fatal error for --agent-registration-only");
+        ctx.Results.AgentIdentityFailed.Should().BeTrue(
+            because: "identity not found via API lookup must surface as an identity failure");
+        ctx.Results.AgentRegistrationFailed.Should().BeTrue(
+            because: "registration cannot proceed without an agent identity");
+        await graph.DidNotReceive().CreateAgentIdentityDelegatedAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
@@ -874,8 +719,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// When AgenticAppId is missing (the SP object ID was never stored), S2SAppRoleGranted
-    /// is set to false and no grant calls are made — the SP ID is required as the grant target.
+    /// When AgenticAppId is missing (the SP object ID was never stored), AgentIdentityS2SOutcome
+    /// is set to Failed and no grant calls are made — the SP ID is required as the grant target.
     /// AgenticAppId holds the SP object ID directly (not an app ID); no lookup is performed.
     /// </summary>
     [Fact]
@@ -886,15 +731,15 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 
-        ctx.Results.S2SAppRoleGranted.Should().Be(false,
-            because: "when AgenticAppId (the SP object ID) is absent, grants cannot proceed and the result must be false");
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
+            because: "when AgenticAppId (the SP object ID) is absent, grants cannot proceed and the outcome must be Failed");
         await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>
-    /// When all GrantAppRoleAssignmentAsync calls return true, S2SAppRoleGranted is true
+    /// When all GrantAppRoleAssignmentAsync calls return true, AgentIdentityS2SOutcome is Granted
     /// and no warning is added — this is the Global Admin success path.
     /// </summary>
     [Fact]
@@ -910,19 +755,19 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         blueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(true));
+            .Returns(Task.FromResult(new Cli.Models.AppRoleGrantResult(AllSucceeded: true, AllAlreadyAssigned: false)));
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 
-        ctx.Results.S2SAppRoleGranted.Should().Be(true,
-            because: "when all app role assignments succeed, S2SAppRoleGranted must be true");
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
+            because: "when all app role assignments succeed, AgentIdentityS2SOutcome must be Granted");
         ctx.Results.HasWarnings.Should().BeFalse(
             because: "a successful S2S grant must not add any warnings to setup results");
     }
 
     /// <summary>
     /// When GrantAppRoleAssignmentAsync returns false (caller lacks Global Admin),
-    /// S2SAppRoleGranted is false, a warning is added, and PowerShell instructions are logged.
+    /// AgentIdentityS2SOutcome is Failed, a warning is added, and PowerShell instructions are logged.
     /// </summary>
     [Fact]
     public async Task GrantOrInstructAgentIdentityAppPermissions_GrantFails_SetsGrantedFalse_AddsWarning()
@@ -937,12 +782,12 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         blueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(false));
+            .Returns(Task.FromResult(new Cli.Models.AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false)));
 
         await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
 
-        ctx.Results.S2SAppRoleGranted.Should().Be(false,
-            because: "when app role assignments fail (non-admin path), S2SAppRoleGranted must be false");
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
+            because: "when app role assignments fail (non-admin path), AgentIdentityS2SOutcome must be Failed");
         ctx.Results.HasWarnings.Should().BeTrue(
             because: "a failed S2S grant must add a warning so the setup summary shows Action Required");
         ctx.Results.Warnings.Should().ContainSingle()

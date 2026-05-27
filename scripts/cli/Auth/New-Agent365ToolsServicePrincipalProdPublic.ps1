@@ -190,7 +190,7 @@ Write-Host "You need admin permissions for this operation." -ForegroundColor Yel
 Write-Host ""
 
 try {
-    Connect-MgGraph -Scopes "AppRoleAssignment.ReadWrite.All" -NoWelcome
+    Connect-MgGraph -Scopes "Application.ReadWrite.All" -NoWelcome
     $context = Get-MgContext
     Write-Host "Connected to tenant: $($context.TenantId)" -ForegroundColor Green
     Write-Host ""
@@ -231,7 +231,7 @@ catch {
         Write-Host "This error usually means you don't have admin permissions." -ForegroundColor Yellow
         Write-Host ""
         Write-Host "Required Permissions:" -ForegroundColor Cyan
-        Write-Host "  - AppRoleAssignment.ReadWrite.All" -ForegroundColor White
+        Write-Host "  - Application.ReadWrite.All" -ForegroundColor White
         Write-Host "  - Or Global Administrator / Application Administrator role" -ForegroundColor White
         Write-Host ""
         Write-Host "Please contact your Microsoft Entra ID administrator to run this script." -ForegroundColor Yellow

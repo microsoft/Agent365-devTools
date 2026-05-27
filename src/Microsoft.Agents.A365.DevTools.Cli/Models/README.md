@@ -40,7 +40,9 @@ This folder contains data models used throughout the CLI. Models are organized b
 
 | Model | File | Description |
 |-------|------|-------------|
-| **EnumeratedScopes** | `EnumeratedScopes.cs` | Graph API scope enumeration results |
+| **AllAllowedScopes / AllAllowedRoles** | `InheritablePermissionTypes.cs` | Wire-format models for the inheritablePermissions polymorphic properties on agent identity blueprints (kind=allAllowed). |
+| **AuthMode** | `AuthMode.cs` | Enum for agent identity grant type: `Obo`, `S2s`, `Both`. |
+| **GrantOutcome** | `GrantOutcome.cs` | Enum for per-grant result: `Granted`, `Failed`, `NotApplicable`. |
 
 ### Other Models
 

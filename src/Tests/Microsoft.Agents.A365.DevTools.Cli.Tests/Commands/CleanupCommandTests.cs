@@ -6,6 +6,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
@@ -210,6 +211,28 @@ public class CleanupCommandTests
         // Verify no Azure CLI commands are executed when config loading fails
         await _mockExecutor.DidNotReceive().ExecuteAsync(
             "az", Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CleanupAzure_WhenConfigFileNotFound_ShouldReturnExitCode2()
+    {
+        // Arrange — ConfigFileNotFoundException.ExitCode is 2 (configuration error).
+        // Scripts checking $LASTEXITCODE must distinguish missing config (2) from general errors (1).
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromException<Agent365Config>(new ConfigFileNotFoundException()));
+
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+            .Returns(Task.FromResult(false));
+
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
+        var args = new[] { "cleanup", "azure" };
+
+        // Act
+        var result = await command.InvokeAsync(args);
+
+        // Assert
+        result.Should().Be(2,
+            because: "ConfigFileNotFoundException propagates with ExitCode=2; the outer catch sets context.ExitCode = ex.ExitCode");
     }
 
     [Fact]

@@ -278,6 +278,7 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("remote-scopes");
         optionNames.Should().Contain("tenant-id");
         optionNames.Should().Contain("service-tree-id");
+        optionNames.Should().Contain("secret-lifetime-months");
         optionNames.Should().Contain("publisher");
         optionNames.Should().Contain("description");
         optionNames.Should().Contain("dry-run");
@@ -319,6 +320,7 @@ public class DevelopMcpCommandTests
     [InlineData("register-external-mcp-server", "auth-type", "-a")]
     [InlineData("register-external-mcp-server", "input-file", "-f")]
     [InlineData("register-external-mcp-server", "tenant-id", "-t")]
+    [InlineData("register-external-mcp-server", "secret-lifetime-months", "-l")]
     public void CriticalOptions_HaveConsistentAliases(string subcommandName, string optionName, string expectedAlias)
     {
         // Act

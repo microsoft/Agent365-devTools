@@ -111,6 +111,50 @@ src/Microsoft.Agents.A365.DevTools.Cli/
 - All `IDisposable` objects must be disposed (especially `HttpResponseMessage`)
 - Cross-platform compatibility required (Windows, macOS, Linux)
 
+### Input Validation
+User-controlled input that reaches file system operations must be validated before use. This applies to CLI arguments, config values read from disk, and any value whose origin is outside this process.
+
+- Validate against an explicit allowlist pattern (e.g. `^[a-z0-9-]+$`) before interpolating into file names or paths
+- Reject inputs containing path separators, `..` segments, or characters outside the allowed set
+- Apply `ArgumentException.ThrowIfNullOrWhiteSpace` for string parameters where an empty or whitespace value would cause a silent failure — a non-nullable type alone is insufficient
+- CLI `Option<string?>` values default to null when omitted but can be explicitly passed as empty or whitespace by the user — check `IsNullOrWhiteSpace` on option values before use, and emit a targeted error rather than falling through to a confusing downstream failure (e.g. `Directory.Exists("")`)
+
+```csharp
+// Correct: validate user input before using it in a path
+if (!Regex.IsMatch(commandName, @"^[a-z0-9-]+$"))
+{
+    logger.LogError("Invalid command name '{Name}'. Use lowercase letters, digits, and hyphens only.", commandName);
+    context.ExitCode = 1;
+    return;
+}
+
+// Correct: guard non-nullable string parameters against empty/whitespace
+ArgumentException.ThrowIfNullOrWhiteSpace(generatedConfigPath);
+```
+
+### CLI Command Exit Codes
+Every failure path in a command handler must set `context.ExitCode = 1` before returning or continuing. This includes `continue` statements inside loops, not just top-level `return` statements.
+
+- Trace every branch — `if (!condition) { log; continue; }` is a failure path and needs `ExitCode = 1`
+- Verify the post-loop summary block covers all zero-export cases, not just the auto-discovery case
+
+```csharp
+// Wrong: warning logged but ExitCode left at 0
+logger.LogWarning("No log found for '{Name}'.", name);
+continue;
+
+// Correct: set exit code before every failure exit
+logger.LogWarning("No log found for '{Name}'.", name);
+context.ExitCode = 1;
+continue;
+```
+
+### Data Flow Consistency
+When a transformation (redaction, sanitization, encoding) is applied to a value, identify every place that same value is written and apply the transformation consistently. Header lines, log output, and file names are common places where the same data appears a second time without the transformation.
+
+- After writing redaction or sanitization logic, ask: "where else does this raw value appear in the output?"
+- The source file path, for example, may appear both in log content and in a header — both need the same redaction pass
+
 ### Error Handling
 - Use centralized error codes from `Constants/ErrorCodes.cs`
 - Use centralized messages from `Constants/ErrorMessages.cs`
@@ -145,3 +189,8 @@ Central NuGet package management in `src/Directory.Packages.props`. Key dependen
 3. Ensure SOLID principles are followed
 4. Resource disposal for all IDisposable objects
 5. Cross-platform compatibility
+6. **Input validation:** Any CLI argument or external value used in a file path or file name is validated against an allowlist pattern before use
+7. **Value safety:** String parameters that must be non-empty use `ArgumentException.ThrowIfNullOrWhiteSpace`, not just a non-nullable type
+8. **Exit code completeness:** Every failure branch in a command handler (including `continue` inside loops) sets `context.ExitCode = 1`
+9. **Data flow consistency:** Any transformation applied to a value (redaction, sanitization) is applied everywhere that value is written — including headers, summaries, and log lines, not just the primary content
+10. **Command handler branch tests:** Every new `SetHandler` command handler must have invocation tests covering: invalid input → exit code 1, missing resource → exit code 1, bad output path → exit code 1, and successful path → exit code 0 with expected side effect (file written, message logged)

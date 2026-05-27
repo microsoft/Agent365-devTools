@@ -213,8 +213,7 @@ public class Agent365Config
 
     /// <summary>
     /// Controls which setup and publish flow is used.
-    /// true (default) = AI Teammate agent: setup all provisions blueprint and permissions only;
-    ///   agent identity SP and Entra user are created separately via 'a365 create-instance'.
+    /// true (default) = AI Teammate agent: setup all provisions blueprint and permissions only.
     /// false = blueprint-only agent: setup all auto-creates agent identity SP; no Entra user. Two variants:
     ///   - UseBlueprint = false: App Registration + Azure Bot, no blueprint.
     ///   - UseBlueprint = true:  Blueprint-only non-DW flow (Agent Identity Blueprint + Agent Instance).
@@ -437,13 +436,13 @@ public class Agent365Config
     /// <summary>
     /// Azure AD application/identity ID for the agentic app.
     /// </summary>
-    [JsonPropertyName("AgenticAppId")]
+    [JsonPropertyName("agenticAppId")]
     public string? AgenticAppId { get; set; }
 
     /// <summary>
     /// User ID for the agentic user created during setup.
     /// </summary>
-    [JsonPropertyName("AgenticUserId")]
+    [JsonPropertyName("agenticUserId")]
     public string? AgenticUserId { get; set; }
 
     /// <summary>

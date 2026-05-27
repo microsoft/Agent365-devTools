@@ -312,51 +312,6 @@ public class GraphApiServiceTests
         actualToken.Should().NotContain("\n", "Token should not contain newline characters");
     }
 
-    [Fact]
-    public async Task CheckServicePrincipalCreationPrivilegesAsync_SanitizesTokenWithNewlines()
-    {
-        // This test verifies that CheckServicePrincipalCreationPrivilegesAsync sanitizes
-        // tokens with embedded whitespace before setting the Authorization header.
-        // Token acquisition now goes through IAuthenticationService (MSAL), not az CLI.
-
-        // Arrange
-        HttpRequestMessage? capturedRequest = null;
-        var handler = new CapturingHttpMessageHandler((req) => capturedRequest = req);
-        var logger = Substitute.For<ILogger<GraphApiService>>();
-        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
-
-        // Auth service returns a token WITH embedded newlines — simulates a whitespace-padded token.
-        var authWithNewlines = Substitute.For<IAuthenticationService>();
-        authWithNewlines.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
-            .Returns(Task.FromResult("privileges-check-token\r\n\n"));
-
-        var service = new GraphApiService(logger, executor, authWithNewlines, handler, loginHintResolver: () => Task.FromResult<string?>(null));
-
-        // Queue a successful response for the directory roles query
-        using var queuedResponse = new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("{\"value\":[{\"displayName\":\"Application Administrator\"}]}")
-        };
-        handler.QueueResponse(queuedResponse);
-
-        // Act - This should NOT throw FormatException
-        var (hasPrivileges, roles) = await service.CheckServicePrincipalCreationPrivilegesAsync("tenant-123");
-
-        // Assert
-        capturedRequest.Should().NotBeNull("HTTP request should have been sent");
-        capturedRequest!.Headers.Authorization.Should().NotBeNull("Authorization header should be set");
-
-        var actualToken = capturedRequest.Headers.Authorization!.Parameter;
-        actualToken.Should().NotBeNull();
-        actualToken.Should().NotContain("\r", "Token should not contain carriage return characters");
-        actualToken.Should().NotContain("\n", "Token should not contain newline characters");
-        actualToken.Should().Be("privileges-check-token", "Token should be sanitized to just the token value");
-
-        // Also verify the method returns correct results
-        hasPrivileges.Should().BeTrue("User has Application Administrator role");
-        roles.Should().Contain("Application Administrator");
-    }
 
     #region GetServicePrincipalDisplayNameAsync Tests
 
@@ -508,24 +463,67 @@ public class GraphApiServiceTests
 
     #region IsCurrentUserAdminAsync
 
+    // Role checks now decode the wids claim from the MSAL access token instead of calling Graph.
+    // Tests provide a fake JWT with the appropriate wids array via FakeAuthReturning().
+
+    private static string BuildJwtWithWids(params string[] wids)
+    {
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(new { wids });
+        var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payloadJson))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        return $"eyJhbGciOiJub25lIn0.{b64}.";
+    }
+
+    private static IAuthenticationService FakeAuthReturning(string? token)
+    {
+        var mock = Substitute.For<IAuthenticationService>();
+        mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult<string>(token!));
+        return mock;
+    }
+
+    private static GraphApiService CreateServiceWithWids(TestHttpMessageHandler handler, params string[] roleWids)
+    {
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        var jwt = BuildJwtWithWids(roleWids);
+        // CheckDirectoryRoleAsync now requires the token to come from _tokenProvider (the path
+        // that uses the custom client app's clientId — the only app with the `wids` optional
+        // claim configured). The previous AuthenticationService-based mock would not be hit by
+        // the production code path.
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
+            .Returns(jwt);
+        return new GraphApiService(logger, executor, FakeAuthReturning(jwt), handler, tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+    }
+
+    private static GraphApiService CreateServiceWithNullAuth(TestHttpMessageHandler handler)
+    {
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        // Simulate token acquisition failure on the token-provider path (the path
+        // CheckDirectoryRoleAsync now uses).
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
+            .Returns((string?)null);
+        return new GraphApiService(logger, executor, FakeAuthReturning(null), handler, tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+    }
+
     [Fact]
     public async Task IsCurrentUserAdminAsync_UserWithGlobalAdminRole_ReturnsHasRole()
     {
-        // Arrange — user holds the Global Administrator role
+        // Arrange — MSAL token contains wids claim with Global Administrator template ID
         using var handler = new TestHttpMessageHandler();
-        var service = CreateServiceWithTokenProvider(handler);
-
-        var rolesResponse = new
-        {
-            value = new[]
-            {
-                new { roleTemplateId = "62e90394-69f5-4237-9190-012177145e10" }  // Global Administrator
-            }
-        };
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
-        });
+        var service = CreateServiceWithWids(handler, "62e90394-69f5-4237-9190-012177145e10");
 
         // Act
         var result = await service.IsCurrentUserAdminAsync("tenant-123");
@@ -537,15 +535,9 @@ public class GraphApiServiceTests
     [Fact]
     public async Task IsCurrentUserAdminAsync_UserWithNoAdminRole_ReturnsDoesNotHaveRole()
     {
-        // Arrange — user has no admin roles
+        // Arrange — MSAL token contains wids claim with no matching role GUIDs
         using var handler = new TestHttpMessageHandler();
-        var service = CreateServiceWithTokenProvider(handler);
-
-        var rolesResponse = new { value = Array.Empty<object>() };
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
-        });
+        var service = CreateServiceWithWids(handler);  // empty wids
 
         // Act
         var result = await service.IsCurrentUserAdminAsync("tenant-123");
@@ -555,19 +547,19 @@ public class GraphApiServiceTests
     }
 
     [Fact]
-    public async Task IsCurrentUserAdminAsync_GraphFails_ReturnsUnknown()
+    public async Task IsCurrentUserAdminAsync_TokenAcquisitionFails_ReturnsUnknown()
     {
-        // Arrange — Graph call fails (500 causes GraphGetAsync to return null)
+        // Arrange — token acquisition returns null (auth failure). The role check now decodes
+        // wids from the access token, so a failed acquisition (rather than a Graph 500) is the
+        // realistic failure mode.
         using var handler = new TestHttpMessageHandler();
-        var service = CreateServiceWithTokenProvider(handler);
-
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        var service = CreateServiceWithNullAuth(handler);
 
         // Act
         var result = await service.IsCurrentUserAdminAsync("tenant-123");
 
         // Assert
-        result.Should().Be(RoleCheckResult.Unknown, "a failed Graph call should return Unknown, not DoesNotHaveRole");
+        result.Should().Be(RoleCheckResult.Unknown, "a failed token acquisition should return Unknown, not DoesNotHaveRole");
     }
 
     #endregion
@@ -706,15 +698,9 @@ public class GraphApiServiceTests
     [Fact]
     public async Task IsCurrentUserAgentIdAdminAsync_UserWithNoRelevantRole_ReturnsDoesNotHaveRole()
     {
-        // Arrange — user is an Agent ID developer (no admin roles)
+        // Arrange — MSAL token contains wids with no Agent ID Administrator GUID
         using var handler = new TestHttpMessageHandler();
-        var service = CreateServiceWithTokenProvider(handler);
-
-        var rolesResponse = new { value = Array.Empty<object>() };
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
-        });
+        var service = CreateServiceWithWids(handler);  // empty wids
 
         // Act
         var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
@@ -726,21 +712,9 @@ public class GraphApiServiceTests
     [Fact]
     public async Task IsCurrentUserAgentIdAdminAsync_UserWithAgentIdAdminRole_ReturnsHasRole()
     {
-        // Arrange — user holds the Agent ID Administrator role
+        // Arrange — MSAL token contains wids with Agent ID Administrator template ID
         using var handler = new TestHttpMessageHandler();
-        var service = CreateServiceWithTokenProvider(handler);
-
-        var rolesResponse = new
-        {
-            value = new[]
-            {
-                new { roleTemplateId = "db506228-d27e-4b7d-95e5-295956d6615f" }  // Agent ID Administrator
-            }
-        };
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
-        });
+        var service = CreateServiceWithWids(handler, "db506228-d27e-4b7d-95e5-295956d6615f");
 
         // Act
         var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
@@ -752,22 +726,9 @@ public class GraphApiServiceTests
     [Fact]
     public async Task IsCurrentUserAgentIdAdminAsync_UserWithGlobalAdminRoleOnly_ReturnsDoesNotHaveRole()
     {
-        // Arrange — user is a Global Administrator but not an Agent ID Administrator
+        // Arrange — MSAL token has Global Administrator GUID but not Agent ID Administrator GUID
         using var handler = new TestHttpMessageHandler();
-        var service = CreateServiceWithTokenProvider(handler);
-
-        // User holds Global Administrator only — not Agent ID Administrator
-        var rolesResponse = new
-        {
-            value = new[]
-            {
-                new { roleTemplateId = "62e90394-69f5-4237-9190-012177145e10" }  // Global Administrator
-            }
-        };
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(JsonSerializer.Serialize(rolesResponse))
-        });
+        var service = CreateServiceWithWids(handler, "62e90394-69f5-4237-9190-012177145e10");
 
         // Act
         var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
@@ -777,19 +738,19 @@ public class GraphApiServiceTests
     }
 
     [Fact]
-    public async Task IsCurrentUserAgentIdAdminAsync_GraphReturnsNull_ReturnsUnknown()
+    public async Task IsCurrentUserAgentIdAdminAsync_TokenAcquisitionFails_ReturnsUnknown()
     {
-        // Arrange — Graph call fails (null response simulates network/auth error)
+        // Arrange — token acquisition returns null (auth failure). The role check now decodes
+        // wids from the access token, so a failed acquisition (rather than a Graph 500) is the
+        // realistic failure mode.
         using var handler = new TestHttpMessageHandler();
-        var service = CreateServiceWithTokenProvider(handler);
-
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        var service = CreateServiceWithNullAuth(handler);
 
         // Act
         var result = await service.IsCurrentUserAgentIdAdminAsync("tenant-123");
 
         // Assert
-        result.Should().Be(RoleCheckResult.Unknown, "a failed Graph call should return Unknown, not DoesNotHaveRole");
+        result.Should().Be(RoleCheckResult.Unknown, "a failed token acquisition should return Unknown, not DoesNotHaveRole");
     }
 
     #endregion

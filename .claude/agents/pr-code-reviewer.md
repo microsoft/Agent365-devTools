@@ -207,6 +207,212 @@ For each changed file, analyze:
    - Run `Grep` for the old string in `src/Tests/**/*.cs`
    - If test files assert `Contains("old string")` and the old string is gone, the test will silently pass with the wrong message — flag HIGH
 
+   **D. `catch (SomeException ex)` sets `context.ExitCode = <literal>` → verify literal matches exception class**
+   When the diff adds or modifies a catch block that sets `context.ExitCode` to a literal integer:
+   - Use `Grep` or `Read` to find the exception class definition (look for `class <ExceptionType>` in `Exceptions/` or `Commands/`)
+   - Check whether the class has an `ExitCode` property override (e.g., `public override int ExitCode => 2;`)
+   - If the literal does not match the property's return value, flag **HIGH** — the command will report a wrong exit code to scripts and CI pipelines that check `$LASTEXITCODE`
+   - **Fix pattern**: replace `context.ExitCode = 1;` with `context.ExitCode = ex.ExitCode;` so the exit code is always authoritative from the exception definition
+   - **Real example (PR #406, Comments 5 & 6)**: `ConfigFileNotFoundException.ExitCode => 2`, but two catch blocks in `AllSubcommand.cs` hardcoded `context.ExitCode = 1`. Scripts expecting exit code 2 on configuration errors received 1 instead.
+
+   **E. Static scope array emptied or scopes removed → verify callers and document intent**
+   When the diff sets a static `string[]` scope array to `[]` or removes entries from it (e.g., `RequiredPermissionGrantScopes`, `RequiredS2SGrantScopes`):
+   - Run `Grep` for every reference to the array across non-test source files
+   - For each call site that passes the array as `scopes` to `EnsureGraphHeadersAsync` or equivalent:
+     - Read the `hasScopes = scopes?.Any() == true` guard logic — confirm the empty-array fallback path still acquires a valid token via `GetGraphAccessTokenAsync` (the standard `AuthenticationService` path)
+     - Confirm the operations that previously needed those scopes are still covered by `RequiredClientAppPermissions` or by a PowerShell fallback
+   - Check that the XML doc on the constant explains WHY it is empty and names the fallback behavior
+   - Severity: **MEDIUM** if XML doc doesn't explain empty state; **HIGH** if fallback path would fail in practice
+
+   **F. Runtime `Contains()` on a static compile-time array → verify element IS in the array**
+   When the diff adds `SomeStaticArray.Contains(SomeConstant)` as a guard condition:
+   - Read `SomeStaticArray`'s initializer — confirm whether `SomeConstant` is actually present
+   - If `SomeConstant` is intentionally absent (disabled feature, future path), the condition is always `false`:
+     - Verify the `else` branch handles the always-false case correctly and critical functionality is not silently skipped
+     - Require a comment that makes the always-false state explicit AND states the consequence (e.g., "this means agent user cleanup is always skipped until create-instance is re-enabled")
+   - Severity: **MEDIUM** if consequence is limited scope; **HIGH** if critical functionality (e.g., cleanup of real resources) is silently disabled with no user-visible warning
+   - **Real example (PR #409)**: `RequiredClientAppPermissions.Contains(AgentIdUserReadWriteAllScope)` is always `false` because that scope is intentionally absent — agent user queries and cleanup always skip silently
+
+   **G. XML/inline comments claiming permission scope semantics → verify against actual scope requirements**
+   When the diff adds or modifies `///` XML comments (especially in test files) that describe what a permission scope covers (e.g., "umbrella — includes SP creation", "covers X, Y, Z"):
+   - Cross-check the claim against `RequiredClientAppPermissions` and the PR's own changes
+   - Specifically: if the PR adds a *separate* scope for an operation (e.g., `AgentIdentityBlueprintPrincipal.Create` for SP creation), any comment claiming that operation is "covered by the umbrella" is now wrong
+   - Flag **MEDIUM** for inaccurate scope coverage claims in comments — these mislead future reviewers and generate follow-up PR comments
+   - **Real example (PR #409)**: XML comment said `AgentIdentityBlueprint.ReadWrite.All` "includes SP creation" but the same PR requires `AgentIdentityBlueprintPrincipal.Create` separately for SP creation
+
+   **H. JWT claim decoded → verify the token was issued by the app registration that has the claim configured**
+   When the diff adds code that decodes a JWT and reads a claim that is configured *per app registration*
+   (e.g., `wids`, `roles`, `groups`, any custom optional claim from Entra Token Configuration):
+   - Trace backward from the decoder to the token-acquisition call. Identify which clientId issues the token.
+   - If acquisition goes through `AuthenticationService.GetAccessTokenAsync(...)` without an explicit
+     `clientId` argument, the token is from the PowerShell well-known clientId
+     (`AuthenticationConstants.PowershellClientId`) — **not** the custom client app. Optional claims
+     configured on the custom client app's manifest will NOT be in this token.
+   - The correct path for tokens that must carry custom-app optional claims is
+     `IMicrosoftGraphTokenProvider.GetMgGraphAccessTokenAsync(..., clientAppId: CustomClientAppId, ...)`.
+   - Flag **HIGH** when the decoder relies on a claim that the issuing app doesn't have configured.
+     The bug is silent: the decoder returns "claim absent → Unknown / DoesNotHaveRole", and the caller
+     proceeds with the conservative path (e.g., admin treated as non-admin → admin URL printed even
+     for actual admins). Functional but degraded UX, easy to miss in passing tests because mocks
+     usually return a hand-crafted JWT regardless of which auth path is used.
+   - Also apply this rule to **empty static scope arrays** (related to Rule E): when an empty
+     `IEnumerable<string>` is passed to a helper that routes "no scopes" through the legacy
+     `AuthenticationService` path, the token will be from the PowerShell clientId. If any downstream
+     code reads custom-app optional claims, the routing is wrong.
+   - **Real example (PR #409)**: `CheckDirectoryRoleAsync` decoded `wids` from a token acquired via
+     `GetGraphAccessTokenAsync` → `AuthenticationService` → PowerShell clientId. `wids` was
+     configured on the custom client app only, so the JWT never carried it and the method always
+     returned `Unknown`. Fix: route through `_tokenProvider` with `CustomClientAppId` and a minimal
+     scope (`User.Read`).
+
+   **D2. Cross-method "catch-returns-null / caller-sets-ExitCode" pattern — same exit-code problem, harder to spot**
+   Rule 9-D catches *inline* catch blocks. This variant spans two methods and is easy to miss:
+   ```csharp
+   // Helper:
+   catch (ConfigFileNotFoundException) { logger.Log...; return null; }
+   // Caller:
+   var config = await LoadConfigAsync(...);
+   if (config == null) { context.ExitCode = 1; return; }   // ← wrong exit code
+   ```
+   Detection:
+   - When a diff adds a private helper method that catches a typed exception, logs guidance, and **returns null**, search the file for every call site of that helper
+   - At each call site, find the null-check guard and read the hardcoded `context.ExitCode` literal
+   - Look up the exception class's `ExitCode` override as in Rule 9-D
+   - If the literals differ, flag **HIGH**
+   - Also check whether the PR already fixed this pattern in a *sibling* command (e.g., `AllSubcommand.cs` was fixed to use `ex.ExitCode`). If so, grep all files in `Commands/` for the same helper+null-check pattern — any remaining hardcoded literal is a miss.
+   - **Fix pattern**: Change `return null;` to `throw;` in the helper; add `catch (ExceptionType ex) { context.ExitCode = ex.ExitCode; }` before the outer `catch (Exception ex)` at each call site. This matches the AllSubcommand.cs pattern.
+
+   **I. Log message tense vs. action timing — "creating X" before the write fires**
+
+   When a `LogInformation`/`LogWarning` call uses **present-continuous tense** (`"creating"`, `"writing"`, `"deleting"`, `"updating"`, `"saving"`, `"removing"`) and is placed **before** the corresponding I/O or state-mutation call:
+
+   - The log fires regardless of whether the action succeeds. If the next call throws (permission denied, disk full, network failure), users see "creating a new manifest" in the log with no manifest on disk and no obvious indication the action did not complete.
+   - **Detection**: For each new/changed `LogInformation` or `LogWarning` line in the diff, look at the next ~10 lines. If a `File.Write*`, `Directory.Create*`, `*.WriteAsync`, `*.SaveAsync`, HTTP `Post*`/`Put*`/`Delete*`, or similar mutating call follows in the same try-block, the log tense is suspect.
+   - **Severity**: **LOW** by default; **MEDIUM** if the failure mode is silent (no terminal `LogError` would distinguish "did nothing" from "did the thing"). Flag higher if the log is the *only* user-visible signal that the action ran.
+   - **Fix patterns** (in preference order):
+     1. Use future tense: `"creating a new manifest"` → `"will create a new manifest"`. Cheapest and clearest at the announcement point.
+     2. Move the log to after the successful write: `await File.WriteAllTextAsync(...); logger.LogInformation("Created new manifest at {Path}", ...);`. Stronger guarantee but loses the "starting" announcement.
+     3. Use both: announce in future tense before, confirm in past tense after.
+   - **Real example (this PR)**: `DevelopCommand.cs` logged `"{FileName} not found at {Path}; creating a new manifest."` before calling `WriteManifestAsync`. Copilot flagged it. Reworded to `"; will create a new manifest."`.
+
+   **J. `internal` member referenced from a test project — verify `InternalsVisibleTo` is wired**
+
+   When a test file references an `internal` const, method, type, or property defined in the production assembly:
+
+   - The test will only compile if the production csproj declares `<InternalsVisibleTo Include="<TestAssemblyName>" />` (either via MSBuild item or `[assembly: InternalsVisibleTo(...)]` attribute).
+   - **Detection**: When the diff includes a new `internal` declaration in `src/<ProjectName>/` AND that identifier appears in `src/Tests/<ProjectName>.Tests/`:
+     1. `Grep` the production csproj for `InternalsVisibleTo`. If the test assembly is listed, the code compiles — but a human or AI reviewer who skips the csproj will still flag this.
+     2. If `InternalsVisibleTo` is **missing**, flag as **HIGH** with severity `logic_error` — the code does not compile.
+     3. If `InternalsVisibleTo` is **present**, decide one of: (a) promote the member to `public` to eliminate future review noise (preferred for constants documenting an env var, config key, or other API-surface contract), or (b) leave it `internal` but add an inline comment referencing the `InternalsVisibleTo` line in the csproj.
+   - **Real example (this PR, Copilot Comment 1)**: `McpServerCatalogWriter.CatalogPathEnvVar` was `internal`. Copilot flagged a likely compile break. The repo *did* have `<InternalsVisibleTo>` wired, so the code compiled — but Copilot's reviewer did not check the csproj. Promoting the const to `public` removed the noise; the const is a documented external contract anyway.
+
+   **K. Environment variable consumed by a file API without normalization**
+
+   When `Environment.GetEnvironmentVariable("<NAME>")` is read and the returned string is passed (directly or after a single null/empty check) into `File.*`, `Directory.*`, `Path.Combine`, `Path.GetDirectoryName`, or used in a `Process.Start` argv:
+
+   - Real-world env vars often contain wrapping quotes (`set VAR="C:\path"` on Windows shells) or trailing whitespace (Group Policy, copy/paste, editor artifacts). Passing those verbatim to a file API yields `FileNotFoundException` / `DirectoryNotFoundException` with a confusing path that has a quote glyph in it.
+   - **Detection**: Look for `Environment.GetEnvironmentVariable(` reads. Trace the variable through assignments. If it reaches any file-system API without a `Trim()` and a `'"' / '\''` strip, flag.
+   - **Severity**: **LOW** for tests/internal tools; **MEDIUM** for production CLI commands; **HIGH** if the env var is part of a documented user-facing override contract.
+   - **Fix pattern**:
+     ```csharp
+     var raw = Environment.GetEnvironmentVariable(EnvVarName);
+     if (string.IsNullOrWhiteSpace(raw)) return defaultValue;
+     var trimmed = raw.Trim();
+     if (trimmed.Length >= 2 &&
+         ((trimmed[0] == '"'  && trimmed[^1] == '"') ||
+          (trimmed[0] == '\'' && trimmed[^1] == '\'')))
+     {
+         trimmed = trimmed[1..^1];
+     }
+     // Re-validate after normalization: `""` or `''` strips to empty.
+     if (string.IsNullOrWhiteSpace(trimmed)) return defaultValue;
+     return trimmed;
+     ```
+   - **K-bis: Re-validate after ANY normalization.** When any normalization step (Trim, quote-strip, URL-decode, percent-decode, Unicode-normalize, regex-strip) is applied to a value, the post-normalization result MUST be checked against the same invariants as the raw input (non-empty, non-null, length bounds, well-formed). `""` and `''` are the canonical examples: they pass `IsNullOrEmpty(raw)=false` because the raw value has two chars, but after the quote strip they become `""`. Without a re-check the helper returns an empty string and downstream consumers throw with a confusing error far from the root cause. Severity: **MEDIUM** when the consumer is a file API or HTTP call; **LOW** when only used for display/logging.
+   - **Real example (this PR, Copilot Comments 2 & 5)**: `McpServerCatalogWriter.GetCatalogPath` first returned the `A365_MCP_CATALOG_PATH` env var verbatim (caught by Copilot Comment 2 — fix: trim + strip quotes). The trim-and-strip fix then introduced the empty-after-strip gap (caught by Copilot Comment 5 — fix: re-check `IsNullOrWhiteSpace(trimmed)` and fall back to default). Both passes of normalization needed the same re-validation discipline.
+
+   **L. Test-fixture JSON / wire payload casing must match the production reader, not the project's typical schema**
+
+   When a test writes a JSON file or payload that exercises a code path under test:
+
+   - Each key's casing must match what the production reader looks up. `JsonElement.TryGetProperty(name, out _)` and `SetupHelpers.GetJsonString(root, "Name")` (any helper built on `TryGetProperty`) are **case-sensitive**. A camelCase fixture against a PascalCase reader (or vice-versa) makes the test silently pass even if the production path it claims to exercise is broken.
+   - **Detection**: For every JSON literal in a test file (in `await File.WriteAllTextAsync(... """{...}""")`, `JsonSerializer.Serialize(new { ... })`, etc.):
+     1. For each top-level key, search the production code for `TryGetProperty("<key>"` or `GetJsonString(<root>, "<key>"`. The exact-string match must succeed against the reader, not against a schema convention or attribute.
+     2. If the test casing does not match the reader's lookup string, the test does **not** exercise what it claims to. Flag **HIGH** with severity `missing_test`.
+     3. If the casing intentionally differs from the project's typical schema (e.g. the reader is legacy and reads a PascalCase key for back-compat), add a code comment in the test that names the production line being matched, so future reviewers do not re-flag it.
+   - **Real example (this PR, Copilot Comment 3)**: `GlobalConfigDirectoryCleanupTests` wrote `"AgenticAppId"` (PascalCase) into a poisoned JSON fixture. Copilot flagged it as inconsistent with camelCase. The production reader at `BootstrapConfigResolver.cs:336` deliberately reads `"AgenticAppId"` (legacy compat), so the test casing is correct — but the fix is to add an inline comment in the test explaining the intentional casing and pointing at the reader line, so the next reviewer (human or AI) does not raise the same flag again.
+
+   **M. Time-relative comments must age forward with the diff**
+
+   When the diff changes code behavior, scan *every changed file* (production AND test) for comments that use time-relative wording. Comments that were accurate when written ("currently", "today", "this is the buggy path", "the current implementation does X") become misleading the moment the PR merges, and a future reader has no way to tell which tense is correct without doing the same investigation again.
+
+   - **Detection**: in the staged diff, grep code comments for the phrases:
+     - `today-buggy`, `today's behavior`, `today this does`
+     - `currently broken`, `currently buggy`, `current implementation`, `currently does X`
+     - `now broken`, `now does`, `right now`
+     - `this is the bug`, `this is buggy`, `the buggy code`
+     - Any reference to "the new code does X" or "the old code did Y" when the SAME PR is doing that switchover
+   - For each hit, ask: does this wording still match the post-merge state? If the diff is doing the very thing the comment describes, the comment must be rewritten in past tense OR removed.
+   - **Severity**: **LOW** by default (documentation rot, not a runtime bug). **MEDIUM** when the misleading comment lives in a regression test — readers may interpret a green assertion as "the bug is back" simply because the comment says "today this is broken".
+   - **Fix patterns**:
+     - `// (today-buggy) fallback` → `// pre-fix fallback (regression guard)` or `// the fallback the original PR removed`
+     - `// this is the buggy code path` (in a test that's now passing) → `// the code path this regression test guards against`
+     - `// the current implementation does X` (when X is exactly what the diff is changing) → `// before this change, the implementation did X` or simply remove
+   - **Real example (this PR, Copilot Comments 4 & 6)**: `GlobalConfigDirectoryCleanupTests` had two comments saying `"(today-buggy) fallback"` and `"(today-buggy) merge logic ... accepts the global file"`. Once the fix landed, both comments read as if the merge logic was still broken. Rephrased to `"pre-fix global fallback would have found"` and `"if the pre-fix merge logic were still active, it would accept the global file"` — same meaning, correct tense. `AddMcpServersMissingManifestTests.cs` had a CR-009 comment claiming `"--dry-run short-circuits before the manifest resolver runs"` that was true when written but became false in the same PR after the typo-guard was moved above the dry-run block.
+
+   **N. Method return value carries a documented null-or-sentinel semantic — trace all callers**
+
+   When a method in the diff returns a tuple, struct, or nullable value where `null` (or a sentinel like `false`, or an enum case) carries a *documented* special meaning — either in an XML `<returns>` doc, an inline comment, or a clearly named variable like `consentUrl == null` as "verified signal" — apply this rule:
+
+   - Read the method's return type and any doc/comment describing what each return state means.
+   - `Grep` for every call site of that method in non-test source files.
+   - At each call site verify: (a) the null/sentinel branch is handled according to the documented contract (e.g., "null → safe to persist") and (b) every code path in the **producing** method returns null/sentinel only when the contract says it should.
+   - Look specifically for code paths in the producer that return a non-null/non-sentinel value in a situation the contract describes as "verified" — this silently breaks the caller's persistence gate or display logic.
+   - **Severity**: **HIGH** when the mismatch causes state to be persisted incorrectly or a user-visible action to be skipped silently (e.g., consent verified but URL still shown, or verified but ResourceConsents not updated).
+   - **Real example (PR #424)**: `GrantAdminConsentAsync` was documented with the contract `consentUrl == null` means "directly verified — safe to persist". The `allConsented` early-return path returned `(true, consentUrl)` instead of `(true, null)`. The caller's guard `if (consentGranted && consentUrl == null)` silently skipped persisting `ResourceConsents` every time consent was already in place.
+
+   **O. Numeric threshold, interval, or count mentioned in CHANGELOG/doc — verify it matches the code**
+
+   When a `CHANGELOG.md` entry (under `[Unreleased]` or any released section) or a doc comment describes a specific numeric value — timeout seconds, poll interval, retry count, delay seconds, progress-print cadence — apply this rule:
+
+   - Extract every numeric claim from the CHANGELOG `[Unreleased]` section (and nearby released entries relevant to changed code).
+   - For each claim, `Grep` the production source files for integer literals that plausibly represent that value (e.g., `>= 30`, `maxRetries: 5`, `TimeSpan.FromSeconds(60)`).
+   - If a literal in the code differs from what the CHANGELOG/doc states, flag the mismatch. Either the code or the CHANGELOG entry must be corrected to agree.
+   - **Severity**: **MEDIUM** — the behavior differs from what was communicated to users and operators.
+   - **Real example (PR #424)**: CHANGELOG entry said "prints a friendly progress message at 30 seconds" but both `PollAdminConsentAsync` overloads checked `>= 60`. The 60s vs 30s mismatch was never caught internally — only surfaced by Copilot after the PR was opened.
+
+   **P. `catch (OperationCanceledException)` that swallows and returns instead of rethrowing — verify intent**
+
+   When a `catch (OperationCanceledException)` block in a method that receives a `CancellationToken ct` parameter returns a value (e.g., `return false;`, `return SomeEnum.NotDetected;`) instead of rethrowing (`throw;`):
+
+   - Ask: is this method called from a long-running interactive flow (setup command, consent polling loop, retry loop) where Ctrl+C should terminate the command?
+   - If yes, and there is no explicit comment documenting that swallowing is intentional (e.g., "graceful degradation — treat cancellation as timeout"), flag the catch block.
+   - Also check sibling overloads or parallel methods: if one overload rethrows and another swallows, the inconsistency itself is a finding even if one behavior is defensible.
+   - **Severity**: **MEDIUM** when the caller is a long-running user-facing flow where Ctrl+C non-responsiveness is surprising; **LOW** for fire-and-forget operations where continuing after cancellation is acceptable by design.
+   - **Fix**: add `throw;` after the log statement, or add an explicit comment explaining why the exception is intentionally absorbed (e.g., `// timeout path: treat as AssumedComplete, caller surfaces URL`).
+   - **Real example (PR #424)**: `AdminConsentHelper.PollAdminConsentAsync` (Graph overload) caught `OperationCanceledException` and returned `ConsentPollResult.NotDetected`. Pressing Ctrl+C during consent polling would not abort `a365 setup` — the command continued to completion, which is surprising and inconsistent with how the rest of the command handles cancellation.
+
+   **Q. Test-only escape hatch declared `public` in a production assembly**
+
+   When the diff adds or modifies a property, field, or method whose name contains a test-oriented suffix (`ForTests`, `ForTestsOnly`, `TestOverride`, `InTests`, `BypassForTest`) and it is declared in a non-test production assembly with `public` access:
+
+   - Verify whether the project has an `InternalsVisibleTo` entry for the test assembly (check the `.csproj` file).
+   - If `InternalsVisibleTo` is present, `public` is unnecessary — `internal` is the correct visibility. A `public` test bypass is part of the assembly's public API and can be toggled by any consumer, not just tests.
+   - **Severity**: **MEDIUM** — widens the production API surface; a runtime switch that can disable real consent verification, polling, or auth is a security surface area risk.
+   - **Fix**: Change `public` to `internal`. No test changes are needed when `InternalsVisibleTo` is already configured.
+   - **Real example (PR #424 Copilot comment)**: `AdminConsentHelper.BypassConsentChecksForTests` was declared `public static bool` in the production assembly. The project already had `<InternalsVisibleTo Include="Microsoft.Agents.A365.DevTools.Cli.Tests" />` in the `.csproj`, so `internal` was sufficient. A `public` bypass can be set by any code that references the assembly, not just the test project.
+
+   **R. User-visible `--help` text must accurately reflect current CLI behavior**
+
+   When the diff changes how a command surfaces output to the user — new admin handoff mechanisms, changed fallback paths, updated from PowerShell snippets to URLs, or vice versa — scan all `--help` description strings and command description strings in the same file and its parent command registration:
+
+   - Read every string literal passed to `Description =`, `command.Description =`, or multi-line help text string concatenations in the changed file.
+   - Compare each description against what the code actually does post-diff. If the help text mentions a specific output form (e.g., "prints copy-paste PowerShell") but the code now produces a different form (e.g., admin-consent URL plus optional PowerShell), flag it.
+   - Also check parent command descriptions registered in the same file — a parent command's help text often describes the overall flow and may not be updated when a subcommand's behavior changes.
+   - **Severity**: **MEDIUM** — operators who read `--help` before running a command will act on stale guidance and may miss the correct admin handoff path.
+   - **Fix**: Update the description string to accurately reflect both output forms. Be specific: name the URL and the PowerShell path rather than picking one to the exclusion of the other.
+   - **Real example (PR #424 Copilot comment)**: `SetupCommand.cs` help text said "any step that needs Global Administrator action prints copy-paste PowerShell that an admin can run out-of-band." After the delegated-consent handoff changed to a `/v2.0/adminconsent` URL (PowerShell only for S2S app roles), the description was stale. Fixed to: "an admin-consent URL (and, when needed, a PowerShell snippet) that an admin can run out-of-band."
+
 ### Step 3: Generate Findings
 
 For each issue found, provide:
@@ -879,6 +1085,25 @@ When a string property represents a discrete set of values (e.g., `"obo"`, `"s2s
   AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.Trim().ToLowerInvariant();
   ```
 - **Real example (PR #391, Comments 7 & 8)**: `SetupContext.AuthMode` and `NonDwBlueprintSetupOrchestrator.effectiveMode` both used `?.ToLowerInvariant()`, allowing `""` to disable OBO without any visible error.
+
+### 29. `args.Contains("--flag")` Misses `--flag=true` Form in System.CommandLine Preflight
+
+`System.CommandLine` normalises boolean options: a user can pass `--show-secret` (bare) **or** `--show-secret=true` / `--show-secret false`. Raw `args.Contains("--show-secret")` only matches the bare form; the `=true` variant slips through and re-enables any middleware that was meant to be skipped.
+
+- **Pattern to catch**: `args.Contains("--some-flag")` used in a middleware or startup guard (e.g., `isShowSecret`, `isHelpOrVersion`) — especially when it's a boolean `Option<bool>` in the command definition.
+- **Severity**: `medium` — wrong branch taken when the option is supplied as `--flag=true`; can silently re-enable Graph/network calls on commands that should work offline.
+- **Check**: Read `Program.cs` (or wherever the preflight guard lives) for every `args.Contains("--")` expression in the diff. If it guards a middleware skip, verify both forms are handled.
+- **Fix**:
+  ```csharp
+  // Wrong — misses --show-secret=true
+  var isShowSecret = args.Contains("--show-secret");
+
+  // Correct — handles bare and =value forms
+  var isShowSecret = args.Any(a =>
+      a.Equals("--show-secret", StringComparison.Ordinal)
+      || a.StartsWith("--show-secret=", StringComparison.Ordinal));
+  ```
+- **Real example (PR #406, Comment 1)**: `isShowSecret = args.Contains("--show-secret")` in `Program.cs` would not skip the Graph preflight when the user passed `--show-secret=true`, accidentally triggering an online call on an offline-only command.
 
 ## Example Invocation
 

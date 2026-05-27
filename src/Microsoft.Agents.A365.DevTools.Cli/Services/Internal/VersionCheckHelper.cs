@@ -115,4 +115,54 @@ internal static class VersionCheckHelper
             ? $"{baseCommand} --prerelease"
             : baseCommand;
     }
+
+    /// <summary>
+    /// Selects the primary latest version and an optional newer preview version from a list of
+    /// all NuGet versions, applying channel-aware filtering based on the current version.
+    /// <para>
+    /// Stable users see only stable versions as their primary update target. If a newer preview
+    /// exists above the latest stable, it is returned separately as an informational nudge.
+    /// Preview users see the globally highest version (preview or stable) with no secondary nudge.
+    /// </para>
+    /// </summary>
+    internal static (string? Primary, string? NewerPreview) SelectLatestVersions(
+        IEnumerable<string> allVersions, string currentVersion)
+    {
+        bool currentIsPreview = currentVersion.Contains("preview", StringComparison.OrdinalIgnoreCase);
+
+        var allParsed = allVersions
+            .Select(v => new { Original = v, Parsed = TryParseVersion(v) })
+            .Where(v => v.Parsed != null)
+            .OrderByDescending(v => v.Parsed)
+            .ToList();
+
+        // Primary: stable-only for stable users; unrestricted for preview users
+        var primary = allParsed
+            .Where(v => currentIsPreview || !v.Original.Contains("preview", StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault()?.Original;
+
+        // Informational nudge: surface the latest preview when a stable user is already on the
+        // latest stable but a newer preview exists above it.
+        // Use base-version comparison (not TryParseVersion) so that a preview of the same base
+        // (e.g., "1.1.0-preview.50") is never treated as newer than its GA ("1.1.0").
+        string? newerPreview = null;
+        if (!currentIsPreview && primary != null)
+        {
+            var latestPreview = allParsed
+                .Where(v => v.Original.Contains("preview", StringComparison.OrdinalIgnoreCase))
+                .FirstOrDefault()?.Original;
+
+            if (latestPreview != null)
+            {
+                var primaryBase = TryParseVersion(primary.Split('-')[0]);
+                var previewBase = TryParseVersion(latestPreview.Split('-')[0]);
+                // Only nudge when the preview's base version is strictly higher than the GA base.
+                // This prevents "1.1.0-preview.50" from appearing as newer than "1.1.0".
+                if (primaryBase != null && previewBase != null && previewBase > primaryBase)
+                    newerPreview = latestPreview;
+            }
+        }
+
+        return (primary, newerPreview);
+    }
 }

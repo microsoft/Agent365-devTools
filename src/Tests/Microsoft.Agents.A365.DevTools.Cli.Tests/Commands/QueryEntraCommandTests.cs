@@ -56,9 +56,10 @@ public class QueryEntraCommandTests
             _mockGraphApiService, _mockBlueprintService);
 
         // Assert
-        Assert.Equal(2, command.Subcommands.Count);
+        Assert.Equal(3, command.Subcommands.Count);
         Assert.Contains(command.Subcommands, c => c.Name == "blueprint-scopes");
         Assert.Contains(command.Subcommands, c => c.Name == "instance-scopes");
+        Assert.Contains(command.Subcommands, c => c.Name == "inheritance");
     }
 
     [Fact]
@@ -76,7 +77,14 @@ public class QueryEntraCommandTests
 
         // Assert
         Assert.NotNull(blueprintScopesSubcommand);
-        Assert.Equal("List configured scopes and consent status for the agent blueprint", blueprintScopesSubcommand.Description);
+        // Pins the user-facing CLI description. The subcommand reports the permissions currently
+        // granted on the blueprint service principal (oauth2PermissionGrants + appRoleAssignments) —
+        // the same surface the Entra portal "API permissions" blade shows. This is distinct from
+        // `inheritance` which renders the policy + grants reconciliation verdict. The description
+        // must reflect the granted-surface semantics; reverting to "declared" wording would falsely
+        // imply requiredResourceAccess, which setup deliberately leaves empty for blueprints
+        // (see BatchPermissionsOrchestrator), and would make the command appear to have zero value.
+        Assert.Equal("List delegated and application permissions currently granted on the agent blueprint service principal (the view shown in the Entra portal 'API permissions' blade)", blueprintScopesSubcommand.Description);
     }
 
     [Fact]
@@ -95,6 +103,29 @@ public class QueryEntraCommandTests
         // Assert
         Assert.NotNull(instanceScopesSubcommand);
         Assert.Equal("List configured scopes and consent status for the agent instance", instanceScopesSubcommand.Description);
+    }
+
+    [Fact]
+    public void QueryEntraCommand_Should_Have_Inheritance_Subcommand()
+    {
+        // Arrange
+        var command = QueryEntraCommand.CreateCommand(
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService, _mockBlueprintService);
+
+        // Act
+        var inheritanceSubcommand = command.Subcommands.FirstOrDefault(c => c.Name == "inheritance");
+
+        // Assert — the inheritance subcommand is the user-facing verification entry point for
+        // the kind=allAllowed config (issue: ensure blueprint inheritable permissions are at the
+        // wildcard form on both scopes and roles). It must surface --agent-name and --tenant-id
+        // for consistency with the other subcommands so config-free invocations work.
+        Assert.NotNull(inheritanceSubcommand);
+        Assert.Equal("Verify the blueprint's inheritablePermissions are set to kind=allAllowed for both scopes and roles", inheritanceSubcommand.Description);
+        Assert.Contains(inheritanceSubcommand.Options, o => o.Name == "agent-name");
+        Assert.Contains(inheritanceSubcommand.Options, o => o.Name == "tenant-id");
     }
 
 }

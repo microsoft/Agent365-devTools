@@ -39,6 +39,10 @@ internal static class AllSubcommand
         var checks = new List<Services.Requirements.IRequirementCheck>(SetupCommand.GetBaseChecks(auth))
         {
             new ClientAppRequirementCheck(clientAppValidator),
+            // The wids optional claim is what makes Global Administrator role detection work in the
+            // orchestrator's Phase 2b. Without it, Phase 2b silently skips and the blueprint ends up
+            // with inheritablePermissions.kind=allAllowed but no grants — MAC sees nothing.
+            new WidsOptionalClaimRequirementCheck(clientAppValidator),
         };
 
         return checks;
@@ -46,7 +50,7 @@ internal static class AllSubcommand
 
     /// <summary>
     /// Returns the requirement checks for <c>setup all --aiteammate false</c> (non-DW blueprint).
-    /// Composes SetupCommand base checks + ClientApp (skipped in bootstrap mode).
+    /// Composes SetupCommand base checks + ClientApp + wids-optional-claim (skipped in bootstrap mode).
     /// </summary>
     public static List<Services.Requirements.IRequirementCheck> GetNonDwChecks(
         AzureAuthValidator auth,
@@ -60,6 +64,7 @@ internal static class AllSubcommand
         if (!isBootstrap)
         {
             checks.Add(new ClientAppRequirementCheck(clientAppValidator));
+            checks.Add(new WidsOptionalClaimRequirementCheck(clientAppValidator));
         }
 
         return checks;
@@ -109,8 +114,7 @@ internal static class AllSubcommand
 
         var aiTeammateOption = new Option<bool>(
             "--aiteammate",
-            description: "AI Teammate agent: setup provisions blueprint and permissions only;\n" +
-                        "run 'a365 create-instance' separately to create the agent identity SP and Entra user.\n" +
+            description: "AI Teammate agent: setup provisions blueprint and permissions only.\n" +
                         "Omit for blueprint-only agent (default): setup auto-creates agent identity SP; no Entra user.\n" +
                         "Overrides the aiTeammate field in a365.config.json");
 
@@ -180,9 +184,16 @@ internal static class AllSubcommand
             }
             if (authMode is not null && aiTeammateFlag == true)
             {
-                logger.LogError("--authmode is not supported with --aiteammate — AI Teammate agents automatically use OBO via agent user identity.");
-                context.ExitCode = 1;
-                return;
+                if (authMode == "obo")
+                {
+                    logger.LogWarning("--authmode obo is redundant with --aiteammate — AI Teammate agents always use OBO. Flag ignored.");
+                }
+                else
+                {
+                    logger.LogError("--authmode {AuthMode} is not supported with --aiteammate — AI Teammate agents always use OBO via agent user identity.", authMode);
+                    context.ExitCode = 1;
+                    return;
+                }
             }
 
             // Generate correlation ID at workflow entry point
@@ -258,6 +269,32 @@ internal static class AllSubcommand
                             else
                                 await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
                         }
+
+                        // Merge stored IDs from the existing generated config (if present) so re-running
+                        // with --agent-name reuses previously created resources. Registration has no
+                        // lookup endpoint so the stored ID is the only idempotency key; blueprint and
+                        // identity IDs are needed for the --agent-registration-only API fallback.
+                        var bootstrapGenPath = Path.Combine(
+                            config.DirectoryName ?? Environment.CurrentDirectory,
+                            "a365.generated.config.json");
+                        if (File.Exists(bootstrapGenPath))
+                        {
+                            try
+                            {
+                                var genConfig = await configService.LoadAsync(config.FullName, bootstrapGenPath);
+                                if (!string.IsNullOrWhiteSpace(genConfig.AgentRegistrationId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentRegistrationId))
+                                    nonDwConfig.AgentRegistrationId = genConfig.AgentRegistrationId;
+                                if (!string.IsNullOrWhiteSpace(genConfig.AgentBlueprintId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentBlueprintId))
+                                    nonDwConfig.AgentBlueprintId = genConfig.AgentBlueprintId;
+                                if (!string.IsNullOrWhiteSpace(genConfig.AgenticAppId) && string.IsNullOrWhiteSpace(nonDwConfig.AgenticAppId))
+                                    nonDwConfig.AgenticAppId = genConfig.AgenticAppId;
+                            }
+                            catch (OperationCanceledException) { throw; }
+                            catch (Exception ex)
+                            {
+                                logger.LogDebug(ex, "Could not merge generated config in bootstrap mode; proceeding without stored IDs.");
+                            }
+                        }
                     }
                 }
                 else
@@ -271,6 +308,14 @@ internal static class AllSubcommand
                             : await configService.LoadAsync(config.FullName);
                     }
                     catch (OperationCanceledException) { throw; }
+                    catch (ConfigFileNotFoundException ex) when (!dryRun)
+                    {
+                        logger.LogError("Agent name required. Use --agent-name to specify it:");
+                        logger.LogInformation("");
+                        logger.LogInformation("  a365 setup all --agent-name <name>");
+                        context.ExitCode = ex.ExitCode;
+                        return;
+                    }
                     catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
                     // If aiteammate was not explicitly set, respect what the config says
                     // (allows existing AI Teammate configs to keep working without --aiteammate true)
@@ -399,7 +444,28 @@ internal static class AllSubcommand
                 }
                 else
                 {
-                    setupConfig = await configService.LoadAsync(config.FullName);
+                    // Check for tenant mismatch before loading — if the user switched az login
+                    // tenants since the last setup run, back up stale config and start clean.
+                    if (resolver != null && await resolver.CheckAndBackupStaleConfigAsync(config.FullName, ct))
+                    {
+                        logger.LogInformation("Run 'a365 setup all --agent-name <name>' to set up for the new tenant.");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    try
+                    {
+                        setupConfig = await configService.LoadAsync(config.FullName);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (ConfigFileNotFoundException ex)
+                    {
+                        logger.LogError("Agent name required. Use --agent-name to specify it:");
+                        logger.LogInformation("");
+                        logger.LogInformation("  a365 setup all --agent-name <name>");
+                        context.ExitCode = ex.ExitCode;
+                        return;
+                    }
                 }
 
                 // Configure GraphApiService with custom client app ID if available
@@ -479,9 +545,9 @@ internal static class AllSubcommand
                     ctx, specs,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
-                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes);
+                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes, isM365: ctx.IsM365);
 
-                await ctx.ConfigService.SaveStateAsync(ctx.Config);
+                await ctx.ConfigService.SaveStateAsync(ctx.Config, ctx.GeneratedConfigPath);
 
                 // Step 4: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
                 await ExecuteMessagingEndpointStepAsync(ctx);
@@ -686,11 +752,16 @@ internal static class AllSubcommand
                     ctx.GraphApiService, ctx.BlueprintService, ctx.Config,
                     ctx.Config.AgentBlueprintId!, ctx.Config.TenantId!,
                     specs, ctx.Logger, ctx.Results, ctx.CancellationToken,
-                    knownBlueprintSpObjectId: knownBlueprintSpObjectId);
+                    knownBlueprintSpObjectId: knownBlueprintSpObjectId,
+                    confirmationProvider: ctx.ConfirmationProvider,
+                    commandExecutor: ctx.Executor);
 
             ctx.Results.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
             ctx.Results.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
-            ctx.Results.AdminConsentGranted = consentGranted;
+            ctx.Results.TenantWideConsentOutcome =
+                consentGranted && adminConsentUrl == null ? Models.GrantOutcome.Granted :
+                consentGranted ? Models.GrantOutcome.Unverified :
+                Models.GrantOutcome.Failed;
             ctx.Results.AdminConsentUrl = adminConsentUrl;
         }
         catch (OperationCanceledException)
@@ -700,7 +771,7 @@ internal static class AllSubcommand
         catch (Exception permEx)
         {
             ctx.Results.BatchPermissionsPhase2Completed = false;
-            ctx.Results.AdminConsentGranted = false;
+            ctx.Results.TenantWideConsentOutcome = Models.GrantOutcome.Failed;
             ctx.Results.Errors.Add($"Permissions: {permEx.Message}");
             ctx.Logger.LogWarning("Permissions configuration failed: {Message}. Setup will continue, but permissions must be configured manually.", permEx.Message);
         }
@@ -728,7 +799,7 @@ internal static class AllSubcommand
         {
             ctx.Logger.LogWarning("Messaging endpoint registration skipped: agent blueprint ID is missing (the blueprint step likely failed).");
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
-            ctx.Results.MessagingEndpointFailureReason = "BlueprintMissing";
+            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.BlueprintMissing;
             ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
             ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only --m365'.");
             return;
@@ -762,7 +833,7 @@ internal static class AllSubcommand
             // setup should continue; surface the failure in the summary as a warning.
             ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
-            ctx.Results.MessagingEndpointFailureReason = "Other";
+            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.Other;
             ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
             ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
         }
@@ -771,9 +842,10 @@ internal static class AllSubcommand
     /// <summary>
     /// Step 3 (pre) — Removes stale custom permissions and builds the full resource permission
     /// spec list from dynamic config values (AgentApplicationScopes, MCP manifest, CustomBlueprintPermissions).
-    /// Shared by both DW and non-DW flows so permissions are always consistent.
+    /// Shared by both DW and non-DW flows so permissions are always consistent — the only difference
+    /// is that non-M365 agents exclude Messaging Bot API.
     /// </summary>
-    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx, bool isDw = true)
+    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx)
     {
         var desiredCustomIds = new HashSet<string>(
             (ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -790,39 +862,11 @@ internal static class AllSubcommand
         // V1-compatible: extract ATG scopes for consent URL helpers (empty for V2-only manifests)
         var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes) ? atgScopes : Array.Empty<string>();
 
-        List<ResourcePermissionSpec> specs;
-        if (isDw)
-        {
-            // Pass the already-computed scopesByAudience to avoid reading the MCP manifest twice.
-            // BuildConfiguredPermissionSpecsAsync also handles custom permissions.
-            specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(ctx.Config, setInheritable: true, scopesByAudience);
-        }
-        else
-        {
-            // Non-DW (blueprint) path: only Observability API and Power Platform API.
-            // Microsoft Graph, Agent 365 Tools (MCP), and Messaging Bot API are DW-only.
-            // To enable MCP or Messaging Bot API for non-DW, add them here and update
-            // the isDw guards in BuildAdminConsentUrls / BuildCombinedConsentUrl.
-            specs = [.. SetupHelpers.GetNonDwFixedApiPermissionSpecs(setInheritable: true)];
-
-            // Non-DW: custom permissions are not included by GetNonDwFixedApiPermissionSpecs.
-            // DW: custom permissions are already included by BuildConfiguredPermissionSpecsAsync above.
-            foreach (var customPerm in ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-            {
-                var (isValid, _) = customPerm.Validate();
-                if (isValid && !string.IsNullOrWhiteSpace(customPerm.ResourceAppId))
-                {
-                    var resourceName = string.IsNullOrWhiteSpace(customPerm.ResourceName)
-                        ? customPerm.ResourceAppId
-                        : customPerm.ResourceName;
-                    specs.Add(new ResourcePermissionSpec(
-                        customPerm.ResourceAppId,
-                        resourceName,
-                        customPerm.Scopes.ToArray(),
-                        SetInheritable: true));
-                }
-            }
-        }
+        // Pass the already-computed scopesByAudience to avoid reading the MCP manifest twice.
+        // BuildConfiguredPermissionSpecsAsync stamps Graph + manifest MCP audiences + fixed APIs
+        // (Bot only when isM365) + custom permissions for both DW and non-DW agents.
+        var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
+            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience);
 
         return (specs, mcpResourceAppId, mcpScopes);
     }
@@ -946,24 +990,24 @@ internal static class AllSubcommand
         if (!shouldBackup)
             return;
 
-        logger.LogWarning(
-            "Existing config files belong to tenant {OldTenant} but the current az login session " +
-            "is for tenant {NewTenant}. Backing up and removing stale config files to start clean.",
+        logger.LogInformation(
+            "Detected tenant change — previous setup was for tenant {OldTenant}, " +
+            "current session is tenant {NewTenant}. Starting fresh setup for the new tenant.",
             existingTenantId, resolvedTenantId);
 
-        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
         var configDir = Path.GetDirectoryName(configPath) ?? Environment.CurrentDirectory;
 
         var configBackup = configPath + ".bak." + timestamp;
         File.Move(configPath, configBackup);
-        logger.LogInformation("  Backed up: {File}", Path.GetFileName(configBackup));
+        logger.LogDebug("Backed up: {File}", Path.GetFileName(configBackup));
 
         var generatedPath = Path.Combine(configDir, "a365.generated.config.json");
         if (File.Exists(generatedPath))
         {
             var generatedBackup = generatedPath + ".bak." + timestamp;
             File.Move(generatedPath, generatedBackup);
-            logger.LogInformation("  Backed up: {File}", Path.GetFileName(generatedBackup));
+            logger.LogDebug("Backed up: {File}", Path.GetFileName(generatedBackup));
         }
     }
 

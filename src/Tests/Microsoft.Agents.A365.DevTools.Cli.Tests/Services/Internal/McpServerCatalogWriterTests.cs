@@ -2,12 +2,21 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services.Internal;
 
+/// <summary>
+/// Tests in this class mutate the <c>A365_MCP_CATALOG_PATH</c> environment variable,
+/// so they cannot run in parallel with any other test that reads or writes the catalog.
+/// </summary>
+[CollectionDefinition("McpServerCatalogWriterEnvVar", DisableParallelization = true)]
+public class McpServerCatalogWriterEnvVarCollection { }
+
+[Collection("McpServerCatalogWriterEnvVar")]
 public class McpServerCatalogWriterTests
 {
     [Fact]
@@ -91,4 +100,78 @@ public class McpServerCatalogWriterTests
         Assert.Equal("Tools.ListInvoke.All", McpConstants.V2ScopeValue);
     }
 
+    // ── Env-var normalization tests for GetCatalogPath ──────────────────────
+    // These pin the behavior of A365_MCP_CATALOG_PATH: trim whitespace, strip a
+    // single pair of wrapping quotes, and fall back to the default temp path when
+    // the result is empty (Copilot PR #418 review caught the empty-after-strip gap).
+
+    [Fact]
+    public void GetCatalogPath_EnvVarSetToOnlyDoubleQuotes_FallsBackToDefault()
+    {
+        // Grant/Copilot PR #418 review: setting A365_MCP_CATALOG_PATH=`""` (two
+        // literal double-quote characters) currently strips the quotes and returns
+        // the empty string, which makes File.WriteAllText/ReadAllText throw with
+        // a confusing "path is empty" exception. After strip, the helper must
+        // re-validate and fall back to the default temp path.
+        var saved = Environment.GetEnvironmentVariable(McpServerCatalogWriter.CatalogPathEnvVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(McpServerCatalogWriter.CatalogPathEnvVar, "\"\"");
+
+            var result = McpServerCatalogWriter.GetCatalogPath();
+
+            result.Should().NotBeNullOrWhiteSpace(
+                because: "an env var of just wrapping quotes must not produce an empty path — File.* would throw downstream with an unhelpful error");
+            result.Should().EndWith("mcpServerCatalog.json",
+                because: "the helper must fall back to the default temp catalog file when the override resolves to nothing usable");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(McpServerCatalogWriter.CatalogPathEnvVar, saved);
+        }
+    }
+
+    [Fact]
+    public void GetCatalogPath_EnvVarSetToOnlySingleQuotes_FallsBackToDefault()
+    {
+        var saved = Environment.GetEnvironmentVariable(McpServerCatalogWriter.CatalogPathEnvVar);
+        try
+        {
+            Environment.SetEnvironmentVariable(McpServerCatalogWriter.CatalogPathEnvVar, "''");
+
+            var result = McpServerCatalogWriter.GetCatalogPath();
+
+            result.Should().NotBeNullOrWhiteSpace(
+                because: "an env var of just wrapping single quotes must not produce an empty path");
+            result.Should().EndWith("mcpServerCatalog.json",
+                because: "single-quote-wrapped empty overrides must fall back the same way double-quote-wrapped empty overrides do");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(McpServerCatalogWriter.CatalogPathEnvVar, saved);
+        }
+    }
+
+    [Fact]
+    public void GetCatalogPath_EnvVarWithQuotedRealPath_StripsQuotesAndReturnsPath()
+    {
+        // Guardrail: legitimate quoted paths must still be honored after the
+        // empty-after-strip fix lands.
+        var saved = Environment.GetEnvironmentVariable(McpServerCatalogWriter.CatalogPathEnvVar);
+        try
+        {
+            var expected = Path.Combine(Path.GetTempPath(), "a365-catalog-quoted-test.json");
+            Environment.SetEnvironmentVariable(
+                McpServerCatalogWriter.CatalogPathEnvVar, $"\"{expected}\"");
+
+            var result = McpServerCatalogWriter.GetCatalogPath();
+
+            result.Should().Be(expected,
+                because: "a real path wrapped in quotes (e.g. `set VAR=\"C:\\path\"` on Windows) must be returned unquoted so File.* can use it directly");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(McpServerCatalogWriter.CatalogPathEnvVar, saved);
+        }
+    }
 }

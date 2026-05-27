@@ -128,7 +128,57 @@
   4. If the assertion is on a security-sensitive, protocol-level, or external-API contract (OAuth URLs, HTTP headers, encoding format): flag as **CRITICAL** — require explicit documented justification.
 - **Example of the failure mode** (from project history): Consent URL tests asserted `redirect_uri=` was present. When URL encoding was changed, tests were updated to match. No one asked whether `redirect_uri` was still required by the AAD protocol. The regression (`AADSTS500113`) reached the user before any test caught it.
 
-### Rule 3: Verify Copyright Headers
+### Rule 3: Input Validation on User-Controlled Values
+- **Description**: Any CLI argument, config value, or external string that reaches a file system operation (path construction, file name interpolation, `File.ReadAllText`, `Directory.EnumerateFiles`) must be validated before use.
+- **Action**: Flag as **HIGH** if:
+  - A user-supplied value is passed directly to `Path.Combine`, `File.Exists`, or similar without an allowlist check
+  - A string parameter that must be non-empty relies only on a non-nullable type — `ArgumentException.ThrowIfNullOrWhiteSpace` must also be present before the first use of the value inside a try/catch block
+- **Pattern to require**:
+  ```csharp
+  // Validate CLI argument before use in file path
+  if (!Regex.IsMatch(commandName, @"^[a-z0-9-]+$"))
+  {
+      logger.LogError("Invalid command name '{Name}'.", commandName);
+      context.ExitCode = 1;
+      return;
+  }
+
+  // Guard non-nullable string parameters against empty/whitespace before try/catch
+  ArgumentException.ThrowIfNullOrWhiteSpace(generatedConfigPath);
+  ```
+
+### Rule 4: CLI Command Exit Code Completeness
+- **Description**: Every failure branch in a `SetHandler` command handler must set `context.ExitCode = 1` before exiting. This includes `continue` statements inside loops and early `return` statements, not just the final else block.
+- **Action**: Flag as **HIGH** if:
+  - A `logger.LogWarning` or `logger.LogError` is followed by `continue` or `return` without setting `context.ExitCode = 1`
+  - A post-loop summary block sets exit code only for one case (e.g. auto-discovery) but not another (e.g. named command with missing file)
+- **Pattern to require**:
+  ```csharp
+  // Every failure exit must set ExitCode
+  logger.LogWarning("No log found for '{Name}'.", name);
+  context.ExitCode = 1;   // required before continue or return
+  continue;
+  ```
+
+### Rule 5: Data Flow Consistency for Transformations
+- **Description**: When a transformation (redaction, sanitization, encoding) is applied to a value, it must be applied everywhere that value is written — including header lines, summary output, and file names, not just the primary content block.
+- **Action**: Flag as **HIGH** if:
+  - A value is sanitized/redacted in one output path but written verbatim in another (e.g. redacted in log content but included raw in a file header)
+  - A new sanitization step is added to content processing but the same value also flows into a header, summary line, or secondary output that was not updated
+
+### Rule 6: CLI Option Whitespace Validation
+- **Description**: `Option<string?>` values are null when omitted but can be explicitly passed as empty or whitespace. Code that uses `?? defaultValue` to handle null will pass empty/whitespace through to file system calls, producing confusing errors like "Output directory does not exist: {Dir}" with a blank Dir.
+- **Action**: Flag as **HIGH** if an `Option<string?>` value is used in a file system call without first checking `string.IsNullOrWhiteSpace`. A targeted error message must be emitted when the option is explicitly provided as empty or whitespace.
+
+### Rule 7: Command Handler Branch Coverage
+- **Description**: Every `SetHandler` implementation defines a CLI contract (valid/invalid inputs, exit codes, output files). Without invocation tests, refactors silently break this contract.
+- **Action**: Flag as **MEDIUM** if a new `SetHandler` block has no corresponding `System.CommandLine` invocation tests. The following branches must be covered:
+  - Invalid input argument → exit code 1
+  - Nonexistent or whitespace output path → exit code 1
+  - Resource not found (missing file, etc.) → exit code 1
+  - Successful path → exit code 0 and expected side effect (file written, correct name)
+
+### Rule 8: Verify Copyright Headers
 - **Description**: Ensure all C# files have proper Microsoft copyright headers
 - **Action**: If a `.cs` file is missing a copyright header:
   - Add the Microsoft copyright header at the top of the file
@@ -144,7 +194,10 @@
 ### Implementation Guidelines
 
 #### When Reviewing Code:
-1. **Kairo Check**:
+1. **Input validation** (Rule 3): For every user-supplied value used in a file path or file name, confirm an allowlist pattern check and/or `ThrowIfNullOrWhiteSpace` guard is present before use.
+2. **Exit code completeness** (Rule 4): Scan every `continue` and early `return` in command handlers — each one on a failure path must be preceded by `context.ExitCode = 1`.
+3. **Data flow consistency** (Rule 5): When redaction or sanitization is added, check header lines and summary output for the same raw value.
+4. **Kairo Check** (Rule 1):
    - Search for case-insensitive matches of "Kairo"
    - Review context to determine if it's:
      - A class name
