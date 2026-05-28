@@ -910,11 +910,11 @@ internal static class SetupHelpers
                 foreach (var action in results.MissingSpActions)
                 {
                     actionCount++;
-                    logger.LogInformation("  {N}. Missing service principal — '{Name}' ({AppId})", actionCount, action.ResourceName, action.ResourceAppId);
+                    logger.LogInformation("  {N}. Missing service principal — '{Name}' ({AppId}) (Global Administrator required)", actionCount, action.ResourceName, action.ResourceAppId);
                     logger.LogInformation("     Scopes pending: {Scopes}", string.Join(", ", action.Scopes));
-                    logger.LogInformation("     Step 1) Provision the SP as a Global Administrator:");
+                    logger.LogInformation("     Step 1) Provision the SP:");
                     logger.LogInformation("       {AzCommand}", action.AzCreateCommand);
-                    logger.LogInformation("     Step 2) Grant the blueprint consent for this resource (sign in as Global Administrator and Accept):");
+                    logger.LogInformation("     Step 2) Grant the blueprint consent for this resource (click Accept):");
                     logger.LogInformation("       {Url}", action.PerSpConsentUrl);
                 }
             }
@@ -1147,7 +1147,10 @@ internal static class SetupHelpers
     /// Returns true when the supplied resource appId is the WorkIQ Tools (Agent 365 Tools)
     /// resource — either the hard-coded prod appId or an env-overridden value pinned via
     /// <c>A365_MCP_APP_ID_&lt;env&gt;</c>. Used by <see cref="GetResourceIdentifierUri"/> to
-    /// decide between the canonical https URI and the per-server <c>api://{appId}</c> form.
+    /// decide between the canonical https URI (this resource) and the **bare appId GUID**
+    /// fallback (everything else, including V2 per-server MCP audiences whose SP has
+    /// <c>identifierUris = null</c>). Per-server SPs cannot use <c>api://{appId}</c> —
+    /// Entra rejects that as AADSTS500011 because the URI is not a registered identifier.
     /// </summary>
     private static bool IsAgent365ToolsResourceAppId(string resourceAppId)
     {
@@ -1206,10 +1209,12 @@ internal static class SetupHelpers
             urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList)));
 
         // V2 per-server audiences (issue #429): when the caller passes a by-audience map,
-        // emit one URL fragment per audience addressed via api://{appId} so each scope
-        // lands on its own SP. The legacy flat-list <paramref name="mcpScopes"/> path is
-        // preserved unchanged below for V1 callers and existing tests that have no
-        // by-audience info to thread through.
+        // emit one URL fragment per audience whose resource identifier is resolved by
+        // GetResourceIdentifierUri (the WorkIQ shared audience keeps its canonical https
+        // URI; per-server audiences use the bare appId GUID — see GetResourceIdentifierUri
+        // for why api://{appId} fails with AADSTS500011 against per-server SPs). The legacy
+        // flat-list <paramref name="mcpScopes"/> path is preserved unchanged below for V1
+        // callers and existing tests that have no by-audience info to thread through.
         if (mcpScopesByAudience is { Count: > 0 })
         {
             foreach (var (audienceAppId, scopes) in mcpScopesByAudience)
@@ -1267,9 +1272,10 @@ internal static class SetupHelpers
 
         // V2 per-server audiences (issue #429): when the caller passes a by-audience map,
         // emit per-audience scope URIs using GetResourceIdentifierUri so the WorkIQ
-        // shared audience keeps its https URI and per-server audiences use api://{appId}.
-        // Without this, every MCP scope landed on the WorkIQ URI and Entra returned
-        // AADSTS650053 for any scope the WorkIQ SP did not publish.
+        // shared audience keeps its https URI and per-server audiences use the bare appId
+        // GUID (api://{appId} fails for per-server SPs with AADSTS500011 — see
+        // GetResourceIdentifierUri). Without this, every MCP scope landed on the WorkIQ URI
+        // and Entra returned AADSTS650053 for any scope the WorkIQ SP did not publish.
         if (mcpScopesByAudience is { Count: > 0 })
         {
             foreach (var (audienceAppId, scopes) in mcpScopesByAudience)

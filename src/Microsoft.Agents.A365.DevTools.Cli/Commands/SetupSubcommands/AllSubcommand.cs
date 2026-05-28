@@ -150,9 +150,10 @@ internal static class AllSubcommand
             "--skip-sp-provisioning",
             description: "Skip the interactive in-line provisioning of missing resource service principals.\n" +
                         "Default: setup detects resources (e.g. V2 MCP per-server audiences) whose SP is missing\n" +
-                        "from this tenant and opens per-app admin-consent URLs to provision them in place,\n" +
-                        "polling until each SP exists. With --skip-sp-provisioning, missing SPs are excluded from\n" +
-                        "the unified admin-consent URL and surfaced as warnings with per-app next-step URLs.\n" +
+                        "from this tenant, prompts per-resource, and shells out to 'az ad sp create --id <appId>'\n" +
+                        "using the operator's existing az login. With --skip-sp-provisioning, missing SPs are\n" +
+                        "excluded from the unified admin-consent URL and surfaced as numbered items in the Action\n" +
+                        "Required block, each with the az command and a per-SP consent URL.\n" +
                         "Implicitly enabled when stdin is redirected (CI / coding-agent / pipe scenarios).");
 
         command.AddOption(verboseOption);
@@ -598,6 +599,12 @@ internal static class AllSubcommand
                 logger.LogInformation("");
                 SetupHelpers.DisplaySetupSummary(setupResults, logger);
                 ExceptionHandler.ExitWithCleanup(1);
+            }
+            catch (OperationCanceledException)
+            {
+                // Must sit before the catch-all below so Ctrl+C bypasses DisplaySetupSummary,
+                // which would render not-yet-attempted phases as "failed".
+                throw;
             }
             catch (Exception ex)
             {

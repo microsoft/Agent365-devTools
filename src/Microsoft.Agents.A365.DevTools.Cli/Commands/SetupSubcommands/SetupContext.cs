@@ -67,7 +67,7 @@ internal sealed class SetupContext
     /// <summary>Null or "obo" — principal-scoped delegated grants; no admin consent needed.</summary>
     public bool IsOboMode => AuthMode is null || string.Equals(AuthMode, "obo", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>"s2s" — app role assignments on agent identity; Global Admin needed or PowerShell fallback.</summary>
+    /// <summary>"s2s" — app role assignments on agent identity; Global Admin needed or az rest fallback.</summary>
     public bool IsS2sMode => string.Equals(AuthMode, "s2s", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>"both" — delegated grants (OBO) and app role assignments (S2S).</summary>
@@ -75,9 +75,13 @@ internal sealed class SetupContext
 
     /// <summary>
     /// When true, skip the interactive in-line provisioning of missing resource service
-    /// principals (issue #429). The default flow opens per-app admin-consent URLs and
-    /// polls until each missing SP is created in the tenant. With this set, missing SPs
-    /// are excluded from the unified consent URL and surfaced as warnings only.
+    /// principals (issue #429). The default flow prompts per-resource and shells out to
+    /// <c>az ad sp create --id &lt;appId&gt;</c> via the operator's existing az login
+    /// (Global Administrator's directory role carries the required
+    /// <c>Application.ReadWrite.All</c>). With this set, missing SPs are excluded from the
+    /// unified admin-consent URL and recorded on <see cref="SetupResults.MissingSpActions"/>
+    /// so the setup summary's Action Required block renders them as numbered items, each
+    /// with the <c>az ad sp create</c> command and a per-SP <c>/v2.0/adminconsent</c> URL.
     /// Set explicitly via <c>--skip-sp-provisioning</c> or implicitly when stdin is
     /// redirected (CI / coding-agent / pipe scenarios).
     /// </summary>

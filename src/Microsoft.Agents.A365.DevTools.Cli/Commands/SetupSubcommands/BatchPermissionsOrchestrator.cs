@@ -201,13 +201,18 @@ internal static class BatchPermissionsOrchestrator
                     await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
                 // else: blueprint SP was not resolved — leave BlueprintS2SOutcome = NotApplicable (not attempted)
 
-                // When the programmatic Graph API path fails (e.g. token lacks AppRoleAssignment.ReadWrite.All
-                // even for GA), fall back to executing the same PowerShell script. Issue #429: previously
-                // this fired automatically; now we prompt the operator first so the interactive
-                // Connect-MgGraph window is never opened without their explicit consent. When
-                // confirmationProvider is null (most existing tests), default to running — preserves
-                // legacy behavior under test and is harmless when the operator is non-interactive.
-                if (setupResults?.BlueprintS2SOutcome == Models.GrantOutcome.Failed && commandExecutor != null)
+                // When the programmatic Graph API path fails (e.g. CLI token lacks
+                // AppRoleAssignment.ReadWrite.All even for a GA), fall back to issuing the same
+                // writes via `az rest` against the operator's existing az session. A GA's az
+                // token implicitly carries every Graph application permission via the directory
+                // role — including AppRoleAssignment.ReadWrite.All — so POST /appRoleAssignments
+                // succeeds without any additional consent. Replaces the previous Connect-MgGraph
+                // path (issue #429): pwsh module load + MSAL/WAM browser dance was 5s–2min and
+                // unreliable; az rest is synchronous and fast. We still gate on the operator's
+                // explicit "y" before making any writes.
+                if (setupResults?.BlueprintS2SOutcome == Models.GrantOutcome.Failed
+                    && commandExecutor != null
+                    && !string.IsNullOrWhiteSpace(phase1Result?.BlueprintSpObjectId))
                 {
                     logger.LogDebug("S2S app role assignments could not be completed via the Graph API; prompting operator to grant them instead.");
 
@@ -215,22 +220,21 @@ internal static class BatchPermissionsOrchestrator
                         BlueprintPermissionKind.Application, specs, confirmationProvider, logger);
                     if (!shouldRunS2S)
                     {
-                        logger.LogInformation("Skipping PowerShell S2S fallback per operator response. The setup summary lists the manual steps.");
+                        logger.LogInformation("Skipping app role assignment fallback per operator response. The setup summary lists the manual steps.");
                     }
                     else
                     {
-                        logger.LogDebug("Attempting via PowerShell (pwsh)...");
-                        var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
-                            commandExecutor, tenantId, blueprintAppId, specs, logger, ct);
+                        var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
+                            commandExecutor, phase1Result.BlueprintSpObjectId, specs, logger, ct);
                         if (attempted && succeeded)
                         {
                             logger.LogInformation("Application permissions granted.");
                             setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Granted;
                         }
                         else if (attempted)
-                            logger.LogWarning("PowerShell execution did not complete — see output above. Manual steps in summary.");
-                        // else: pwsh missing / timeout / inputs invalid — PowerShellS2SRunner already
-                        // logged an actionable warning. Manual steps appear in the setup summary.
+                            logger.LogWarning("Some app role assignments did not complete - see output above. Manual steps in summary.");
+                        // else: validation rejected the input or no S2S specs were present.
+                        // AzRestS2SRunner already logged an actionable warning; Action Required surfaces the rest.
                     }
                 }
             }
@@ -818,11 +822,12 @@ internal static class BatchPermissionsOrchestrator
 
         // Issue #429: when the browser polling did not observe a verified grant — either the
         // browser failed to open, the user closed the consent screen without granting, or Entra
-        // rejected the URL with an OAuth error (e.g. AADSTS650053) — offer the PowerShell
-        // fallback. The runner uses the operator's PowerShell-side Connect-MgGraph session
-        // which can carry DelegatedPermissionGrant.ReadWrite.All for a GA, whereas the CLI's
-        // own MSAL token cannot. Gated on operator opt-in so we never open a Connect-MgGraph
-        // browser tab without their explicit say-so.
+        // rejected the URL with an OAuth error (e.g. AADSTS650053) — offer to issue the
+        // oauth2PermissionGrants writes via `az rest` against the operator's existing az
+        // session. A GA's az token implicitly carries DelegatedPermissionGrant.ReadWrite.All
+        // via the directory role, which is what the writes need. Replaces the previous
+        // Connect-MgGraph PowerShell fallback (issue #429): pwsh module load + MSAL/WAM
+        // browser dance was 5s–2min and unreliable; az rest is synchronous and fast.
         //
         // Pass the *original* (unfiltered) specs to the runner: the programmatic
         // oauth2PermissionGrants POST is lenient about scope existence, so the operator can
@@ -841,9 +846,8 @@ internal static class BatchPermissionsOrchestrator
             }
             else
             {
-                logger.LogDebug("Granting delegated admin consent via PowerShell (pwsh)...");
-                var (attempted, succeeded) = await PowerShellConsentRunner.TryRunAsync(
-                    commandExecutor, tenantId, p.BlueprintSpObjectId, originalSpecs, logger, ct);
+                var (attempted, succeeded) = await AzRestConsentRunner.TryRunAsync(
+                    commandExecutor, p.BlueprintSpObjectId, originalSpecs, logger, ct);
                 if (attempted && succeeded)
                 {
                     logger.LogInformation("Delegated admin consent granted.");
@@ -860,10 +864,11 @@ internal static class BatchPermissionsOrchestrator
                 }
                 else if (attempted)
                 {
-                    logger.LogWarning("Admin consent did not complete — see output above. The consent URL remains in the setup summary for manual completion.");
+                    logger.LogWarning("Admin consent did not complete - see output above. The consent URL remains in the setup summary for manual completion.");
                 }
-                // else: pwsh missing / timeout / inputs invalid — PowerShellConsentRunner already
-                // logged an actionable warning. The Action Required block surfaces the URL.
+                // else: validation rejected the input or no delegated specs were present.
+                // AzRestConsentRunner already logged an actionable warning. The Action Required
+                // block surfaces the URL.
             }
         }
 
@@ -1259,14 +1264,20 @@ internal static class BatchPermissionsOrchestrator
         IConfirmationProvider? confirmationProvider,
         ILogger logger)
     {
-        var (header, scopesSelector) = kind switch
+        // Per-kind wording: delegated permissions go through admin consent (tenant-wide
+        // OAuth2 grant); application permissions are a direct app role assignment on the
+        // blueprint SP. Calling the latter "admin consent" is technically incorrect and
+        // confused reviewers — keep the two prompts distinct.
+        var (header, scopesSelector, confirmPrompt) = kind switch
         {
             BlueprintPermissionKind.Delegated =>
                 ("The following delegated permissions will be granted to the agent blueprint:",
-                 (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.Scopes)),
+                 (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.Scopes),
+                 "Grant admin consent for these permissions now? [y/N]: "),
             BlueprintPermissionKind.Application =>
                 ("The following application permissions will be granted to the agent blueprint:",
-                 (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.AppRoleScopes)),
+                 (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.AppRoleScopes),
+                 "Assign these application permissions now? [y/N]: "),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
 
@@ -1284,7 +1295,7 @@ internal static class BatchPermissionsOrchestrator
         logger.LogInformation("");
 
         return confirmationProvider is null
-            || await confirmationProvider.ConfirmAsync("Grant admin consent for these permissions now? [y/N]: ");
+            || await confirmationProvider.ConfirmAsync(confirmPrompt);
     }
 
     /// <summary>
