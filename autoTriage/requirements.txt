@@ -15,7 +15,7 @@
 # pip-tools to generate. See docs/SECRETS.md for details.
 
 # Azure Functions
-azure-functions==2.1.0
+azure-functions==1.24.0
 
 # FastAPI (local development)
 fastapi==0.136.1
