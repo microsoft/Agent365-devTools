@@ -74,7 +74,8 @@ internal static class BatchPermissionsOrchestrator
         CancellationToken ct,
         string? knownBlueprintSpObjectId = null,
         IConfirmationProvider? confirmationProvider = null,
-        CommandExecutor? commandExecutor = null)
+        CommandExecutor? commandExecutor = null,
+        bool skipSpProvisioning = false)
     {
         if (specs.Count == 0)
         {
@@ -193,9 +194,6 @@ internal static class BatchPermissionsOrchestrator
             // in the token's scp claim — a privilege A365 tokens never carry — so the previous
             // programmatic path always failed in fresh tenants. See CHANGELOG for details.
             //
-            // confirmationProvider is intentionally unused: the /v2.0/adminconsent browser flow
-            // surfaces its own consent screen, which serves as the user-facing confirmation.
-            _ = confirmationProvider;
             if (isGlobalAdmin)
             {
                 var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
@@ -204,22 +202,36 @@ internal static class BatchPermissionsOrchestrator
                 // else: blueprint SP was not resolved — leave BlueprintS2SOutcome = NotApplicable (not attempted)
 
                 // When the programmatic Graph API path fails (e.g. token lacks AppRoleAssignment.ReadWrite.All
-                // even for GA), fall back to executing the same PowerShell script automatically.
+                // even for GA), fall back to executing the same PowerShell script. Issue #429: previously
+                // this fired automatically; now we prompt the operator first so the interactive
+                // Connect-MgGraph window is never opened without their explicit consent. When
+                // confirmationProvider is null (most existing tests), default to running — preserves
+                // legacy behavior under test and is harmless when the operator is non-interactive.
                 if (setupResults?.BlueprintS2SOutcome == Models.GrantOutcome.Failed && commandExecutor != null)
                 {
-                    logger.LogDebug("S2S app role assignments could not be completed via the Graph API.");
-                    logger.LogDebug("Attempting via PowerShell (pwsh)...");
-                    var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
-                        commandExecutor, tenantId, blueprintAppId, specs, logger, ct);
-                    if (attempted && succeeded)
+                    logger.LogDebug("S2S app role assignments could not be completed via the Graph API; prompting operator to grant them instead.");
+
+                    var shouldRunS2S = await PromptForBlueprintPermissionGrantAsync(
+                        BlueprintPermissionKind.Application, specs, confirmationProvider, logger);
+                    if (!shouldRunS2S)
                     {
-                        logger.LogInformation("S2S app role assignments completed via PowerShell.");
-                        setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Granted;
+                        logger.LogInformation("Skipping PowerShell S2S fallback per operator response. The setup summary lists the manual steps.");
                     }
-                    else if (attempted)
-                        logger.LogWarning("PowerShell execution did not complete — see output above. Manual steps in summary.");
-                    // else: pwsh missing / timeout / inputs invalid — PowerShellS2SRunner already
-                    // logged an actionable warning. Manual steps appear in the setup summary.
+                    else
+                    {
+                        logger.LogDebug("Attempting via PowerShell (pwsh)...");
+                        var (attempted, succeeded) = await PowerShellS2SRunner.TryRunAsync(
+                            commandExecutor, tenantId, blueprintAppId, specs, logger, ct);
+                        if (attempted && succeeded)
+                        {
+                            logger.LogInformation("Application permissions granted.");
+                            setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Granted;
+                        }
+                        else if (attempted)
+                            logger.LogWarning("PowerShell execution did not complete — see output above. Manual steps in summary.");
+                        // else: pwsh missing / timeout / inputs invalid — PowerShellS2SRunner already
+                        // logged an actionable warning. Manual steps appear in the setup summary.
+                    }
                 }
             }
         }
@@ -235,7 +247,7 @@ internal static class BatchPermissionsOrchestrator
 
         // --- Admin consent ---
         var (consentGranted, consentUrl) = await GrantAdminConsentAsync(
-            graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, commandExecutor, adminCheck);
+            graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, commandExecutor, adminCheck, confirmationProvider, skipSpProvisioning);
 
         // Update in-memory ResourceConsents only when consent was directly verified (consentUrl == null).
         // AssumedComplete returns a non-null consentUrl — do not persist in that case since the grant
@@ -540,19 +552,87 @@ internal static class BatchPermissionsOrchestrator
         SetupResults? setupResults,
         CancellationToken ct,
         CommandExecutor? commandExecutor = null,
-        Models.RoleCheckResult adminCheck = Models.RoleCheckResult.Unknown)
+        Models.RoleCheckResult adminCheck = Models.RoleCheckResult.Unknown,
+        IConfirmationProvider? confirmationProvider = null,
+        bool skipSpProvisioning = false)
     {
+        // Hold onto the unfiltered spec list so the PowerShell consent fallback can attempt
+        // dropped scopes too — the programmatic oauth2PermissionGrants POST is lenient about
+        // scope existence and stamping intent is sometimes what the operator actually wants.
+        var originalSpecs = specs;
+
+        // Issue #429: filter each spec's Scopes against what the resource SP actually exposes
+        // in this tenant. The /v2.0/adminconsent endpoint strictly validates every requested
+        // scope and rejects the entire URL with AADSTS650053 on the first unknown scope —
+        // a single drift between our spec list and the live resource SP (e.g. Bot Framework
+        // dropping "Authorization.ReadWrite" in favor of "AgentData.ReadWrite") blocks every
+        // other resource. Dropping unknown scopes here keeps the URL valid; the warnings tell
+        // the operator what we filtered out, and the PowerShell fallback (offered after the
+        // browser flow fails) can stamp them via the lenient programmatic path if needed.
+        IReadOnlyList<ScopeAvailabilityValidator.DroppedScope> droppedScopes =
+            Array.Empty<ScopeAvailabilityValidator.DroppedScope>();
+        if (phase1Result is { ResourceSpObjectIds.Count: > 0 })
+        {
+            var validation = await ScopeAvailabilityValidator.ValidateAsync(
+                graph, tenantId, specs, phase1Result.ResourceSpObjectIds, logger, ct);
+            specs = validation.EffectiveSpecs;
+            droppedScopes = validation.DroppedScopes;
+
+            foreach (var d in droppedScopes)
+            {
+                logger.LogWarning(
+                    "Resource '{ResourceName}' ({ResourceAppId}) does not publish delegated scope '{Scope}' — dropping from the unified admin-consent URL to avoid AADSTS650053. " +
+                    "If you require this grant, opt into the PowerShell fallback when prompted; it uses the programmatic oauth2PermissionGrants POST which is lenient about scope existence.",
+                    d.ResourceName, d.ResourceAppId, d.Scope);
+                setupResults?.Warnings.Add(
+                    $"Dropped scope '{d.Scope}' from consent URL — not published on '{d.ResourceName}' ({d.ResourceAppId}). Use the PowerShell fallback to attempt it.");
+            }
+        }
+
         // Build a single combined consent URL covering ALL delegated scopes across every
         // resource stamped on the blueprint (Graph, Agent 365 Tools, Messaging Bot,
         // Observability, Power Platform, ...). The /v2.0/adminconsent endpoint accepts
-        // fully-qualified scope URIs for any resource — Graph uses https://graph.microsoft.com/...
-        // and other resources use api://{appId}/... — so one URL grants everything at once.
+        // either a fully-qualified Application ID URI (e.g. https://graph.microsoft.com/...)
+        // or a bare Application ID GUID (for SPs without a published URI) — both flavors
+        // are produced by GetResourceIdentifierUri.
         //
-        // This replaces the previous "Graph-only URL + programmatic POST /oauth2PermissionGrants
-        // for everything else" model, which failed in fresh tenants because the Graph POST
-        // requires DelegatedPermissionGrant.ReadWrite.All in the token's scp claim (a privilege
-        // A365 tokens never carry). See CHANGELOG for details.
-        var allScopes = specs
+        // Issue #429: an unresolvable resource SP poisons the entire URL. AADSTS650052 is
+        // returned for the FIRST scope whose resource has no SP in the tenant
+        // ("organization lacks a service principal for ..."). Even when Phase 1 silently
+        // failed to create the SP (logWarningOnCreateFailure: false), the spec's scope
+        // still landed in the URL pre-fix. Filter to specs whose SP was actually resolved
+        // in Phase 1 before building the URL, and surface a warning for each excluded
+        // resource so the operator knows which scopes weren't consented.
+        var resolvedSpAppIds = phase1Result?.ResourceSpObjectIds is { } map
+            ? map.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Find specs whose SP couldn't be resolved in Phase 1 and try to provision them in
+        // place via per-app admin-consent URLs. EnsureMissingResourceSpsAsync mutates the
+        // resolvedSpAppIds set on success and emits warnings + next-step URLs for the rest.
+        // Skips entirely when skipSpProvisioning is true (flag or auto-detected from stdin) or
+        // when there is nothing missing. See helper for the full state machine.
+        if (resolvedSpAppIds.Count > 0)
+        {
+            var missingSpecs = specs
+                .Where(s => s.Scopes is { Length: > 0 } && !resolvedSpAppIds.Contains(s.ResourceAppId))
+                .ToList();
+            await EnsureMissingResourceSpsAsync(
+                graph, tenantId, blueprintAppId, missingSpecs, resolvedSpAppIds, permScopes,
+                skipSpProvisioning, logger, setupResults, ct,
+                commandExecutor: commandExecutor,
+                confirmationProvider: confirmationProvider);
+        }
+
+        // Apply the SP-resolution filter only when Phase 1 produced any results. When
+        // Phase 1 returned no resolved SPs at all (auth failure earlier), keep the legacy
+        // behavior of including every spec — that surfaces the auth failure path rather
+        // than silently dropping every scope here.
+        var specsForUrl = resolvedSpAppIds.Count > 0
+            ? specs.Where(s => resolvedSpAppIds.Contains(s.ResourceAppId)).ToList()
+            : specs.ToList();
+
+        var allScopes = specsForUrl
             .Where(s => s.Scopes is { Length: > 0 })
             .SelectMany(s => s.Scopes.Select(scope => BuildFullyQualifiedScope(s.ResourceAppId, scope, s.ResourceName)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -736,6 +816,57 @@ internal static class BatchPermissionsOrchestrator
             setupResults?.Warnings.Add($"Admin consent not detected within timeout. Grant at: {consentUrl}");
         }
 
+        // Issue #429: when the browser polling did not observe a verified grant — either the
+        // browser failed to open, the user closed the consent screen without granting, or Entra
+        // rejected the URL with an OAuth error (e.g. AADSTS650053) — offer the PowerShell
+        // fallback. The runner uses the operator's PowerShell-side Connect-MgGraph session
+        // which can carry DelegatedPermissionGrant.ReadWrite.All for a GA, whereas the CLI's
+        // own MSAL token cannot. Gated on operator opt-in so we never open a Connect-MgGraph
+        // browser tab without their explicit say-so.
+        //
+        // Pass the *original* (unfiltered) specs to the runner: the programmatic
+        // oauth2PermissionGrants POST is lenient about scope existence, so the operator can
+        // record intent for scopes the resource SP does not currently publish. This is what
+        // the dropped-scope warnings above point them toward.
+        if (!consentVerified
+            && commandExecutor is not null
+            && phase1Result is { } p
+            && !string.IsNullOrWhiteSpace(p.BlueprintSpObjectId))
+        {
+            var shouldRunConsent = await PromptForBlueprintPermissionGrantAsync(
+                BlueprintPermissionKind.Delegated, originalSpecs, confirmationProvider, logger);
+            if (!shouldRunConsent)
+            {
+                logger.LogInformation("Admin consent not granted. Re-run setup or grant via the URL above when ready.");
+            }
+            else
+            {
+                logger.LogDebug("Granting delegated admin consent via PowerShell (pwsh)...");
+                var (attempted, succeeded) = await PowerShellConsentRunner.TryRunAsync(
+                    commandExecutor, tenantId, p.BlueprintSpObjectId, originalSpecs, logger, ct);
+                if (attempted && succeeded)
+                {
+                    logger.LogInformation("Delegated admin consent granted.");
+                    if (setupResults is not null)
+                    {
+                        // Mirror the post-browser-success bookkeeping: a successful run
+                        // is just as good as a Verified browser poll for the purpose of "did we
+                        // record consent." The caller's persistence gate is (granted && url==null),
+                        // and returning verified=true below produces exactly that.
+                        setupResults.TenantWideConsentAlreadyExisted = false;
+                    }
+                    consentGranted = true;
+                    consentVerified = true;
+                }
+                else if (attempted)
+                {
+                    logger.LogWarning("Admin consent did not complete — see output above. The consent URL remains in the setup summary for manual completion.");
+                }
+                // else: pwsh missing / timeout / inputs invalid — PowerShellConsentRunner already
+                // logged an actionable warning. The Action Required block surfaces the URL.
+            }
+        }
+
         // Return URL when either polling failed outright OR consent was assumed-complete but not
         // verified. Caller uses (consentGranted && consentUrl == null) as the 'safe to persist' gate.
         return (consentGranted, consentVerified ? null : consentUrl);
@@ -793,6 +924,367 @@ internal static class BatchPermissionsOrchestrator
         if (string.IsNullOrWhiteSpace(err)) return false;
         return err.Contains("Insufficient privileges", StringComparison.OrdinalIgnoreCase)
             || err.Contains("Authorization_RequestDenied", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Issue #429: in-line provisioning of missing resource service principals before the
+    /// unified admin-consent URL is built. AADSTS650052 is returned when even one requested
+    /// resource lacks an SP in the tenant ("organization lacks a service principal for ...");
+    /// the whole URL fails atomically. Phase 1's <c>EnsureServicePrincipalForAppIdAsync</c>
+    /// uses <c>POST /servicePrincipals</c> which requires <c>Application.ReadWrite.All</c> on
+    /// the CLI token (it does not carry it), so for some first-party multi-tenant apps the
+    /// silent SP-creation path fails.
+    ///
+    /// <para>
+    /// The original approach used a per-app <c>/v2.0/adminconsent</c> browser URL with
+    /// <c>{appId}/.default</c> scope. That fails with AADSTS65003 for first-party MCP audiences
+    /// because (a) it is a "token-to-self" pattern (the app would consent to itself) which
+    /// requires preauthorization, and (b) the suggested workaround of using a URI identifier
+    /// is not available — the per-server SPs have <c>identifierUris</c> = null. So we shell
+    /// out to <c>az ad sp create --id {appId}</c> instead, which uses the operator's existing
+    /// <c>az login</c> token. A Global Administrator's az token carries
+    /// <c>Application.ReadWrite.All</c> implicitly via the GA directory role, which is exactly
+    /// the permission <c>POST /servicePrincipals</c> needs.
+    /// </para>
+    ///
+    /// <para>
+    /// For each spec whose <c>ResourceAppId</c> is missing from <paramref name="resolvedSpAppIds"/>:
+    /// </para>
+    /// <list type="number">
+    /// <item><description>Re-queries Graph in case the SP appeared between Phase 1 and now
+    /// (operator consented in another window, slow replica caught up). Adds the appId to the
+    /// resolved set and skips ahead if found.</description></item>
+    /// <item><description>Honors <paramref name="skipSpProvisioning"/>: emits warnings with the
+    /// <c>az ad sp create</c> command for manual provisioning and returns. Set via the
+    /// <c>--skip-sp-provisioning</c> flag or implicitly when stdin is redirected
+    /// (CI / pipe).</description></item>
+    /// <item><description>Otherwise, serial loop: per-SP <c>[y/N]</c> confirmation, then
+    /// shells out to <c>az ad sp create --id {appId}</c> via <paramref name="commandExecutor"/>.
+    /// On exit 0 plus Graph verification, adds to the resolved set; on failure, emits the
+    /// warning + manual command as next steps and continues with remaining specs.</description></item>
+    /// </list>
+    /// </summary>
+    internal static async Task EnsureMissingResourceSpsAsync(
+        GraphApiService graph,
+        string tenantId,
+        string blueprintAppId,
+        IReadOnlyList<ResourcePermissionSpec> missingSpecs,
+        HashSet<string> resolvedSpAppIds,
+        string[] permScopes,
+        bool skipSpProvisioning,
+        ILogger logger,
+        SetupResults? setupResults,
+        CancellationToken ct,
+        CommandExecutor? commandExecutor = null,
+        IConfirmationProvider? confirmationProvider = null)
+    {
+        if (missingSpecs.Count == 0) return;
+
+        // Test bypass: short-circuits the entire helper so unit tests for the broader
+        // GrantAdminConsentAsync flow do not need to mock az / Graph. Tests that exercise
+        // this helper directly set this to false explicitly.
+        if (BypassSpProvisioningForTests) return;
+
+        // Pre-flight: re-query each missing SP once. Cheap; eliminates the race where the
+        // operator already consented out-of-band between Phase 1 and now, or where a slow
+        // Graph replica needed one more probe to catch up.
+        var stillMissing = new List<ResourcePermissionSpec>();
+        foreach (var spec in missingSpecs)
+        {
+            var spId = await graph.LookupServicePrincipalByAppIdAsync(tenantId, spec.ResourceAppId, ct, permScopes);
+            if (!string.IsNullOrWhiteSpace(spId))
+            {
+                logger.LogInformation(
+                    "Resource '{Name}' ({AppId}): service principal found in tenant — no provisioning needed.",
+                    spec.ResourceName, spec.ResourceAppId);
+                resolvedSpAppIds.Add(spec.ResourceAppId);
+            }
+            else
+            {
+                stillMissing.Add(spec);
+            }
+        }
+
+        if (stillMissing.Count == 0) return;
+
+        // Non-interactive path (--skip-sp-provisioning set, or stdin redirected, or CI/agent
+        // scenario, or no executor passed): emit per-resource warnings with the manual
+        // az command and return. The caller's existing exclusion + warning block handles
+        // the unified URL build with what's resolvable.
+        if (skipSpProvisioning || commandExecutor is null)
+        {
+            logger.LogInformation("");
+            logger.LogInformation(
+                "{Count} resource(s) require service principal provisioning. Auto-provisioning is disabled; next steps below.",
+                stillMissing.Count);
+            foreach (var spec in stillMissing)
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+            return;
+        }
+
+        // Interactive path. Each iteration asks the operator, then shells out to
+        // 'az ad sp create --id {appId}'. The operator's az login token carries
+        // Application.ReadWrite.All implicitly via the Global Administrator directory role,
+        // which is what POST /servicePrincipals requires.
+        var pluralVerb = stillMissing.Count == 1 ? "is" : "are";
+        var pluralNoun = stillMissing.Count == 1 ? "resource service principal" : "resource service principals";
+        var maxNameWidth = stillMissing.Max(s => s.ResourceName.Length);
+
+        logger.LogInformation("");
+        logger.LogInformation("{Count} {Noun} {Verb} missing in your tenant.", stillMissing.Count, pluralNoun, pluralVerb);
+        logger.LogInformation("Provisioning will run 'az ad sp create' using your current az login.");
+        logger.LogInformation("You will be prompted before each is provisioned.");
+        logger.LogInformation("");
+
+        // Upfront list — name padded so the appId column lines up. Numbering uses "{i}."
+        // to match the per-prompt prefix below for visual correspondence.
+        for (int i = 0; i < stillMissing.Count; i++)
+        {
+            var spec = stillMissing[i];
+            logger.LogInformation("  {Idx}. {Name}  {AppId}",
+                i + 1, spec.ResourceName.PadRight(maxNameWidth), spec.ResourceAppId);
+        }
+
+        for (int i = 0; i < stillMissing.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var spec = stillMissing[i];
+
+            logger.LogInformation("");
+
+            // GUID guard: appId originates from manifest / typed config, but custom
+            // permissions are user-supplied and reach this loop too. Validate before
+            // interpolating into the shell command — defense in depth against injection.
+            if (!Guid.TryParse(spec.ResourceAppId, out _))
+            {
+                logger.LogWarning(
+                    "  {Idx}. {Name} ({AppId}): skipping — resource app id is not a valid GUID.",
+                    i + 1, spec.ResourceName, spec.ResourceAppId);
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+                continue;
+            }
+
+            // Per-SP confirmation. Default No (must type y). Null confirmationProvider
+            // preserves the legacy "auto-yes" behavior under test, mirroring the other
+            // PromptForBlueprintPermissionGrantAsync call sites.
+            var prompt = $"  {i + 1}. {spec.ResourceName} - Provision via 'az ad sp create'? [y/N]: ";
+            var shouldProvision = confirmationProvider is null
+                || await confirmationProvider.ConfirmAsync(prompt);
+            if (!shouldProvision)
+            {
+                logger.LogInformation("  Skipped.");
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+                continue;
+            }
+
+            var azArgs = $"ad sp create --id {spec.ResourceAppId}";
+            logger.LogInformation("  Running: az {AzArgs}", azArgs);
+            var azResult = await commandExecutor.ExecuteAsync(
+                "az", azArgs,
+                captureOutput: true,
+                suppressErrorLogging: true,
+                cancellationToken: ct);
+
+            if (!azResult.Success)
+            {
+                var stderr = string.IsNullOrWhiteSpace(azResult.StandardError) ? azResult.StandardOutput : azResult.StandardError;
+                logger.LogWarning("  Failed: {Error}", (stderr ?? string.Empty).Trim());
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+                continue;
+            }
+
+            // az exit 0 plus a parseable SP id in its JSON output is authoritative — the
+            // shell-out and the Graph backend are the same Entra tenant, so an SP id in the
+            // command output means the SP exists. The previous post-create Graph re-poll
+            // produced false "Graph still does not see the SP" warnings on slow replicas
+            // even when az clearly succeeded; trusting az output eliminates that.
+            string? newSpId = TryExtractSpIdFromAzOutput(azResult.StandardOutput);
+            if (!string.IsNullOrWhiteSpace(newSpId))
+            {
+                logger.LogInformation("  Done. Service principal created for '{Name}' (id: {SpId}).", spec.ResourceName, newSpId);
+                resolvedSpAppIds.Add(spec.ResourceAppId);
+            }
+            else
+            {
+                // az exited 0 but its stdout did not parse — extremely unusual. Surface the
+                // raw output so the operator can diagnose, and record the action so the
+                // setup summary surfaces the recovery steps.
+                logger.LogWarning(
+                    "  az exited 0 but the output did not contain a service principal id. Output: {Output}",
+                    (azResult.StandardOutput ?? string.Empty).Trim());
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+            }
+        }
+
+        logger.LogInformation("");
+        logger.LogInformation("Continuing with admin consent...");
+    }
+
+    /// <summary>
+    /// Parses the JSON returned by <c>az ad sp create --id {appId}</c> and extracts the SP
+    /// object id from the <c>id</c> property. Returns null when the input is null, empty,
+    /// not JSON, or missing the property. The presence of an id is sufficient evidence that
+    /// the SP was created — az returns the same JSON the Graph POST returned, in real time,
+    /// against the same backend.
+    /// </summary>
+    internal static string? TryExtractSpIdFromAzOutput(string? azStandardOutput)
+    {
+        if (string.IsNullOrWhiteSpace(azStandardOutput)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(azStandardOutput);
+            if (doc.RootElement.TryGetProperty("id", out var idEl) && idEl.ValueKind == System.Text.Json.JsonValueKind.String)
+                return idEl.GetString();
+        }
+        catch (System.Text.Json.JsonException) { /* not JSON; return null */ }
+        return null;
+    }
+
+    /// <summary>
+    /// Test-only escape hatch — when true, <see cref="EnsureMissingResourceSpsAsync"/>
+    /// returns immediately without opening browsers, polling Graph, or consuming stdin.
+    /// Default <strong>false</strong> so the helper actually runs in production. Tests
+    /// for <see cref="ConfigureAllPermissionsAsync"/> that do not want the helper firing
+    /// must set this to true in their setup. Tests that exercise the helper directly
+    /// leave it false. Pattern mirrors <see cref="AdminConsentHelper.BypassConsentChecksForTests"/>.
+    /// </summary>
+    internal static bool BypassSpProvisioningForTests { get; set; } = false;
+
+    /// <summary>
+    /// Builds the <c>az ad sp create</c> command that provisions a missing resource SP in
+    /// the operator's tenant. The operator's az login (running as Global Administrator)
+    /// carries <c>Application.ReadWrite.All</c> implicitly via the GA directory role, which
+    /// is exactly the permission <c>POST /servicePrincipals</c> needs. Returned as a
+    /// ready-to-copy command string so the same form appears in the live "Running: ..." log
+    /// line and in the warning next-steps block.
+    /// </summary>
+    internal static string BuildAzAdSpCreateCommand(string resourceAppId) =>
+        $"az ad sp create --id {resourceAppId}";
+
+    /// <summary>
+    /// Records a missing-SP action on <see cref="SetupResults.MissingSpActions"/> so the
+    /// setup summary's "Action Required" block renders it as a numbered item. Each entry
+    /// carries the two concrete artifacts the operator needs to complete provisioning
+    /// without re-running setup:
+    /// <list type="number">
+    /// <item><description><c>az ad sp create --id {appId}</c> — provisions the SP in the tenant.</description></item>
+    /// <item><description>Per-SP <c>/v2.0/adminconsent</c> URL keyed to the blueprint as
+    /// client and this resource's scopes as the request. After step 1 succeeds, clicking
+    /// this URL grants the blueprint consent for this one resource additively (does not
+    /// wipe other resources' grants), avoiding any need to re-run <c>a365 setup all</c>.</description></item>
+    /// </list>
+    /// Used by every path that leaves a resource un-provisioned: declined per-SP prompt,
+    /// GUID guard rejection, az exiting non-zero, or <c>--skip-sp-provisioning</c>.
+    /// </summary>
+    private static void RecordMissingSpAction(
+        ResourcePermissionSpec spec,
+        string tenantId,
+        string blueprintAppId,
+        ILogger logger,
+        SetupResults? setupResults)
+    {
+        _ = logger; // intentionally unused — caller already emits a one-line inline marker
+                    // ("Skipped." / "Failed: <error>" / "...invalid GUID...") immediately
+                    // before invoking this. The full recovery block (az command + per-SP
+                    // consent URL) renders only in the Action Required section so the main
+                    // output stays clean. See DisplaySetupSummary's MissingSpActions branch.
+
+        var azCommand = BuildAzAdSpCreateCommand(spec.ResourceAppId);
+        var perSpConsentUrl = BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec);
+
+        setupResults?.MissingSpActions.Add(new MissingSpAction(
+            ResourceName: spec.ResourceName,
+            ResourceAppId: spec.ResourceAppId,
+            Scopes: spec.Scopes?.ToArray() ?? Array.Empty<string>(),
+            AzCreateCommand: azCommand,
+            PerSpConsentUrl: perSpConsentUrl));
+    }
+
+    /// <summary>
+    /// Builds the per-SP <c>/v2.0/adminconsent</c> URL the operator clicks AFTER manually
+    /// running <c>az ad sp create --id {resourceAppId}</c>. Unlike the broken
+    /// "consent the MCP app to itself" pattern (which fails with AADSTS65003 for first-party
+    /// token-to-self), this URL uses the BLUEPRINT as the client and the resource's actual
+    /// scopes as the request — a normal cross-app consent, additive to whatever the unified
+    /// admin-consent URL already granted in the same setup run.
+    /// </summary>
+    internal static string BuildPerSpBlueprintConsentUrl(string tenantId, string blueprintAppId, ResourcePermissionSpec spec)
+    {
+        var scopes = spec.Scopes ?? Array.Empty<string>();
+        var fullyQualified = scopes
+            .Select(s => $"{GetResourceUriForBlueprintConsent(spec.ResourceAppId)}/{s}");
+        var scopeParam = string.Join("%20", fullyQualified.Select(Uri.EscapeDataString));
+        var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
+        return $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent" +
+               $"?client_id={blueprintAppId}" +
+               $"&scope={scopeParam}" +
+               $"&redirect_uri={redirectEncoded}" +
+               $"&state={Guid.NewGuid():N}";
+    }
+
+    /// <summary>
+    /// Resolves the resource identifier used in the per-SP unified-consent URL. For SPs
+    /// without a published identifierUri (e.g. V2 MCP per-server audiences), Entra accepts
+    /// the bare appId GUID as the resource — same rule we apply elsewhere via
+    /// <see cref="SetupHelpers.GetResourceIdentifierUri"/>. Just inlining the well-known
+    /// resource appId fallback here so the helper does not depend on the broader URL
+    /// builder for one shape.
+    /// </summary>
+    private static string GetResourceUriForBlueprintConsent(string resourceAppId) => resourceAppId;
+
+    /// <summary>
+    /// Distinguishes the two flavors of blueprint permission grant for
+    /// <see cref="PromptForBlueprintPermissionGrantAsync"/>. Picks which scopes on the
+    /// spec are surfaced to the operator (<c>Scopes</c> vs <c>AppRoleScopes</c>) and the
+    /// header noun ("delegated" vs "application").
+    /// </summary>
+    private enum BlueprintPermissionKind { Delegated, Application }
+
+    /// <summary>
+    /// Shared confirmation prompt for the two blueprint-permission grant fallbacks
+    /// (Phase 2b S2S app roles and Phase 3 delegated admin consent). Mirrors the clean
+    /// prompt shape used by
+    /// <c>NonDwBlueprintSetupOrchestrator</c>: list the resource:scopes that are about
+    /// to land on the blueprint, blank line, single <c>[y/N]</c> question.
+    /// <para>
+    /// Returns <c>true</c> when the operator opts in (or when no confirmation provider
+    /// is supplied — preserves legacy "auto-yes" behavior under test). Returns
+    /// <c>false</c> when there is nothing to grant for the requested kind (caller
+    /// should treat this as a no-op rather than offering the runner an empty spec list).
+    /// </para>
+    /// </summary>
+    private static async Task<bool> PromptForBlueprintPermissionGrantAsync(
+        BlueprintPermissionKind kind,
+        IReadOnlyList<ResourcePermissionSpec> specs,
+        IConfirmationProvider? confirmationProvider,
+        ILogger logger)
+    {
+        var (header, scopesSelector) = kind switch
+        {
+            BlueprintPermissionKind.Delegated =>
+                ("The following delegated permissions will be granted to the agent blueprint:",
+                 (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.Scopes)),
+            BlueprintPermissionKind.Application =>
+                ("The following application permissions will be granted to the agent blueprint:",
+                 (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.AppRoleScopes)),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+
+        var items = specs
+            .Where(s => scopesSelector(s) is { Count: > 0 })
+            .Select(s => $"  - {s.ResourceName}: {string.Join(", ", scopesSelector(s)!)}")
+            .ToList();
+
+        if (items.Count == 0) return false;
+
+        logger.LogInformation("");
+        logger.LogInformation("{Header}", header);
+        foreach (var item in items)
+            logger.LogInformation("{Item}", item);
+        logger.LogInformation("");
+
+        return confirmationProvider is null
+            || await confirmationProvider.ConfirmAsync("Grant admin consent for these permissions now? [y/N]: ");
     }
 
     /// <summary>

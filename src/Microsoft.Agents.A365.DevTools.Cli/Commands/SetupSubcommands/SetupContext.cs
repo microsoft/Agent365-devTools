@@ -74,6 +74,16 @@ internal sealed class SetupContext
     public bool IsBothMode => string.Equals(AuthMode, "both", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// When true, skip the interactive in-line provisioning of missing resource service
+    /// principals (issue #429). The default flow opens per-app admin-consent URLs and
+    /// polls until each missing SP is created in the tenant. With this set, missing SPs
+    /// are excluded from the unified consent URL and surfaced as warnings only.
+    /// Set explicitly via <c>--skip-sp-provisioning</c> or implicitly when stdin is
+    /// redirected (CI / coding-agent / pipe scenarios).
+    /// </summary>
+    public bool SkipSpProvisioning { get; }
+
+    /// <summary>
     /// Overrides the az CLI login hint resolver used during blueprint creation.
     /// Null in production — injected as a no-op in tests to avoid spawning 'az account show'.
     /// </summary>
@@ -124,7 +134,8 @@ internal sealed class SetupContext
         bool isM365 = false,
         string? authMode = null,
         Func<Task<string?>>? loginHintResolver = null,
-        IConfirmationProvider? confirmationProvider = null)
+        IConfirmationProvider? confirmationProvider = null,
+        bool skipSpProvisioning = false)
     {
         Config = config;
         Results = results;
@@ -139,6 +150,7 @@ internal sealed class SetupContext
         IsBootstrap = isBootstrap;
         IsM365 = isM365;
         AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.ToLowerInvariant();
+        SkipSpProvisioning = skipSpProvisioning;
         ConfigService = configService;
         Executor = executor;
         BackendConfigurator = backendConfigurator;

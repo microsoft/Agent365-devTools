@@ -9,6 +9,12 @@ using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
+// TODO(issue #429, pre-PR): replace this runner with AzRestS2SRunner before the PR lands.
+// Same reasoning as the PowerShellConsentRunner TODO — Connect-MgGraph is slow and
+// unreliable, and the operator's az login is sufficient to POST appRoleAssignments
+// directly via `az rest`. Once AzRestS2SRunner is confirmed working end-to-end, delete
+// this file and its tests.
+
 /// <summary>
 /// Runs the S2S app role assignment PowerShell script automatically when the programmatic
 /// Graph API path fails for a Global Administrator. Requires pwsh and the Microsoft.Graph
@@ -74,7 +80,9 @@ internal static partial class PowerShellS2SRunner
 
         var script = BuildScript(tenantId, blueprintAppId, s2sSpecs);
 
-        logger.LogInformation("S2S app role assignment - connecting to Microsoft Graph. A browser window may open; sign in if prompted.");
+        // Browser-open is the slow step the operator can't observe directly — call it out
+        // with prep text so they don't think the CLI is hung while pwsh launches.
+        logger.LogInformation("Connecting to Microsoft Graph. This may take a moment; a browser window may open for sign-in...");
 
         logger.LogDebug("Executing S2S PowerShell script via temp file...");
         logger.LogDebug("S2S PowerShell script:{NewLine}{Script}", Environment.NewLine, script);
@@ -202,7 +210,8 @@ internal static partial class PowerShellS2SRunner
             }
         }
 
-        sb.AppendLine("Write-Output 'A365-S2S-OK'");
+        // No success marker emitted — the parent process keys off the pwsh exit code
+        // (0 == OK). Writing a marker line would only leak into the operator's terminal.
         return sb.ToString();
     }
 

@@ -53,7 +53,7 @@ internal static class PermissionsSubcommand
         var permissionsCommand = new Command("permissions",
             "Configure OAuth2 permission grants and inheritable permissions on the blueprint\n" +
             "Required role: Agent ID Developer for inheritable permissions; Global Administrator\n" +
-            "for tenant-wide OAuth2 consent. Non-admins get copy-paste PowerShell to forward.\n");
+            "for tenant-wide OAuth2 consent. Non-admins get a unified /v2.0/adminconsent URL to forward.\n");
 
         // Add subcommands
         permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider, resolver));
@@ -80,7 +80,7 @@ internal static class PermissionsSubcommand
         var command = new Command("mcp",
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
-            "(non-admins receive copy-paste PowerShell to forward to an admin).\n\n");
+            "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n");
 
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
@@ -248,7 +248,7 @@ internal static class PermissionsSubcommand
         var command = new Command("bot",
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
-            "(non-admins receive copy-paste PowerShell to forward to an admin).\n\n" +
+            "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n" +
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
             "Next step: Run 'a365 publish' to package your agent for upload to the Microsoft 365 Admin Center");
 
@@ -296,7 +296,7 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("Dry run: Configure Bot API Permissions");
                 logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", dryRunConfig.AgentBlueprintId);
-                logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Messaging Bot API: {Scope}", ConfigConstants.MessagingBotApiAdminConsentScope);
                 logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
                 logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 logger.LogInformation("No changes made. Run without --dry-run to execute.");
@@ -363,7 +363,7 @@ internal static class PermissionsSubcommand
         var command = new Command("custom",
             "Configure custom resource OAuth2 grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
-            "(non-admins receive copy-paste PowerShell to forward to an admin).\n\n" +
+            "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n" +
             "Prerequisites: Blueprint created (run 'a365 setup blueprint' first)\n");
 
         var agentNameOption = new Option<string?>(

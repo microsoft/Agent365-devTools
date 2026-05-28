@@ -73,7 +73,7 @@ public static class AdminConsentHelper
     /// Safe when stdin is redirected (e.g. test/CI): returns false and any other buffered keys
     /// are consumed harmlessly. Returns true only when an Enter key was pressed and consumed.
     /// </summary>
-    private static bool TryConsumeEnterKey()
+    internal static bool TryConsumeEnterKey()
     {
         try
         {
@@ -114,7 +114,7 @@ public static class AdminConsentHelper
         int lastProgressReportSeconds = 0;
 
         logger.LogInformation(
-            "Waiting for admin consent to be granted. Open the URL above in a browser and complete the consent flow. The CLI will continue automatically (timeout: {TimeoutSeconds}s).",
+            "Waiting for admin consent. Complete the sign-in and Accept the permissions in the browser window. The CLI will continue automatically (timeout: {TimeoutSeconds}s, or press Enter to skip).",
             timeoutSeconds);
 
         try
@@ -126,8 +126,17 @@ public static class AdminConsentHelper
                 {
                     lastProgressReportSeconds = elapsedSeconds;
                     logger.LogInformation(
-                        "Still waiting for admin consent... ({ElapsedSeconds}s / {TimeoutSeconds}s).",
+                        "Still waiting for admin consent... ({ElapsedSeconds}s / {TimeoutSeconds}s). Press Enter to skip waiting (use this if the browser tab showed an error).",
                         elapsedSeconds, timeoutSeconds);
+                }
+
+                // Allow the operator to short-circuit the wait when the browser tab clearly
+                // failed (e.g. AADSTS500011 / AADSTS650053). Mirrors the Graph polling overload
+                // pattern below so both paths support the same escape hatch.
+                if (TryConsumeEnterKey())
+                {
+                    logger.LogInformation("Skip requested. Run 'a365 query-entra blueprint-scopes' later to verify consent if needed.");
+                    return false;
                 }
 
                 if (spId == null)
@@ -173,9 +182,19 @@ public static class AdminConsentHelper
                     }
                 }
 
-                // Delay between polls. If cancellation is requested this will throw OperationCanceledException,
-                // which we catch below and treat as a graceful cancellation resulting in 'false'.
-                await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
+                // Short-poll loop so an Enter keypress is detected within 250 ms rather than
+                // waiting a full intervalSeconds before the next check — same shape as the Graph
+                // overload below.
+                var pollEnd = DateTime.UtcNow.AddSeconds(intervalSeconds);
+                while (DateTime.UtcNow < pollEnd && !ct.IsCancellationRequested)
+                {
+                    if (TryConsumeEnterKey())
+                    {
+                        logger.LogInformation("Skip requested. Run 'a365 query-entra blueprint-scopes' later to verify consent if needed.");
+                        return false;
+                    }
+                    await Task.Delay(250, ct);
+                }
             }
 
             logger.LogWarning(

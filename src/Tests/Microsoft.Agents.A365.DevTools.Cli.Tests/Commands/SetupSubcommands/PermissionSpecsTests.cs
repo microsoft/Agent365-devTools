@@ -287,6 +287,31 @@ public class PermissionSpecsTests : IDisposable
     }
 
     [Fact]
+    public async Task MessagingBotApi_UsesScopeConstantSoSpecAndConsentUrlAgree()
+    {
+        // Arrange: smallest config that produces the Messaging Bot spec.
+        var config = new Agent365Config { DeploymentProjectPath = _tempDir };
+
+        // Act
+        var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(config, setInheritable: true, isM365: true);
+
+        // Assert: the Messaging Bot spec must request exactly the scopes that the resource SP
+        // exposes (a live query shows AgentData.ReadWrite is the only delegated scope on
+        // appId 5a807f24-c9de-44ee-a3a7-329e88a00ffc). Requesting any other scope here causes
+        // /v2.0/adminconsent to reject the entire combined-URL request with
+        // AADSTS650053 ("scope doesn't exist on the resource") — see issue #429.
+        //
+        // The single source of truth is ConfigConstants.MessagingBotApiAdminConsentScope.
+        // Asserting against the constant (rather than a string literal) means future scope-name
+        // changes propagate consistently to both the spec list and the per-resource URL builder
+        // — the same constant is used by SetupHelpers.BuildAdminConsentUrls /
+        // BuildCombinedConsentUrl, so a one-place update keeps both paths aligned.
+        var bot = SpecFor(specs, ConfigConstants.MessagingBotApiAppId);
+        bot.Scopes.Should().BeEquivalentTo(new[] { ConfigConstants.MessagingBotApiAdminConsentScope },
+            because: "the spec must request only scopes the Messaging Bot resource SP exposes; the unified /v2.0/adminconsent URL strictly validates scope existence and rejects with AADSTS650053 otherwise (issue #429). Using the constant keeps the spec list and the URL builder pinned to a single source of truth.");
+    }
+
+    [Fact]
     public async Task SetInheritableFlag_PropagatesToEverySpec()
     {
         // Arrange

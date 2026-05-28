@@ -365,8 +365,12 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // If admin consent wasn't granted (non-GA caller), persist per-resource consent URLs
                 // and a combined URL so a Global Administrator can complete the hand-off out-of-band.
                 // Messaging Bot is gated on isM365 to avoid AADSTS650053 in tenants without the Bot SP.
+                // V2 audience routing (issue #429): pass the full scopesByAudience map so per-server
+                // audiences land on api://{appId} rather than collapsing onto the WorkIQ Tools URI.
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
-                    ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes, isM365: ctx.IsM365);
+                    ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes,
+                    isM365: ctx.IsM365,
+                    mcpScopesByAudience: buildResult.scopesByAudience);
 
                 // Save state before agent identity steps so progress (blueprint stamping outcomes,
                 // consent URLs) is not lost on failure in the steps below.
