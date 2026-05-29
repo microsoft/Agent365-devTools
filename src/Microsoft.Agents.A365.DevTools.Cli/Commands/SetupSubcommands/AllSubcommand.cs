@@ -559,16 +559,9 @@ internal static class AllSubcommand
                 // Step 3: Configure all permissions in a batch.
                 var (specs, mcpResourceAppId, mcpScopes, mcpScopesByAudience) = await BuildPermissionSpecsAsync(ctx);
 
-                // Manifest-derived MCP audience appIds — passed to the orchestrator so
-                // GetResourceIdentifierUri can emit bare appId GUID for these (their SPs
-                // have identifierUris=null) and api://{appId} for every other unknown
-                // resource (customPermissions etc.).
-                var knownMcpAudienceAppIds = mcpScopesByAudience.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-
                 await ExecuteBatchPermissionsStepAsync(
-                    ctx, specs,
-                    knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId,
-                    knownMcpAudienceAppIds: knownMcpAudienceAppIds);
+                    ctx, specs, mcpScopesByAudience,
+                    knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
                     ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes,
@@ -777,9 +770,15 @@ internal static class AllSubcommand
     internal static async Task ExecuteBatchPermissionsStepAsync(
         SetupContext ctx,
         List<ResourcePermissionSpec> specs,
-        string? knownBlueprintSpObjectId = null,
-        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
+        IReadOnlyDictionary<string, string[]> mcpScopesByAudience,
+        string? knownBlueprintSpObjectId = null)
     {
+        // Required parameter — every caller must thread the loaded ToolingManifest
+        // audience map through. Forgetting it would route V2 MCP per-server audiences
+        // to api://{appId} and trigger AADSTS500011 (see commit 7a1e317's incomplete
+        // wiring of the non-DW path).
+        var knownMcpAudienceAppIds = mcpScopesByAudience.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         try
         {
             var (blueprintPermissionsUpdated, inheritedPermissionsConfigured, consentGranted, adminConsentUrl) =

@@ -847,4 +847,114 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         setupResults.InheritablePermissionsAlreadyExisted.Should().BeFalse(
             because: "a failed inheritable spec breaks the 'all already existed' claim — the aggregation must require r.configured AND r.alreadyExisted for every spec, not just r.alreadyExisted");
     }
+
+    // ──────────────────────────────────────────────────────────────────────────────────────
+    // V2 audience routing through GrantAdminConsentAsync's catch-all spec loop.
+    //
+    // GetResourceIdentifierUri unit tests in SetupHelpersConsentUrlTests cover the helper's
+    // four branches in isolation. This test integrates through ConfigureAllPermissionsAsync
+    // and exercises the orchestrator's catch-all spec loop at GrantAdminConsentAsync — the
+    // layer where the original PR #432 bug lived (non-DW caller forgot to pass
+    // knownMcpAudienceAppIds, so V2 per-server audiences fell to api://{appId} → AADSTS500011).
+    //
+    // The compile-time fix (mcpScopesByAudience required on ExecuteBatchPermissionsStepAsync)
+    // makes the entry-point case unforgettable. This test additionally pins the contract at
+    // the deeper layer: that the URL-building loop honors knownMcpAudienceAppIds per spec.
+    // ──────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Non-admin path: GrantAdminConsentAsync builds the unified consent URL via the catch-all
+    /// spec loop and returns it for hand-off. When a spec's appId is in knownMcpAudienceAppIds,
+    /// the URL must contain its bare-GUID-prefixed scope (no api://). When the appId is NOT in
+    /// the set, the URL must contain the api:// form. Both must hold simultaneously — the
+    /// per-spec decision must use the audience set, not a global flag.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_NonAdmin_McpAudienceUsesBareGuid_NonMcpUsesApiScheme()
+    {
+        // Arrange — non-admin path so GrantAdminConsentAsync builds and returns the URL.
+        // BypassConsentChecksForTests is true by default (ctor); override to false here so
+        // the pre-check actually runs, finds "no grants" via the mocked Graph response,
+        // and the orchestrator falls through to URL building. Restored in the finally below.
+        var priorBypass = AdminConsentHelper.BypassConsentChecksForTests;
+        AdminConsentHelper.BypassConsentChecksForTests = false;
+        try
+        {
+
+        const string mcpAudienceAppId = "16b1878d-62c7-4009-aa25-68989d63bbad"; // mcp_MailTools from ToolingManifest
+        const string mcpScope = "Tools.ListInvoke.All";
+        const string customAppId = "99999999-9999-9999-9999-999999999999";       // not in manifest
+        const string customScope = "Custom.Scope";
+
+        // The /me probe in UpdateBlueprintPermissionsAsync gets the user JSON; every other
+        // GraphGetAsync (oauth2PermissionGrants pre-check) gets an empty value array so the
+        // pre-check returns "not consented" and the URL-building path runs.
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Is<string>(p => p.Contains("/me", StringComparison.Ordinal)),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Is<string>(p => !p.Contains("/me", StringComparison.Ordinal)),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"value\":[]}"));
+
+        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(RoleCheckResult.DoesNotHaveRole);
+
+        // Phase 1 resource SP resolution succeeds for both appIds — the catch-all loop
+        // includes only specs whose SP was resolved (resolvedSpAppIds filter).
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("resolved-sp-id"));
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: true, alreadyExists: true, error: (string?)null)));
+
+        var specs = new[]
+        {
+            new ResourcePermissionSpec(mcpAudienceAppId, "Agent 365 Tools",
+                new[] { mcpScope }, SetInheritable: false),
+            new ResourcePermissionSpec(customAppId, "Custom Resource",
+                new[] { customScope }, SetInheritable: false),
+        };
+
+        var setupResults = new SetupResults();
+        var mcpAudienceSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { mcpAudienceAppId };
+
+        // Act
+        var (_, _, _, adminConsentUrl) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: specs, _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor,
+            knownMcpAudienceAppIds: mcpAudienceSet);
+
+        // Assert — the URL was generated (non-admin hand-off) and routes the two specs
+        // through the correct branches of GetResourceIdentifierUri.
+        adminConsentUrl.Should().NotBeNull(
+            because: "non-admin path must return a consent URL the operator can hand off to a GA");
+
+        // MCP per-server audience → bare GUID. Uri.EscapeDataString turns '/' into %2F.
+        adminConsentUrl.Should().Contain($"{mcpAudienceAppId}%2F{mcpScope}",
+            because: "the manifest-known MCP appId must route through the bare-GUID branch in GetResourceIdentifierUri — this is the AADSTS500011 fix");
+        adminConsentUrl.Should().NotContain($"api%3A%2F%2F{mcpAudienceAppId}",
+            because: "api://{appId} for a V2 MCP per-server audience produces AADSTS500011 because per-server SPs have identifierUris=null");
+
+        // Non-MCP custom resource → api://{appId}. EscapeDataString produces lowercase hex on
+        // some runtimes (api%3a%2f%2f) and uppercase on others (api%3A%2F%2F); FluentAssertions
+        // matches case-insensitively here to keep the test stable across .NET versions.
+        adminConsentUrl.Should().ContainEquivalentOf($"api%3A%2F%2F{customAppId}%2F{customScope}",
+            because: "non-MCP unknown resources keep the standard api://{appId} Application ID URI form (pre-PR-#432 behavior)");
+
+        }
+        finally
+        {
+            AdminConsentHelper.BypassConsentChecksForTests = priorBypass;
+        }
+    }
 }

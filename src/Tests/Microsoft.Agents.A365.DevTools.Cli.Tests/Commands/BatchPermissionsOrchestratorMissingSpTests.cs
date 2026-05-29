@@ -387,6 +387,42 @@ public class BatchPermissionsOrchestratorMissingSpTests
     }
 
     [Fact]
+    public void BuildPerSpBlueprintConsentUrl_DefaultIsMcpAudienceFalse_UsesApiSchemePrefix()
+    {
+        // Default catch-all (caller has not signaled MCP-ness): use the standard
+        // api://{appId} Application ID URI form. This matches the broader
+        // GetResourceIdentifierUri contract — bare GUID is only safe for V2 MCP
+        // per-server SPs (identifierUris=null); other unknown resources may have
+        // identifierUris set and need the api:// prefix.
+        var customAppId = "99999999-9999-9999-9999-999999999999";
+        var spec = new ResourcePermissionSpec(customAppId, "Custom Resource", new[] { "Custom.Scope" }, SetInheritable: true);
+
+        var url = BatchPermissionsOrchestrator.BuildPerSpBlueprintConsentUrl(TenantId, BlueprintAppId, spec);
+
+        url.Should().ContainEquivalentOf($"api%3A%2F%2F{customAppId}%2FCustom.Scope",
+            because: "non-MCP unknown resources keep the standard api://{appId} form so the recovery URL works for any resource whose SP publishes api:// as an identifierUri");
+        url.Should().NotContain($"={customAppId}%2FCustom.Scope",
+            because: "without the api:// prefix the URL would fail for custom resources whose SPs do not register the bare appId in servicePrincipalNames");
+    }
+
+    [Fact]
+    public void BuildPerSpBlueprintConsentUrl_McpAudience_UsesBareAppIdGuidNotApiScheme()
+    {
+        // When the caller signals the resource is a V2 MCP per-server audience (e.g.
+        // the appId is in the loaded ToolingManifest audience set), the URL must use
+        // the bare appId GUID — api://{appId} triggers AADSTS500011 for these SPs
+        // because identifierUris is null.
+        var spec = new ResourcePermissionSpec(TeamsMcpAppId, "Work IQ Teams MCP", new[] { "Tools.ListInvoke.All" }, SetInheritable: true);
+
+        var url = BatchPermissionsOrchestrator.BuildPerSpBlueprintConsentUrl(TenantId, BlueprintAppId, spec, isMcpAudience: true);
+
+        url.Should().Contain(Uri.EscapeDataString($"{TeamsMcpAppId}/Tools.ListInvoke.All"),
+            because: "V2 MCP per-server SPs publish only the bare appId GUID in servicePrincipalNames; api:// triggers AADSTS500011 on the recovery URL after the operator provisions the SP");
+        url.Should().NotContain($"api%3A%2F%2F{TeamsMcpAppId}",
+            because: "the per-SP URL must not emit api://{appId} for MCP per-server audiences — that is exactly the AADSTS500011 path the operator just escaped by running az ad sp create");
+    }
+
+    [Fact]
     public void TryExtractSpIdFromAzOutput_ValidJsonWithId_ReturnsId()
     {
         var json = "{\"id\":\"d42a47bf-9727-444c-ae57-17bd588613cd\",\"appId\":\"" + TeamsMcpAppId + "\"}";

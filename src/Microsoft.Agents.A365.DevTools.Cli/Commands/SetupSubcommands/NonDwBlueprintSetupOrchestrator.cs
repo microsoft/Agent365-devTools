@@ -359,7 +359,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Non-fatal: a failure here (e.g. caller lacks Global Administrator) logs a warning
                 // and continues so the agent-identity grants below still apply.
                 await AllSubcommand.ExecuteBatchPermissionsStepAsync(
-                    ctx, specs,
+                    ctx, specs, buildResult.scopesByAudience,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
                 // If admin consent wasn't granted (non-GA caller), persist per-resource consent URLs

@@ -92,7 +92,7 @@ The review does not assume docs will be updated later — a user-visible surface
 - **Not excuses**: "it's preview/opt-in/temporary", "Microsoft Learn will cover it", "you can see it in the diff". The CHANGELOG is the release's source of truth.
 
 ### Cross-Cutting Contract Checks
-Eight checks that static per-file analysis tends to miss — each requires tracing across multiple files or comparing code against docs/descriptions:
+Nine checks that static per-file analysis tends to miss — each requires tracing across multiple files or comparing code against docs/descriptions:
 
 - **Return-value null semantics (Rule N)**: When a method documents that `null` (or a sentinel) carries a special meaning (e.g., "null = verified, safe to persist"), grep every call site and verify the producer returns null in exactly the documented cases. A path that returns non-null when the contract says "verified" silently breaks the caller's persistence gate.
 - **CHANGELOG vs code numeric consistency (Rule O)**: After reading CHANGELOG `[Unreleased]`, extract every numeric claim (interval, retry count, timeout). Grep production code for the corresponding literals. Flag any mismatch — the CHANGELOG and the code must agree.
@@ -124,9 +124,17 @@ Eight checks that static per-file analysis tends to miss — each requires traci
 
   In practice this means: if the staged delta is 4 files but the branch diff is 22 files, the review surface is 22, not 4. Prior `/review-staged` runs do **not** absolve the current run of covering the rest of the branch — assume nothing has been covered until you've explicitly read it in this run.
 
+- **Hardening-bypass detection (Rule V)**: **Added 2026-05-29 after PR #432's second Copilot review caught a regression Rules N–U missed.** When the staged diff hardens an entry-point helper by making a parameter required (so the compiler forces it through one path), the lower-level function it delegates to typically still keeps the parameter optional — and **any direct caller of the lower-level function bypasses the hardening**. The hardening only protects the path that goes through the helper.
+
+  Detection: when the diff includes a signature change of the shape "parameter X was optional with `= null` default, now required (no default)", identify the **lower-level function** the helper delegates to. If that function still has X optional, run `grep -rn "<LowerLevelFunctionName>" --include="*.cs" src/<ProductionPath>/` (production callers only) and verify each direct caller passes X. Any caller that doesn't is a recurrence of the exact bug the hardening was meant to prevent.
+
+  Concrete PR #432 example: commit `7a1e317` made `mcpScopesByAudience` required on `ExecuteBatchPermissionsStepAsync` so the AllSubcommand and NonDwBlueprintSetupOrchestrator entry points couldn't forget it. But `ConfigureAllPermissionsAsync` (the lower-level orchestrator method) still had `knownMcpAudienceAppIds` optional, and `PermissionsSubcommand.ConfigureMcpPermissionsAsync` called it directly — bypassing the hardening and re-introducing the AADSTS500011 V2 routing regression. Copilot flagged it as HIGH; the skill missed it.
+
+  **Severity: HIGH** when the bypassed call site is in production code (live regression risk). LOW when it's a test fixture (tests routinely use null defaults). Treat the parameter-becoming-required signature change in the diff as a trigger: the moment you see one, follow the call chain down and grep direct callers of the lower-level function.
+
   Implementation: at the start of the review, emit the list of branch-level files and treat them as the review surface. At the end, verify each file was read or explicitly justified as "no rule applies."
 
-Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through U.
+Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through V.
 
 ### Context Awareness
 The skill differentiates between:

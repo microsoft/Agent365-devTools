@@ -642,7 +642,8 @@ internal static class BatchPermissionsOrchestrator
                 graph, tenantId, blueprintAppId, missingSpecs, resolvedSpAppIds, permScopes,
                 skipSpProvisioning, logger, setupResults, ct,
                 commandExecutor: commandExecutor,
-                confirmationProvider: confirmationProvider);
+                confirmationProvider: confirmationProvider,
+                knownMcpAudienceAppIds: knownMcpAudienceAppIds);
         }
 
         // Apply the SP-resolution filter only when Phase 1 produced any results. When
@@ -1000,7 +1001,8 @@ internal static class BatchPermissionsOrchestrator
         SetupResults? setupResults,
         CancellationToken ct,
         CommandExecutor? commandExecutor = null,
-        IConfirmationProvider? confirmationProvider = null)
+        IConfirmationProvider? confirmationProvider = null,
+        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
     {
         if (missingSpecs.Count == 0) return;
 
@@ -1039,10 +1041,10 @@ internal static class BatchPermissionsOrchestrator
         {
             logger.LogInformation("");
             logger.LogInformation(
-                "{Count} resource(s) require service principal provisioning. Auto-provisioning is disabled; next steps below.",
+                "{Count} resource(s) require service principal provisioning. Auto-provisioning is disabled; steps will be listed in the setup summary.",
                 stillMissing.Count);
             foreach (var spec in stillMissing)
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
             return;
         }
 
@@ -1084,7 +1086,7 @@ internal static class BatchPermissionsOrchestrator
                 logger.LogWarning(
                     "  {Idx}. {Name} ({AppId}): skipping — resource app id is not a valid GUID.",
                     i + 1, spec.ResourceName, spec.ResourceAppId);
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
                 continue;
             }
 
@@ -1097,7 +1099,7 @@ internal static class BatchPermissionsOrchestrator
             if (!shouldProvision)
             {
                 logger.LogInformation("  Skipped.");
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
                 continue;
             }
 
@@ -1113,7 +1115,7 @@ internal static class BatchPermissionsOrchestrator
             {
                 var stderr = string.IsNullOrWhiteSpace(azResult.StandardError) ? azResult.StandardOutput : azResult.StandardError;
                 logger.LogWarning("  Failed: {Error}", (stderr ?? string.Empty).Trim());
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
                 continue;
             }
 
@@ -1136,7 +1138,7 @@ internal static class BatchPermissionsOrchestrator
                 logger.LogWarning(
                     "  az exited 0 but the output did not contain a service principal id. Output: {Output}",
                     (azResult.StandardOutput ?? string.Empty).Trim());
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults);
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
             }
         }
 
@@ -1205,7 +1207,8 @@ internal static class BatchPermissionsOrchestrator
         string tenantId,
         string blueprintAppId,
         ILogger logger,
-        SetupResults? setupResults)
+        SetupResults? setupResults,
+        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
     {
         _ = logger; // intentionally unused — caller already emits a one-line inline marker
                     // ("Skipped." / "Failed: <error>" / "...invalid GUID...") immediately
@@ -1214,7 +1217,8 @@ internal static class BatchPermissionsOrchestrator
                     // output stays clean. See DisplaySetupSummary's MissingSpActions branch.
 
         var azCommand = BuildAzAdSpCreateCommand(spec.ResourceAppId);
-        var perSpConsentUrl = BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec);
+        var isMcpAudience = knownMcpAudienceAppIds?.Contains(spec.ResourceAppId) ?? false;
+        var perSpConsentUrl = BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec, isMcpAudience);
 
         setupResults?.MissingSpActions.Add(new MissingSpAction(
             ResourceName: spec.ResourceName,
@@ -1232,11 +1236,15 @@ internal static class BatchPermissionsOrchestrator
     /// scopes as the request — a normal cross-app consent, additive to whatever the unified
     /// admin-consent URL already granted in the same setup run.
     /// </summary>
-    internal static string BuildPerSpBlueprintConsentUrl(string tenantId, string blueprintAppId, ResourcePermissionSpec spec)
+    internal static string BuildPerSpBlueprintConsentUrl(
+        string tenantId,
+        string blueprintAppId,
+        ResourcePermissionSpec spec,
+        bool isMcpAudience = false)
     {
         var scopes = spec.Scopes ?? Array.Empty<string>();
         var fullyQualified = scopes
-            .Select(s => $"{GetResourceUriForBlueprintConsent(spec.ResourceAppId)}/{s}");
+            .Select(s => $"{GetResourceUriForBlueprintConsent(spec.ResourceAppId, isMcpAudience)}/{s}");
         var scopeParam = string.Join("%20", fullyQualified.Select(Uri.EscapeDataString));
         var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
         return $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent" +
@@ -1247,14 +1255,17 @@ internal static class BatchPermissionsOrchestrator
     }
 
     /// <summary>
-    /// Resolves the resource identifier used in the per-SP unified-consent URL. For SPs
-    /// without a published identifierUri (e.g. V2 MCP per-server audiences), Entra accepts
-    /// the bare appId GUID as the resource — same rule we apply elsewhere via
-    /// <see cref="SetupHelpers.GetResourceIdentifierUri"/>. Just inlining the well-known
-    /// resource appId fallback here so the helper does not depend on the broader URL
-    /// builder for one shape.
+    /// Resolves the resource identifier used in the per-SP unified-consent URL. Mirrors the
+    /// catch-all branches of <see cref="SetupHelpers.GetResourceIdentifierUri"/>: V2 MCP
+    /// per-server audiences (signaled via <paramref name="isMcpAudience"/>) use the bare
+    /// appId GUID because their SPs have <c>identifierUris=null</c>; every other unknown
+    /// resource uses the standard <c>api://{appId}</c> Application ID URI form. Without
+    /// this split, a custom resource whose SP omits the bare GUID from
+    /// <c>servicePrincipalNames</c> would receive a recovery URL that still fails after
+    /// the operator provisions the SP.
     /// </summary>
-    private static string GetResourceUriForBlueprintConsent(string resourceAppId) => resourceAppId;
+    private static string GetResourceUriForBlueprintConsent(string resourceAppId, bool isMcpAudience)
+        => isMcpAudience ? resourceAppId : $"api://{resourceAppId}";
 
     /// <summary>
     /// Distinguishes the two flavors of blueprint permission grant for
