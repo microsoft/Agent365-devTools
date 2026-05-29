@@ -596,10 +596,10 @@ internal static class BatchPermissionsOrchestrator
             {
                 logger.LogWarning(
                     "Resource '{ResourceName}' ({ResourceAppId}) does not publish delegated scope '{Scope}' — dropping from the unified admin-consent URL to avoid AADSTS650053. " +
-                    "If you require this grant, opt into the PowerShell fallback when prompted; it uses the programmatic oauth2PermissionGrants POST which is lenient about scope existence.",
+                    "If you require this grant, opt into the az rest fallback when prompted; it uses the programmatic oauth2PermissionGrants POST which is lenient about scope existence.",
                     d.ResourceName, d.ResourceAppId, d.Scope);
                 setupResults?.Warnings.Add(
-                    $"Dropped scope '{d.Scope}' from consent URL — not published on '{d.ResourceName}' ({d.ResourceAppId}). Use the PowerShell fallback to attempt it.");
+                    $"Dropped scope '{d.Scope}' from consent URL — not published on '{d.ResourceName}' ({d.ResourceAppId}). Use the az rest fallback to attempt it.");
             }
         }
 
@@ -622,10 +622,15 @@ internal static class BatchPermissionsOrchestrator
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Find specs whose SP couldn't be resolved in Phase 1 and try to provision them in
-        // place via per-app admin-consent URLs. EnsureMissingResourceSpsAsync mutates the
-        // resolvedSpAppIds set on success and emits warnings + next-step URLs for the rest.
-        // Skips entirely when skipSpProvisioning is true (flag or auto-detected from stdin) or
-        // when there is nothing missing. See helper for the full state machine.
+        // place by shelling out to 'az ad sp create --id {appId}' against the operator's
+        // existing az login (the per-app admin-consent URL pattern was removed because
+        // first-party MCP audiences fail it with AADSTS65003 — token-to-self consent).
+        // EnsureMissingResourceSpsAsync mutates the resolvedSpAppIds set on success and
+        // records MissingSpActions for the rest so the Action Required block renders the
+        // recovery steps (the az command + a per-SP /v2.0/adminconsent URL keyed to the
+        // blueprint as client). Skips entirely when skipSpProvisioning is true (flag or
+        // auto-detected from stdin) or when there is nothing missing. See helper for the
+        // full state machine.
         if (resolvedSpAppIds.Count > 0)
         {
             var missingSpecs = specs

@@ -1095,8 +1095,11 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Returns the canonical identifier URI for a known platform resource app ID
-    /// (Graph, Agent 365 Tools, Messaging Bot, Observability, Power Platform). For any
-    /// unknown app ID, returns the universally-valid <c>api://{appId}</c> form.
+    /// (Graph, WorkIQ Tools, Messaging Bot, Observability, Power Platform). For any
+    /// unknown app ID, returns the bare appId GUID — the only resource identifier that
+    /// is universally registered on every service principal (in <c>servicePrincipalNames</c>)
+    /// and the one form that works for V2 MCP per-server audiences whose SPs have
+    /// <c>identifierUris = null</c>.
     /// <para>
     /// This is the single source of truth for building fully-qualified OAuth2 scope URIs
     /// used in the /v2.0/adminconsent flow. Both the per-resource builder
@@ -1106,11 +1109,13 @@ internal static class SetupHelpers
     /// produced the URL.
     /// </para>
     /// <para>
-    /// The Agent 365 Tools (MCP) resource app ID is tenant-discovered and not a static
-    /// constant, so callers that know they are building scopes for MCP must pass the
-    /// resource name ("Agent 365 Tools") to resolve the canonical URI; without it, the
-    /// method falls back to <c>api://{appId}</c> (functionally equivalent but visually
-    /// inconsistent with the per-resource URL).
+    /// Known limitation: the bare-GUID-for-all-unknowns rule is theoretically too broad
+    /// — a custom resource whose SP omits the bare appId from <c>servicePrincipalNames</c>
+    /// would need <c>api://{appId}</c> instead. Empirically every SP we have seen carries
+    /// the bare appId in that collection, but a future refactor should plumb the loaded
+    /// <c>ToolingManifest.json</c> audience set through so we can distinguish "known MCP
+    /// per-server audience" (bare GUID) from "other unknown resource" (api://{appId})
+    /// reliably, rather than relying on the empirical claim that bare GUID is universal.
     /// </para>
     /// </summary>
     internal static string GetResourceIdentifierUri(string resourceAppId, string? resourceName = null)
@@ -1123,34 +1128,27 @@ internal static class SetupHelpers
             return ConfigConstants.ObservabilityApiIdentifierUri;
         if (string.Equals(resourceAppId, PowerPlatformConstants.PowerPlatformApiResourceAppId, StringComparison.OrdinalIgnoreCase))
             return PowerPlatformConstants.PowerPlatformApiIdentifierUri;
-        // Issue #429 (V2 audience routing): the WorkIQ Tools canonical URI
-        // (https://agent365.svc.cloud.microsoft) lives on exactly one resource SP — the
-        // shared WorkIQ Tools appId. V2 manifest entries carry per-server audience appIds
-        // (each its own Entra app registration) but BuildConfiguredPermissionSpecsAsync
-        // names every MCP-derived spec "Agent 365 Tools" for display. The previous logic
-        // keyed the canonical URI off the display name, which collapsed every per-server
-        // audience onto WorkIQ's URI — Entra rejected with AADSTS650053.
-        //
-        // Routing per-server audiences through "api://{appId}" produced AADSTS500011
-        // ("resource principal not found in the tenant") because those SPs do NOT register
-        // api://{appId} as an identifierUri. A live SP query for Work IQ Mail MCP
-        // (16b1878d-...) shows identifierUris is null and the only registered resource
-        // identifier is the bare appId GUID in servicePrincipalNames. Entra accepts a bare
-        // appId GUID as the resource identifier in the scope parameter; that is the
-        // canonical fallback for SPs without a published Application ID URI.
+        // WorkIQ Tools shared (issue #429): match by appId, not display name. V2 per-server
+        // audiences are also named "Agent 365 Tools" so the old name-based check collapsed
+        // them onto WorkIQ's URI and produced AADSTS650053.
         if (IsAgent365ToolsResourceAppId(resourceAppId))
             return McpConstants.Agent365ToolsIdentifierUri;
+
+        // V2 per-server MCP audiences: their SPs have identifierUris=null, so bare appId GUID
+        // is the only working resource identifier. The bare-GUID-for-all-unknowns rule is
+        // broader than strictly necessary; a follow-up should plumb the loaded ToolingManifest
+        // audience set through here so non-MCP unknowns can keep the safer api://{appId} form.
         return resourceAppId;
     }
 
     /// <summary>
     /// Returns true when the supplied resource appId is the WorkIQ Tools (Agent 365 Tools)
-    /// resource — either the hard-coded prod appId or an env-overridden value pinned via
-    /// <c>A365_MCP_APP_ID_&lt;env&gt;</c>. Used by <see cref="GetResourceIdentifierUri"/> to
-    /// decide between the canonical https URI (this resource) and the **bare appId GUID**
-    /// fallback (everything else, including V2 per-server MCP audiences whose SP has
-    /// <c>identifierUris = null</c>). Per-server SPs cannot use <c>api://{appId}</c> —
-    /// Entra rejects that as AADSTS500011 because the URI is not a registered identifier.
+    /// shared resource — either the hard-coded prod appId or an env-overridden value
+    /// pinned via <c>A365_MCP_APP_ID_&lt;env&gt;</c>. Used by
+    /// <see cref="GetResourceIdentifierUri"/> to distinguish the WorkIQ shared audience
+    /// (returns canonical https URI) from V2 MCP per-server audiences (returns bare appId
+    /// GUID because per-server SPs have <c>identifierUris = null</c> and Entra rejects
+    /// api://{appId} for them with AADSTS500011).
     /// </summary>
     private static bool IsAgent365ToolsResourceAppId(string resourceAppId)
     {

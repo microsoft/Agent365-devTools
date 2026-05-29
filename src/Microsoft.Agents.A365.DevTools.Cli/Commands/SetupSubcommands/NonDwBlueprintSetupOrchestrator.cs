@@ -366,7 +366,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // and a combined URL so a Global Administrator can complete the hand-off out-of-band.
                 // Messaging Bot is gated on isM365 to avoid AADSTS650053 in tenants without the Bot SP.
                 // V2 audience routing (issue #429): pass the full scopesByAudience map so per-server
-                // audiences land on api://{appId} rather than collapsing onto the WorkIQ Tools URI.
+                // audiences land on the bare appId GUID resource identifier rather than collapsing
+                // onto the WorkIQ Tools URI. api:// is NOT used — per-server SPs have
+                // identifierUris null and the bare GUID is what's in servicePrincipalNames.
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
                     ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes,
                     isM365: ctx.IsM365,

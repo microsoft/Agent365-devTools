@@ -35,6 +35,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// <c>ConfigureAllPermissionsAsync</c> flow flip it to <c>true</c> in their setup.
 /// </para>
 /// </summary>
+[Collection("Sequential")]
 public class BatchPermissionsOrchestratorMissingSpTests
 {
     private const string TenantId = "11111111-1111-1111-1111-111111111111";

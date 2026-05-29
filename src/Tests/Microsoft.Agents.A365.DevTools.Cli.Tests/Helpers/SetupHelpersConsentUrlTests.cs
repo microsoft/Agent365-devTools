@@ -316,8 +316,9 @@ public class SetupHelpersConsentUrlTests
     // Pre-fix behavior collapsed every "Agent 365 Tools"-named spec onto the shared
     // WorkIQ URI (https://agent365.svc.cloud.microsoft), producing a URL that asked Entra
     // for Tools.ListInvoke.All on WorkIQ — which fails with AADSTS650053. The URL builders
-    // must route per-server audiences through api://{appId} so each scope lands on its
-    // actual SP.
+    // must route per-server audiences through the bare appId GUID so each scope lands on
+    // its actual SP. api://{appId} is NOT used — per-server SPs have identifierUris null
+    // and the bare GUID is what's in servicePrincipalNames (api:// triggers AADSTS500011).
 
     private const string PerServerAudienceMail = "16b1878d-62c7-4009-aa25-68989d63bbad";
     private const string PerServerAudienceCalendar = "910333d2-47e9-43ca-981f-6df2f4531ef4";

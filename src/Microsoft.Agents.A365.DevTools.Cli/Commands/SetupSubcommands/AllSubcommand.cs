@@ -897,8 +897,11 @@ internal static class AllSubcommand
             ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience);
 
         // Return the full scopesByAudience map alongside the V1-compat mcpScopes so V2
-        // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to api://{appId}
-        // instead of collapsing them onto the WorkIQ Tools URI (issue #429).
+        // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to the bare
+        // appId GUID resource identifier instead of collapsing them onto the WorkIQ Tools
+        // URI (issue #429). api://{appId} is NOT used — per-server SPs have identifierUris
+        // null and only the bare appId GUID is in servicePrincipalNames, so api:// triggers
+        // AADSTS500011.
         return (specs, mcpResourceAppId, mcpScopes, scopesByAudience);
     }
 

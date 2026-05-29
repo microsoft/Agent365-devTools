@@ -21,6 +21,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// Focused on the non-fatal phase-independence contract: each phase failure
 /// must not prevent subsequent phases from running.
 /// </summary>
+[Collection("Sequential")]
 public class BatchPermissionsOrchestratorTests : IDisposable
 {
     private readonly GraphApiService _graph;

@@ -134,7 +134,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 ### Changed
 - Blueprint messaging endpoint registration migrated from Azure Bot Service (ABS) to Teams Graph backend configuration. The CLI now sends `{ agentIdentityBlueprintId, callbackUri, tenantId }` to MCP Platform instead of the ABS-shaped payload. `BotConfigurator` / `IBotConfigurator` are replaced by `TeamsGraphBackendConfigurator` / `ITeamsGraphBackendConfigurator`. Callers must pass `--m365` to opt in; see Added notes above.
-proc- `setup all --dry-run` output is now column-aligned for readability
+- `setup all --dry-run` output is now column-aligned for readability
 - `setup infrastructure` now defaults `deploymentProjectPath` to the current directory when not specified in config
 - `setup all` now defaults to the blueprint agent flow. Use `--aiteammate` (no value required) to run the AI Teammate agent setup flow.
 - `a365 setup blueprint` now sets `managerApplications` on the blueprint application to enable platform manageability. After May 1, blueprints without `managerApplications` will no longer be accepted, and must be recreated (delete and re-run `a365 setup blueprint`) or manually patched via Graph API to include this value.
