@@ -380,6 +380,49 @@ public class BatchPermissionsOrchestratorTests : IDisposable
     }
 
     /// <summary>
+    /// Contract: when the operator declines the up-front S2S confirmation prompt, NEITHER
+    /// the primary Graph API path NOR the az rest fallback may run. BlueprintS2SOutcome is
+    /// set to Failed so DisplaySetupSummary surfaces the manual steps. This locks in the
+    /// fix for the regression where the prompt was only present in the fallback branch,
+    /// so operators on tenants where the primary path succeeded never saw a confirmation.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_WhenOperatorDeclinesS2SPrompt_NoGrantsAttempted()
+    {
+        // Arrange — Phase 1 + admin check OK, executor available, but operator says No.
+        ArrangeS2SPhase1AndAdminCheck();
+        var confirmationProvider = Substitute.For<IConfirmationProvider>();
+        confirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(false));
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: S2SSpec(), _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            confirmationProvider: confirmationProvider,
+            commandExecutor: _executor);
+
+        // Assert — outcome is Failed (Action Required surfaces manual steps).
+        setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
+            because: "operator declined the confirmation, so no S2S grants were attempted; Action Required must surface the manual steps");
+
+        // Primary path: no Graph API S2S call should have been made.
+        await _blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string[]>(), Arg.Any<string[]>(), Arg.Any<CancellationToken>());
+
+        // Fallback path: no az rest call to the S2S appRoleAssignments endpoint either.
+        await _executor.DidNotReceive().ExecuteAsync(
+            "az",
+            Arg.Is<string>(s => s.Contains("/appRoleAssignments")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
     /// Backward-compat contract: when no commandExecutor is supplied (unattended/non-interactive
     /// runs, or callers that have not been updated), the az rest fallback is not attempted and
     /// BlueprintS2SOutcome remains Failed exactly as before this feature was added.

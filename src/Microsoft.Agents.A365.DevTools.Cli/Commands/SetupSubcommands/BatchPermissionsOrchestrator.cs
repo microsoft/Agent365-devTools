@@ -197,33 +197,43 @@ internal static class BatchPermissionsOrchestrator
             if (isGlobalAdmin)
             {
                 var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
-                if (!string.IsNullOrWhiteSpace(phase1Result?.BlueprintSpObjectId))
-                    await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
-                // else: blueprint SP was not resolved — leave BlueprintS2SOutcome = NotApplicable (not attempted)
+                var hasS2SWork = !string.IsNullOrWhiteSpace(phase1Result?.BlueprintSpObjectId)
+                                 && specs.Any(s => s.AppRoleScopes is { Length: > 0 });
 
-                // When the programmatic Graph API path fails (e.g. CLI token lacks
-                // AppRoleAssignment.ReadWrite.All even for a GA), fall back to issuing the same
-                // writes via `az rest` against the operator's existing az session. A GA's az
-                // token implicitly carries every Graph application permission via the directory
-                // role — including AppRoleAssignment.ReadWrite.All — so POST /appRoleAssignments
-                // succeeds without any additional consent. Replaces the previous Connect-MgGraph
-                // path (issue #429): pwsh module load + MSAL/WAM browser dance was 5s–2min and
-                // unreliable; az rest is synchronous and fast. We still gate on the operator's
-                // explicit "y" before making any writes.
-                if (setupResults?.BlueprintS2SOutcome == Models.GrantOutcome.Failed
-                    && commandExecutor != null
-                    && !string.IsNullOrWhiteSpace(phase1Result?.BlueprintSpObjectId))
+                // Single up-front prompt covering BOTH the primary Graph API path and the az
+                // rest fallback. Previously the prompt only existed in the fallback branch, so
+                // operators on tenants where the primary path succeeded never saw a confirmation
+                // for an admin-level write. The fallback path now reuses the same operator
+                // decision rather than re-asking.
+                var operatorConfirmedS2S = false;
+                if (hasS2SWork)
                 {
-                    logger.LogDebug("S2S app role assignments could not be completed via the Graph API; prompting operator to grant them instead.");
-
-                    var shouldRunS2S = await PromptForBlueprintPermissionGrantAsync(
+                    operatorConfirmedS2S = await PromptForBlueprintPermissionGrantAsync(
                         BlueprintPermissionKind.Application, specs, confirmationProvider, logger);
-                    if (!shouldRunS2S)
+                    if (!operatorConfirmedS2S)
                     {
-                        logger.LogInformation("Skipping app role assignment fallback per operator response. The setup summary lists the manual steps.");
+                        logger.LogInformation("Skipping S2S app role assignment per operator response. The setup summary lists the manual steps.");
+                        if (setupResults is not null)
+                            setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Failed;
                     }
-                    else
+                }
+
+                if (operatorConfirmedS2S)
+                {
+                    await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result!.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
+
+                    // When the programmatic Graph API path fails (e.g. CLI token lacks
+                    // AppRoleAssignment.ReadWrite.All even for a GA), fall back to issuing the
+                    // same writes via `az rest` against the operator's existing az session. A
+                    // GA's az token implicitly carries every Graph application permission via
+                    // the directory role — including AppRoleAssignment.ReadWrite.All — so
+                    // POST /appRoleAssignments succeeds without any additional consent. The
+                    // operator already authorized the action at the single prompt above; no
+                    // second prompt is required here.
+                    if (setupResults?.BlueprintS2SOutcome == Models.GrantOutcome.Failed
+                        && commandExecutor != null)
                     {
+                        logger.LogDebug("S2S app role assignments could not be completed via the Graph API; falling back to az rest.");
                         var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
                             commandExecutor, phase1Result.BlueprintSpObjectId, specs, logger, ct);
                         if (attempted && succeeded)
@@ -764,7 +774,7 @@ internal static class BatchPermissionsOrchestrator
         // the freshly opened browser tab is the user-visible confirmation. If the browser
         // fails to launch, BrowserHelper.TryOpenUrl logs the URL itself, and if consent is
         // not detected within the timeout the Action Required block surfaces the URL again.
-        logger.LogInformation("   - Opening browser for admin consent (covers all required delegated permissions)...");
+        logger.LogInformation("   - Opening browser for admin consent...");
         BrowserHelper.TryOpenUrl(consentUrl!, logger);
 
         bool consentGranted;
@@ -1273,11 +1283,11 @@ internal static class BatchPermissionsOrchestrator
             BlueprintPermissionKind.Delegated =>
                 ("The following delegated permissions will be granted to the agent blueprint:",
                  (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.Scopes),
-                 "Grant admin consent for these permissions now? [y/N]: "),
+                 "Grant admin consent for these permission(s) now? [y/N]: "),
             BlueprintPermissionKind.Application =>
                 ("The following application permissions will be granted to the agent blueprint:",
                  (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.AppRoleScopes),
-                 "Assign these application permissions now? [y/N]: "),
+                 "Assign these application permission(s) now? [y/N]: "),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
 

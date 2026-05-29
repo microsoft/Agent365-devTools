@@ -36,20 +36,26 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
         }
 
         [Fact]
-        public async Task PollAdminConsentAsync_ReturnsFalse_WhenNoGrant()
+        public async Task PollAdminConsentAsync_PropagatesCancellation_WhenTokenCanceled()
         {
+            // Requirement: Ctrl+C during admin-consent polling must propagate the
+            // OperationCanceledException up to AllSubcommand's OCE handler so setup aborts
+            // cleanly. The previous implementation swallowed OCE and returned false, which
+            // then fell through to the az rest fallback prompt — confusing operators who
+            // had just pressed Ctrl+C. Mirrors the Graph overload contract.
             var executor = Substitute.For<CommandExecutor>(Substitute.For<Microsoft.Extensions.Logging.ILogger<CommandExecutor>>());
             var logger = Substitute.For<ILogger>();
 
-            // service principal not found
+            // No grant — so the loop will iterate and hit Task.Delay where the CT fires.
             executor.ExecuteAsync("az", Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[]}" }));
 
-            // Use intervalSeconds=0 and a short CTS to avoid real waits — this is a mock-only test.
             var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-            var result = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, "appId-1", "Test", 1, 0, cts.Token);
 
-            result.Should().BeFalse();
+            Func<Task> act = () => AdminConsentHelper.PollAdminConsentAsync(executor, logger, "appId-1", "Test", 10, 1, cts.Token);
+
+            await act.Should().ThrowAsync<OperationCanceledException>(
+                because: "OCE must propagate so Ctrl+C aborts setup via AllSubcommand's OCE handler instead of falling into the az rest delegated-consent fallback prompt with a stale 'permission(s)?' question");
         }
 
         [Fact]
