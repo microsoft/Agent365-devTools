@@ -559,9 +559,16 @@ internal static class AllSubcommand
                 // Step 3: Configure all permissions in a batch.
                 var (specs, mcpResourceAppId, mcpScopes, mcpScopesByAudience) = await BuildPermissionSpecsAsync(ctx);
 
+                // Manifest-derived MCP audience appIds — passed to the orchestrator so
+                // GetResourceIdentifierUri can emit bare appId GUID for these (their SPs
+                // have identifierUris=null) and api://{appId} for every other unknown
+                // resource (customPermissions etc.).
+                var knownMcpAudienceAppIds = mcpScopesByAudience.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
                 await ExecuteBatchPermissionsStepAsync(
                     ctx, specs,
-                    knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
+                    knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId,
+                    knownMcpAudienceAppIds: knownMcpAudienceAppIds);
 
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
                     ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes,
@@ -770,7 +777,8 @@ internal static class AllSubcommand
     internal static async Task ExecuteBatchPermissionsStepAsync(
         SetupContext ctx,
         List<ResourcePermissionSpec> specs,
-        string? knownBlueprintSpObjectId = null)
+        string? knownBlueprintSpObjectId = null,
+        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
     {
         try
         {
@@ -782,7 +790,8 @@ internal static class AllSubcommand
                     knownBlueprintSpObjectId: knownBlueprintSpObjectId,
                     confirmationProvider: ctx.ConfirmationProvider,
                     commandExecutor: ctx.Executor,
-                    skipSpProvisioning: ctx.SkipSpProvisioning);
+                    skipSpProvisioning: ctx.SkipSpProvisioning,
+                    knownMcpAudienceAppIds: knownMcpAudienceAppIds);
 
             ctx.Results.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
             ctx.Results.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;

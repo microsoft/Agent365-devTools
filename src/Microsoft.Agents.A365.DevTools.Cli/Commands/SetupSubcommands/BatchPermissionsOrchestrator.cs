@@ -75,7 +75,8 @@ internal static class BatchPermissionsOrchestrator
         string? knownBlueprintSpObjectId = null,
         IConfirmationProvider? confirmationProvider = null,
         CommandExecutor? commandExecutor = null,
-        bool skipSpProvisioning = false)
+        bool skipSpProvisioning = false,
+        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
     {
         if (specs.Count == 0)
         {
@@ -261,7 +262,7 @@ internal static class BatchPermissionsOrchestrator
 
         // --- Admin consent ---
         var (consentGranted, consentUrl) = await GrantAdminConsentAsync(
-            graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, commandExecutor, adminCheck, confirmationProvider, skipSpProvisioning);
+            graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, commandExecutor, adminCheck, confirmationProvider, skipSpProvisioning, knownMcpAudienceAppIds);
 
         // Update in-memory ResourceConsents only when consent was directly verified (consentUrl == null).
         // AssumedComplete returns a non-null consentUrl — do not persist in that case since the grant
@@ -467,8 +468,8 @@ internal static class BatchPermissionsOrchestrator
     /// emit identical scope identifiers (e.g. <c>https://agent365.svc.cloud.microsoft/Tools.Execute</c>,
     /// not <c>api://{appId}/Tools.Execute</c>).
     /// </summary>
-    private static string BuildFullyQualifiedScope(string resourceAppId, string scope, string? resourceName = null)
-        => SetupHelpers.BuildFullyQualifiedScope(resourceAppId, scope, resourceName);
+    private static string BuildFullyQualifiedScope(string resourceAppId, string scope, bool isMcpAudience = false)
+        => SetupHelpers.BuildFullyQualifiedScope(resourceAppId, scope, isMcpAudience);
 
     /// <summary>
     /// Grants S2S app role assignments for all specs that carry <see cref="ResourcePermissionSpec.AppRoleScopes"/>.
@@ -568,7 +569,8 @@ internal static class BatchPermissionsOrchestrator
         CommandExecutor? commandExecutor = null,
         Models.RoleCheckResult adminCheck = Models.RoleCheckResult.Unknown,
         IConfirmationProvider? confirmationProvider = null,
-        bool skipSpProvisioning = false)
+        bool skipSpProvisioning = false,
+        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
     {
         // Hold onto the unfiltered spec list so the PowerShell consent fallback can attempt
         // dropped scopes too — the programmatic oauth2PermissionGrants POST is lenient about
@@ -653,7 +655,9 @@ internal static class BatchPermissionsOrchestrator
 
         var allScopes = specsForUrl
             .Where(s => s.Scopes is { Length: > 0 })
-            .SelectMany(s => s.Scopes.Select(scope => BuildFullyQualifiedScope(s.ResourceAppId, scope, s.ResourceName)))
+            .SelectMany(s => s.Scopes.Select(scope => BuildFullyQualifiedScope(
+                s.ResourceAppId, scope,
+                isMcpAudience: knownMcpAudienceAppIds?.Contains(s.ResourceAppId) ?? false)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 

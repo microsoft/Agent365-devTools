@@ -1094,31 +1094,23 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Returns the canonical identifier URI for a known platform resource app ID
-    /// (Graph, WorkIQ Tools, Messaging Bot, Observability, Power Platform). For any
-    /// unknown app ID, returns the bare appId GUID — the only resource identifier that
-    /// is universally registered on every service principal (in <c>servicePrincipalNames</c>)
-    /// and the one form that works for V2 MCP per-server audiences whose SPs have
-    /// <c>identifierUris = null</c>.
-    /// <para>
-    /// This is the single source of truth for building fully-qualified OAuth2 scope URIs
-    /// used in the /v2.0/adminconsent flow. Both the per-resource builder
-    /// (<see cref="BuildAdminConsentUrls"/>) and the combined-URL builder used by
-    /// <c>BatchPermissionsOrchestrator</c> resolve resource URIs through this helper so
-    /// the user always sees the same scope identifiers regardless of which code path
-    /// produced the URL.
-    /// </para>
-    /// <para>
-    /// Known limitation: the bare-GUID-for-all-unknowns rule is theoretically too broad
-    /// — a custom resource whose SP omits the bare appId from <c>servicePrincipalNames</c>
-    /// would need <c>api://{appId}</c> instead. Empirically every SP we have seen carries
-    /// the bare appId in that collection, but a future refactor should plumb the loaded
-    /// <c>ToolingManifest.json</c> audience set through so we can distinguish "known MCP
-    /// per-server audience" (bare GUID) from "other unknown resource" (api://{appId})
-    /// reliably, rather than relying on the empirical claim that bare GUID is universal.
-    /// </para>
+    /// Returns the resource identifier the /v2.0/adminconsent endpoint expects as the
+    /// scope prefix for <paramref name="resourceAppId"/>.
+    /// <list type="bullet">
+    /// <item>Known platform resources (Graph, WorkIQ Tools, Messaging Bot, Observability,
+    /// Power Platform) → their canonical identifier URI.</item>
+    /// <item><paramref name="isMcpAudience"/>=true (V2 MCP per-server audience) → bare
+    /// appId GUID. Those SPs have <c>identifierUris=null</c>; api://{appId} triggers
+    /// AADSTS500011.</item>
+    /// <item>Everything else → the standard <c>api://{appId}</c> Application ID URI form.</item>
+    /// </list>
     /// </summary>
-    internal static string GetResourceIdentifierUri(string resourceAppId, string? resourceName = null)
+    /// <param name="resourceAppId">The application id of the resource.</param>
+    /// <param name="isMcpAudience">True when the caller knows <paramref name="resourceAppId"/>
+    /// is a V2 MCP per-server audience (e.g. it sits in the ToolingManifest audience set
+    /// or the call site is iterating <c>mcpScopesByAudience</c>). Default false preserves
+    /// the safe api://{appId} fallback for any caller that has not been updated.</param>
+    internal static string GetResourceIdentifierUri(string resourceAppId, bool isMcpAudience = false)
     {
         if (string.Equals(resourceAppId, AuthenticationConstants.MicrosoftGraphResourceAppId, StringComparison.OrdinalIgnoreCase))
             return AuthenticationConstants.MicrosoftGraphResourceUri;
@@ -1134,11 +1126,14 @@ internal static class SetupHelpers
         if (IsAgent365ToolsResourceAppId(resourceAppId))
             return McpConstants.Agent365ToolsIdentifierUri;
 
-        // V2 per-server MCP audiences: their SPs have identifierUris=null, so bare appId GUID
-        // is the only working resource identifier. The bare-GUID-for-all-unknowns rule is
-        // broader than strictly necessary; a follow-up should plumb the loaded ToolingManifest
-        // audience set through here so non-MCP unknowns can keep the safer api://{appId} form.
-        return resourceAppId;
+        // V2 MCP per-server audiences (identifierUris=null, only bare appId in
+        // servicePrincipalNames). Caller signals this via isMcpAudience=true — either
+        // because it is iterating mcpScopesByAudience, or because it checked the loaded
+        // ToolingManifest audience set for this appId.
+        if (isMcpAudience)
+            return resourceAppId;
+
+        return $"api://{resourceAppId}";
     }
 
     /// <summary>
@@ -1173,8 +1168,11 @@ internal static class SetupHelpers
     /// Resolves the resource URI via <see cref="GetResourceIdentifierUri"/> so the resulting
     /// scope identifier matches what the per-resource URL builder emits.
     /// </summary>
-    internal static string BuildFullyQualifiedScope(string resourceAppId, string scope, string? resourceName = null)
-        => $"{GetResourceIdentifierUri(resourceAppId, resourceName)}/{scope}";
+    /// <param name="isMcpAudience">Forwarded to <see cref="GetResourceIdentifierUri"/>; pass
+    /// true when the caller knows <paramref name="resourceAppId"/> is a V2 MCP per-server
+    /// audience (e.g. found in the loaded ToolingManifest audience set). Default false.</param>
+    internal static string BuildFullyQualifiedScope(string resourceAppId, string scope, bool isMcpAudience = false)
+        => $"{GetResourceIdentifierUri(resourceAppId, isMcpAudience)}/{scope}";
 
     /// <summary>
     /// Builds per-resource admin consent URLs covering every resource stamped on the blueprint
@@ -1218,7 +1216,9 @@ internal static class SetupHelpers
             foreach (var (audienceAppId, scopes) in mcpScopesByAudience)
             {
                 if (scopes is null || scopes.Length == 0) continue;
-                var resourceUri = GetResourceIdentifierUri(audienceAppId, "Agent 365 Tools");
+                // The loop iterates over manifest-derived MCP audiences; every key here is
+                // by definition an MCP per-server audience appId.
+                var resourceUri = GetResourceIdentifierUri(audienceAppId, isMcpAudience: true);
                 // Display name: keep "Agent 365 Tools" for the WorkIQ shared audience so
                 // legacy summary text still matches; for per-server audiences include the
                 // audience appId so the operator can tell them apart in the summary block
@@ -1279,7 +1279,9 @@ internal static class SetupHelpers
             foreach (var (audienceAppId, scopes) in mcpScopesByAudience)
             {
                 if (scopes is null) continue;
-                var resourceUri = GetResourceIdentifierUri(audienceAppId, "Agent 365 Tools");
+                // The loop iterates over manifest-derived MCP audiences; every key here is
+                // by definition an MCP per-server audience appId.
+                var resourceUri = GetResourceIdentifierUri(audienceAppId, isMcpAudience: true);
                 foreach (var s in scopes)
                     allScopes.Add($"{resourceUri}/{s}");
             }
