@@ -24,10 +24,10 @@ public enum ConsentPollResult
     Verified,
 
     /// <summary>
-    /// The timeout elapsed without detecting a grant, or the user pressed Enter to skip
-    /// verification. The CLI did NOT observe the grant directly. Callers must NOT update
-    /// persisted consent state on this outcome and must keep the consent URL visible so the
-    /// user can verify manually (for example via 'a365 query-entra inheritance').
+    /// The timeout elapsed without detecting a grant. The CLI did NOT observe the grant
+    /// directly. Callers must NOT update persisted consent state on this outcome and must
+    /// keep the consent URL visible so the user can verify manually (for example via
+    /// 'a365 query-entra inheritance').
     /// </summary>
     AssumedComplete,
 
@@ -150,7 +150,7 @@ public static class AdminConsentHelper
                 await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
             }
 
-            logger.LogWarning(
+            logger.LogDebug(
                 "Admin consent was not detected within {TimeoutSeconds}s. The browser flow may not have completed, or 'az login' may be signed into a different tenant than the consent target. Verify with 'az account show'.",
                 timeoutSeconds);
             return false;
@@ -247,7 +247,7 @@ public static class AdminConsentHelper
                 await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
             }
 
-            logger.LogWarning(
+            logger.LogDebug(
                 "Admin consent was not detected within {TimeoutSeconds}s. The browser flow may not have completed, or 'az login' may be signed into a different tenant than the consent target. Verify with 'az account show'.",
                 timeoutSeconds);
             return ConsentPollResult.AssumedComplete;

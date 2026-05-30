@@ -557,7 +557,7 @@ internal static class AllSubcommand
                 await ExecuteBlueprintStepAsync(ctx);
 
                 // Step 3: Configure all permissions in a batch.
-                var (specs, mcpResourceAppId, mcpScopes, mcpScopesByAudience) = await BuildPermissionSpecsAsync(ctx);
+                var (specs, mcpResourceAppId, mcpScopes, mcpScopesByAudience, mcpServerNamesByAudience) = await BuildPermissionSpecsAsync(ctx);
 
                 await ExecuteBatchPermissionsStepAsync(
                     ctx, specs, mcpScopesByAudience,
@@ -566,12 +566,15 @@ internal static class AllSubcommand
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
                     ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes,
                     isM365: ctx.IsM365,
-                    mcpScopesByAudience: mcpScopesByAudience);
+                    mcpScopesByAudience: mcpScopesByAudience,
+                    mcpAudienceDisplayNames: mcpServerNamesByAudience);
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config, ctx.GeneratedConfigPath);
 
                 // Step 4: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
                 await ExecuteMessagingEndpointStepAsync(ctx);
+
+                logger.LogInformation("");
 
                 // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
                 setupResults.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
@@ -828,6 +831,10 @@ internal static class AllSubcommand
         if (!ctx.IsM365)
             return;
 
+        // Phase separator: emit only after the non-M365 early-return so the non-M365 run
+        // does not get a stray blank line followed by silent no-op output.
+        ctx.Logger.LogInformation("");
+
         // Blueprint step failed; there is no blueprint to attach an endpoint to. Record this as
         // a distinct Failed + "BlueprintMissing" so the summary doesn't mislead the user with the
         // "non-M365 agent" wording reserved for null.
@@ -881,7 +888,7 @@ internal static class AllSubcommand
     /// Shared by both DW and non-DW flows so permissions are always consistent — the only difference
     /// is that non-M365 agents exclude Messaging Bot API.
     /// </summary>
-    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes, Dictionary<string, string[]> scopesByAudience)> BuildPermissionSpecsAsync(SetupContext ctx)
+    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes, Dictionary<string, string[]> scopesByAudience, Dictionary<string, List<string>> serverNamesByAudience)> BuildPermissionSpecsAsync(SetupContext ctx)
     {
         var desiredCustomIds = new HashSet<string>(
             (ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -895,22 +902,27 @@ internal static class AllSubcommand
             McpConstants.ToolingManifestFileName);
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
         var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: mcpResourceAppId);
+        var serverNamesByAudience = await ManifestHelper.GetServerNamesByAudienceAsync(mcpManifestPath, mcpResourceAppId);
         // V1-compatible: extract ATG scopes for consent URL helpers (empty for V2-only manifests)
         var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes) ? atgScopes : Array.Empty<string>();
 
-        // Pass the already-computed scopesByAudience to avoid reading the MCP manifest twice.
-        // BuildConfiguredPermissionSpecsAsync stamps Graph + manifest MCP audiences + fixed APIs
-        // (Bot only when isM365) + custom permissions for both DW and non-DW agents.
+        // Pass the already-computed scopesByAudience and serverNamesByAudience to avoid
+        // reading the MCP manifest a second time. BuildConfiguredPermissionSpecsAsync stamps
+        // Graph + manifest MCP audiences + fixed APIs (Bot only when isM365) + custom permissions
+        // for both DW and non-DW agents; serverNamesByAudience drives the per-server display
+        // names so V2 audiences read as e.g. "mcp_MailTools" rather than "Agent 365 Tools".
         var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
-            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience);
+            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience);
 
         // Return the full scopesByAudience map alongside the V1-compat mcpScopes so V2
         // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to the bare
         // appId GUID resource identifier instead of collapsing them onto the WorkIQ Tools
         // URI (issue #429). api://{appId} is NOT used — per-server SPs have identifierUris
         // null and only the bare appId GUID is in servicePrincipalNames, so api:// triggers
-        // AADSTS500011.
-        return (specs, mcpResourceAppId, mcpScopes, scopesByAudience);
+        // AADSTS500011. serverNamesByAudience flows through to ApplyConsentUrlsIfNeeded so
+        // the Action Required block's per-audience consent URLs display the same per-server
+        // names the spec list uses.
+        return (specs, mcpResourceAppId, mcpScopes, scopesByAudience, serverNamesByAudience);
     }
 
     /// <summary>

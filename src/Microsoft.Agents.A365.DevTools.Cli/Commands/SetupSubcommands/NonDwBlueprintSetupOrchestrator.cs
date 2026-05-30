@@ -372,7 +372,8 @@ internal static class NonDwBlueprintSetupOrchestrator
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
                     ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes,
                     isM365: ctx.IsM365,
-                    mcpScopesByAudience: buildResult.scopesByAudience);
+                    mcpScopesByAudience: buildResult.scopesByAudience,
+                    mcpAudienceDisplayNames: buildResult.serverNamesByAudience);
 
                 // Save state before agent identity steps so progress (blueprint stamping outcomes,
                 // consent URLs) is not lost on failure in the steps below.
@@ -628,6 +629,8 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // Step 6.5: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
         // Skipped for --agent-registration-only (skipIdentityAndPermissions) — endpoint is already registered.
+        // Phase separator is emitted inside ExecuteMessagingEndpointStepAsync after the
+        // non-M365 early-return so non-M365 runs don't accumulate a stray blank line.
         if (!skipIdentityAndPermissions)
             await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
 
@@ -635,6 +638,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // to register the agent, not to regenerate appsettings files.
         if (!skipIdentityAndPermissions)
         {
+            ctx.Logger.LogInformation("");
             ctx.Logger.LogInformation("Updating project settings...");
             using (ctx.Logger.Indent())
             {

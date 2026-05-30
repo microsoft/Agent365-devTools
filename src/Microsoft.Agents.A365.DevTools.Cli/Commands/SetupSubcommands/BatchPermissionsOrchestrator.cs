@@ -1297,17 +1297,15 @@ internal static class BatchPermissionsOrchestrator
         // Per-kind wording: delegated permissions go through admin consent (tenant-wide
         // OAuth2 grant); application permissions are a direct app role assignment on the
         // blueprint SP. Calling the latter "admin consent" is technically incorrect and
-        // confused reviewers — keep the two prompts distinct.
-        var (header, scopesSelector, confirmPrompt) = kind switch
+        // confused reviewers — keep the two prompts distinct. Delegated also carries a
+        // preamble: it is only reached as the post-browser-timeout fallback, where the
+        // operator needs context for why this prompt appeared without another browser open.
+        var (kindWord, scopesSelector) = kind switch
         {
             BlueprintPermissionKind.Delegated =>
-                ("The following delegated permissions will be granted to the agent blueprint:",
-                 (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.Scopes),
-                 "Grant admin consent for these permission(s) now? [y/N]: "),
+                ("delegated", (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.Scopes)),
             BlueprintPermissionKind.Application =>
-                ("The following application permissions will be granted to the agent blueprint:",
-                 (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.AppRoleScopes),
-                 "Assign these application permission(s) now? [y/N]: "),
+                ("application", (Func<ResourcePermissionSpec, IReadOnlyList<string>?>)(s => s.AppRoleScopes)),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
 
@@ -1318,7 +1316,23 @@ internal static class BatchPermissionsOrchestrator
 
         if (items.Count == 0) return false;
 
+        // Singular vs plural is driven by total scope count, not row count: one resource row
+        // with two scopes is still "permissions" plural in the header.
+        var totalScopes = specs.Sum(s => scopesSelector(s)?.Count ?? 0);
+        var permissionWord = totalScopes == 1 ? "permission" : "permissions";
+        var demonstrative = totalScopes == 1 ? "this" : "these";
+
+        var preamble = kind == BlueprintPermissionKind.Delegated
+            ? "Consent was not detected — unclear whether it was declined in the browser or an error occurred."
+            : null;
+        var header = $"The following {kindWord} {permissionWord} will be granted to the agent blueprint:";
+        var confirmPrompt = kind == BlueprintPermissionKind.Delegated
+            ? $"Add {demonstrative} {permissionWord} to the blueprint programmatically? [y/N]: "
+            : $"Assign {demonstrative} {kindWord} {permissionWord} now? [y/N]: ";
+
         logger.LogInformation("");
+        if (preamble is not null)
+            logger.LogInformation("{Preamble}", preamble);
         logger.LogInformation("{Header}", header);
         foreach (var item in items)
             logger.LogInformation("{Item}", item);
