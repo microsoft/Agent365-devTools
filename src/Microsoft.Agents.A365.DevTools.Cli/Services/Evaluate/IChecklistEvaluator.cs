@@ -21,6 +21,34 @@ public interface IChecklistEvaluator
     /// <param name="cancellationToken">Token to cancel the evaluation.</param>
     /// <returns>Result containing the checklist and whether semantic evaluation completed.</returns>
     Task<ChecklistEvaluationResult> EvaluateAsync(EvaluationChecklist checklist, string checklistPath, EvalEngine engine, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the user-facing display name for an engine (e.g. "GitHub Copilot",
+    /// "auto"). Engine names are sourced from the registered launchers so adding a
+    /// new agent does not require editing a name switch.
+    /// </summary>
+    string FormatEngineName(EvalEngine engine);
+}
+
+/// <summary>
+/// Why semantic evaluation stopped, so callers can map the outcome to an exit code.
+/// </summary>
+public enum EvaluationOutcome
+{
+    /// <summary>All semantic checks were scored; a report can be produced.</summary>
+    Completed,
+
+    /// <summary>
+    /// The user passed <c>--eval-engine none</c> to score the checklist with their
+    /// own LLM. An intentional stop, not a failure — the run exits 0.
+    /// </summary>
+    OptedOut,
+
+    /// <summary>
+    /// The evaluation could not be performed as requested: no coding agent was
+    /// available, or an agent ran but left checks unscored. A failure — exit 1.
+    /// </summary>
+    CouldNotEvaluate
 }
 
 /// <summary>
@@ -29,7 +57,15 @@ public interface IChecklistEvaluator
 public class ChecklistEvaluationResult
 {
     public EvaluationChecklist Checklist { get; init; } = new();
-    public bool SemanticEvaluationCompleted { get; init; }
+
+    /// <summary>Why evaluation stopped. Drives the command's exit code.</summary>
+    public EvaluationOutcome Outcome { get; init; }
+
+    /// <summary>
+    /// True only when every semantic check was scored. Derived from
+    /// <see cref="Outcome"/>; the pipeline gates report generation on this.
+    /// </summary>
+    public bool SemanticEvaluationCompleted => Outcome == EvaluationOutcome.Completed;
 
     /// <summary>
     /// The engine that actually produced successful evaluations (first in priority

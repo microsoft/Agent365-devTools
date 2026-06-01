@@ -404,7 +404,11 @@ class Program
         // Register evaluate pipeline services
         services.AddSingleton<ISchemaDiscoveryService, SchemaDiscoveryService>();
         services.AddSingleton<IChecklistGenerator, ChecklistGenerator>();
-        services.AddSingleton<CodingAgentRunner>();
+        // Coding-agent launchers — registration order defines --eval-engine auto
+        // priority (GitHub Copilot first, then Claude Code). Add a new engine by
+        // adding its ICodingAgentLauncher implementation file plus one line here.
+        services.AddSingleton<ICodingAgentLauncher, GitHubCopilotLauncher>();
+        services.AddSingleton<ICodingAgentLauncher, ClaudeCodeLauncher>();
         services.AddSingleton<IChecklistEvaluator, ChecklistEvaluator>();
         services.AddSingleton<IEvaluationAnalyzer, EvaluationAnalyzer>();
         services.AddSingleton<IReportGenerator, ReportGenerator>();

@@ -49,7 +49,7 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
     }
 
     /// <inheritdoc />
-    public async Task RunAsync(string serverUrl, string outputDir, string evalEngine, string? authToken, CancellationToken cancellationToken)
+    public async Task<int> RunAsync(string serverUrl, string outputDir, string evalEngine, string? authToken, CancellationToken cancellationToken)
     {
         try
         {
@@ -109,7 +109,7 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
             var evalResult = await _checklistEvaluator.EvaluateAsync(checklist, checklistPath, engine, cancellationToken);
             checklist = evalResult.Checklist;
 
-            if (!evalResult.SemanticEvaluationCompleted)
+            if (evalResult.Outcome != EvaluationOutcome.Completed)
             {
                 // Semantic evaluation couldn't complete (no agent, partial scoring, etc.).
                 // Stop before analysis — proceeding with null scores would produce an
@@ -118,7 +118,11 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
                 // here we just append the concrete re-run command that carries their flags.
                 _logger.LogInformation("  Re-run command: a365 develop-mcp evaluate --server-url {Url} --output-dir {OutDir}",
                     serverUrl, outputDir);
-                return;
+
+                // OptedOut (--eval-engine none) is a deliberate bring-your-own-LLM stop, so
+                // exit 0. "No agent" or "agent left checks unscored" means we could not do
+                // what was asked — exit 1 so CI sees a failure, not a silent success.
+                return evalResult.Outcome == EvaluationOutcome.OptedOut ? 0 : 1;
             }
 
             // Step 4: Analysis
@@ -128,7 +132,7 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
             // the engine that actually produced evaluations over the user's request,
             // so --eval-engine auto reports as "GitHub Copilot" (or whichever ran)
             // instead of the meaningless "auto".
-            var engineName = ChecklistEvaluator.FormatEngineName(evalResult.EngineUsed ?? engine);
+            var engineName = _checklistEvaluator.FormatEngineName(evalResult.EngineUsed ?? engine);
             var result = _evaluationAnalyzer.Analyze(checklist, engineName);
             _logger.LogInformation(
                 "[4/5] Analysis complete: score {Score}/100, Level {Level} ({Label}), {ActionCount} action item{Plural}",
@@ -148,6 +152,8 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
                 result.OverallScore.ToString("F0"),
                 result.Maturity.Level,
                 result.Maturity.Label);
+
+            return 0;
         }
         catch (EvaluationException)
         {

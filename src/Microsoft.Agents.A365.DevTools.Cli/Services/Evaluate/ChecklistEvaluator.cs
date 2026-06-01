@@ -18,9 +18,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 /// </summary>
 internal sealed class ChecklistEvaluator : IChecklistEvaluator
 {
-    // Engine priority order: always try Copilot first
-    private static readonly EvalEngine[] EnginePriority = [EvalEngine.GitHubCopilot, EvalEngine.ClaudeCode];
-
     // Per-scope (tool or server) the agent may leave some items unscored on a given
     // pass, especially "pass if no issues" prompts the model hedges on. Re-invoke up
     // to this many times; we stop as soon as everything is scored.
@@ -35,16 +32,22 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         ReadCommentHandling = JsonCommentHandling.Skip
     };
 
-    private readonly CodingAgentRunner _agentRunner;
+    // Registered coding-agent launchers, in priority order (the registration order
+    // in Program.cs). Auto walks this list; a specific engine is matched by Engine.
+    private readonly IReadOnlyList<ICodingAgentLauncher> _launchers;
     private readonly ILogger<ChecklistEvaluator> _logger;
 
-    public ChecklistEvaluator(CodingAgentRunner agentRunner, ILogger<ChecklistEvaluator> logger)
+    public ChecklistEvaluator(IEnumerable<ICodingAgentLauncher> launchers, ILogger<ChecklistEvaluator> logger)
     {
-        ArgumentNullException.ThrowIfNull(agentRunner);
+        ArgumentNullException.ThrowIfNull(launchers);
         ArgumentNullException.ThrowIfNull(logger);
-        _agentRunner = agentRunner;
+        _launchers = launchers.ToList();
         _logger = logger;
     }
+
+    /// <summary>Finds the registered launcher for an engine, or null if none.</summary>
+    private ICodingAgentLauncher? LauncherFor(EvalEngine engine)
+        => _launchers.FirstOrDefault(l => l.Engine == engine);
 
     /// <inheritdoc />
     public async Task<ChecklistEvaluationResult> EvaluateAsync(
@@ -70,7 +73,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         {
             _logger.LogInformation("      All semantic checks already scored — skipping agent invocation");
             await WriteChecklistAsync(checklist, checklistPath, cancellationToken);
-            return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = true };
+            return new ChecklistEvaluationResult { Checklist = checklist, Outcome = EvaluationOutcome.Completed };
         }
 
         // User explicitly opted out of running an agent AND the checklist isn't fully scored:
@@ -79,7 +82,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         {
             await WriteChecklistAsync(checklist, checklistPath, cancellationToken);
             LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: false, agentAttempted: false);
-            return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
+            return new ChecklistEvaluationResult { Checklist = checklist, Outcome = EvaluationOutcome.OptedOut };
         }
 
         // Persist the unscored checklist now so the user has a file to edit if no agent is available.
@@ -91,7 +94,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         if (enginesToTry.Count == 0)
         {
             LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: true, agentAttempted: false);
-            return new ChecklistEvaluationResult { Checklist = checklist, SemanticEvaluationCompleted = false };
+            return new ChecklistEvaluationResult { Checklist = checklist, Outcome = EvaluationOutcome.CouldNotEvaluate };
         }
 
         // Announce the active engine (and fallback if any)
@@ -126,17 +129,23 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 continue;
             }
 
+            // Heartbeat BEFORE the tool runs so the user sees forward motion immediately.
+            // Each tool can take minutes (multi-attempt Copilot/Claude invocations), so
+            // logging only on completion leaves long silent gaps that look like a hang.
+            _logger.LogInformation("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... running",
+                i + 1, checklist.Tools.Count, tool.Name, unevaluated);
+
             var toolEngine = await EvaluateToolChecks(tool, enginesToTry, cancellationToken);
             if (toolEngine is not null)
             {
                 engineUsed ??= toolEngine;
-                _logger.LogInformation("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... ok",
-                    i + 1, checklist.Tools.Count, tool.Name, unevaluated);
+                _logger.LogInformation("      [{Current}/{Total}] {ToolName} ... ok",
+                    i + 1, checklist.Tools.Count, tool.Name);
             }
             else
             {
-                _logger.LogWarning("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... failed (continuing)",
-                    i + 1, checklist.Tools.Count, tool.Name, unevaluated);
+                _logger.LogWarning("      [{Current}/{Total}] {ToolName} ... failed (continuing)",
+                    i + 1, checklist.Tools.Count, tool.Name);
             }
         }
 
@@ -144,15 +153,16 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         var serverUnevaluated = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
         if (serverUnevaluated > 0)
         {
+            _logger.LogInformation("      server-level checks ({Count} checks) ... running", serverUnevaluated);
             var serverEngine = await EvaluateServerChecks(checklist, enginesToTry, cancellationToken);
             if (serverEngine is not null)
             {
                 engineUsed ??= serverEngine;
-                _logger.LogInformation("      server-level checks ({Count} checks) ... ok", serverUnevaluated);
+                _logger.LogInformation("      server-level checks ... ok");
             }
             else
             {
-                _logger.LogWarning("      server-level checks ({Count} checks) ... failed (continuing)", serverUnevaluated);
+                _logger.LogWarning("      server-level checks ... failed (continuing)");
             }
         }
 
@@ -181,7 +191,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         return new ChecklistEvaluationResult
         {
             Checklist = checklist,
-            SemanticEvaluationCompleted = remainingUnevaluated == 0,
+            Outcome = remainingUnevaluated == 0 ? EvaluationOutcome.Completed : EvaluationOutcome.CouldNotEvaluate,
             EngineUsed = engineUsed
         };
     }
@@ -217,7 +227,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
                 // Scale the per-attempt timeout to the remaining work: a tool with
                 // 46 unscored checks legitimately needs longer than one with 18.
-                var perAttemptTimeout = CodingAgentRunner.TimeoutForChecks(CountUnevaluatedSemanticChecks(tool));
+                var perAttemptTimeout = CodingAgentLauncherBase.TimeoutForChecks(CountUnevaluatedSemanticChecks(tool));
 
                 var successEngine = await TryEvaluateWithFallthrough(
                     engines,
@@ -269,8 +279,9 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                     // We still retry — we've observed that timeouts on Haiku are
                     // non-deterministic: a tool that times out on attempt 1 often
                     // completes on attempt 2 or 3. Giving up fast loses winnable runs.
-                    _logger.LogDebug(
-                        "Tool {ToolName}: attempt {Attempt} subprocess failed; will retry if attempts remain",
+                    // Info-level so the user sees the in-flight retry, not silence.
+                    _logger.LogInformation(
+                        "        {ToolName}: attempt {Attempt} subprocess failed; will retry if attempts remain",
                         tool.Name, attempt);
                 }
 
@@ -281,7 +292,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
                 if (attempt < MaxAttempts)
                 {
-                    _logger.LogDebug("Tool {ToolName}: attempt {Attempt} left {Count} check(s) unscored, retrying",
+                    // Info-level so the user sees forward motion when a tool needs >1 pass.
+                    _logger.LogInformation("        {ToolName}: attempt {Attempt} left {Count} check(s) unscored, retrying",
                         tool.Name, attempt, CountUnevaluatedSemanticChecks(tool));
                 }
             }
@@ -334,7 +346,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 await File.WriteAllTextAsync(tempFile, dataJson, cancellationToken);
 
                 var serverRemaining = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
-                var perAttemptTimeout = CodingAgentRunner.TimeoutForChecks(serverRemaining);
+                var perAttemptTimeout = CodingAgentLauncherBase.TimeoutForChecks(serverRemaining);
 
                 var successEngine = await TryEvaluateWithFallthrough(
                     engines,
@@ -469,10 +481,18 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
+        var workingDirectory = Path.GetDirectoryName(filePath) ?? Directory.GetCurrentDirectory();
         foreach (var candidate in engines)
         {
+            var launcher = LauncherFor(candidate);
+            if (launcher is null)
+            {
+                _logger.LogDebug("No launcher registered for {Engine}, skipping", candidate);
+                continue;
+            }
+
             var prompt = promptBuilder(candidate);
-            var success = await _agentRunner.EvaluateChecklistAsync(filePath, prompt, candidate, timeout, cancellationToken);
+            var success = await launcher.LaunchAsync(prompt, workingDirectory, timeout, cancellationToken);
             if (success)
             {
                 return candidate;
@@ -493,18 +513,9 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     /// sends the agent on long workaround loops, and a mix of edit+create tempts
     /// the model to oscillate between strategies.
     /// </summary>
-    private static SemanticCheckPrompts.AgentToolset ToolsetFor(EvalEngine engine) => engine switch
-    {
-        EvalEngine.GitHubCopilot => new SemanticCheckPrompts.AgentToolset(
-            ReadToolName: "view",
-            EditToolName: "edit"),
-        EvalEngine.ClaudeCode => new SemanticCheckPrompts.AgentToolset(
-            ReadToolName: "Read",
-            EditToolName: "Edit"),
-        _ => new SemanticCheckPrompts.AgentToolset(
-            ReadToolName: "read",
-            EditToolName: "edit")
-    };
+    private SemanticCheckPrompts.AgentToolset ToolsetFor(EvalEngine engine)
+        => LauncherFor(engine)?.Toolset
+           ?? new SemanticCheckPrompts.AgentToolset(ReadToolName: "read", EditToolName: "edit");
 
     /// <summary>
     /// Builds the ordered list of engines to try based on user's choice.
@@ -519,7 +530,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     {
         if (requested != EvalEngine.Auto)
         {
-            if (await _agentRunner.IsEngineAvailableAsync(requested, cancellationToken))
+            var launcher = LauncherFor(requested);
+            if (launcher is not null && await launcher.IsAvailableAsync(cancellationToken))
             {
                 return [requested];
             }
@@ -528,14 +540,14 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             return [];
         }
 
-        // Auto: detect all available engines, preserving priority order
+        // Auto: detect all available engines, preserving the registered priority order
         var available = new List<EvalEngine>();
-        foreach (var engine in EnginePriority)
+        foreach (var launcher in _launchers)
         {
-            if (await _agentRunner.IsEngineAvailableAsync(engine, cancellationToken))
+            if (await launcher.IsAvailableAsync(cancellationToken))
             {
-                _logger.LogDebug("Detected {Engine}", engine);
-                available.Add(engine);
+                _logger.LogDebug("Detected {Engine}", launcher.Engine);
+                available.Add(launcher.Engine);
             }
         }
 
@@ -543,16 +555,24 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
     }
 
     /// <summary>
-    /// Returns a user-friendly display name for an engine.
+    /// Returns a user-friendly display name for an engine. Real engine names come
+    /// from the registered launcher; the Auto/None meta-values are formatted here.
     /// </summary>
-    internal static string FormatEngineName(EvalEngine engine) => engine switch
+    public string FormatEngineName(EvalEngine engine)
     {
-        EvalEngine.GitHubCopilot => "GitHub Copilot",
-        EvalEngine.ClaudeCode => "Claude Code",
-        EvalEngine.Auto => "auto",
-        EvalEngine.None => "none",
-        _ => engine.ToString()
-    };
+        var launcher = LauncherFor(engine);
+        if (launcher is not null)
+        {
+            return launcher.DisplayName;
+        }
+
+        return engine switch
+        {
+            EvalEngine.Auto => "auto",
+            EvalEngine.None => "none",
+            _ => engine.ToString()
+        };
+    }
 
     private static int CountTotalUnevaluatedSemanticChecks(EvaluationChecklist checklist)
     {

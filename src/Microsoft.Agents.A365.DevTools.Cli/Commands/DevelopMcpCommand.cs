@@ -104,7 +104,7 @@ public static class DevelopMcpCommand
             var authToken = context.ParseResult.GetValueForOption(authTokenOption);
             var ct = context.GetCancellationToken();
 
-            await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct);
+            context.ExitCode = await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct);
         });
 
         return command;
