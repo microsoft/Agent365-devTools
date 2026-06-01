@@ -17,6 +17,7 @@ internal record RawPublishArgs(
     string? ServerName,
     string? Alias,
     string? DisplayName,
+    string? PublisherName,
     bool DryRun);
 
 /// <summary>
@@ -54,6 +55,13 @@ internal class PublishCommandExecutor
         public required string Alias { get; init; }
         public required string DisplayName { get; init; }
         public required bool DryRun { get; init; }
+
+        // Null when the caller didn't supply --publisher-name and didn't enter one at the prompt.
+        // The platform's v2 publish validator rejects null/empty for custom (user-created) servers
+        // and ignores the value for 1p app-based servers (auto-fills "Microsoft"). The CLI can't
+        // classify ahead of time without knowing the server's mapping, so it leaves the value
+        // null when unspecified and lets the platform decide.
+        public string? PublisherName { get; init; }
     }
 
     internal sealed record EntraAppSet(
@@ -134,6 +142,7 @@ internal class PublishCommandExecutor
             // A365ProxyClientId = a365ProxyClientId,
             // A365ProxyClientSecret = apps.A365AppSecret,
             PublicClientsAppId = apps.PublicClientsClientId,
+            PublisherName = input.PublisherName,
         };
 
         PublishMcpServerResponse? publishResponse;
@@ -221,12 +230,33 @@ internal class PublishCommandExecutor
                 if (displayName == null) { _logger.LogError("Invalid display name format"); return null; }
             }
 
+            // Publisher name: optional from the CLI's perspective. The platform's v2 validator
+            // requires a non-empty value for custom (user-created) servers and ignores it for
+            // 1p app-based servers. Prompt the user when not supplied, but allow empty input —
+            // a Microsoft developer publishing msdyn_DataverseMCPServer shouldn't have to type
+            // anything. If they're publishing a custom server with no value, the platform's
+            // error message tells them what's missing.
+            var publisherName = args.PublisherName;
+            if (string.IsNullOrWhiteSpace(publisherName))
+            {
+                publisherName = DevelopMcpCommand.InputValidator.PromptAndValidateOptionalInput(
+                    "Enter publisher name (optional for 1p Microsoft-owned servers, required otherwise): ",
+                    "Publisher name",
+                    maxLength: 100);
+            }
+            else
+            {
+                publisherName = DevelopMcpCommand.InputValidator.ValidateInput(publisherName, "Publisher name", maxLength: 100);
+                if (publisherName == null) { _logger.LogError("Invalid publisher name format"); return null; }
+            }
+
             return new ResolvedInput
             {
                 EnvironmentId = environmentId,
                 ServerName = serverName,
                 Alias = alias,
                 DisplayName = displayName,
+                PublisherName = string.IsNullOrWhiteSpace(publisherName) ? null : publisherName,
                 DryRun = args.DryRun,
             };
         }
@@ -249,6 +279,7 @@ internal class PublishCommandExecutor
         DevelopMcpCommand.WriteLabel("  Server Name:    "); Console.WriteLine(input.ServerName);
         DevelopMcpCommand.WriteLabel("  Alias:          "); Console.WriteLine(input.Alias);
         DevelopMcpCommand.WriteLabel("  Display Name:   "); Console.WriteLine(input.DisplayName);
+        DevelopMcpCommand.WriteLabel("  Publisher:      "); Console.WriteLine(input.PublisherName ?? "(none — platform will reject if this is a custom server)");
         Console.WriteLine();
     }
 

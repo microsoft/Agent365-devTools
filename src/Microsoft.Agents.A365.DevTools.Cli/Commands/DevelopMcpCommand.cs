@@ -306,6 +306,11 @@ public static class DevelopMcpCommand
             description: "Display name for the MCP server (max 30 chars)");
         command.AddOption(displayNameOption);
 
+        var publisherNameOption = new Option<string?>(
+            ["--publisher-name", "-p"],
+            description: "Publisher name written into the MOS package manifest. Required for custom (user-created) MCP servers; ignored for 1p Microsoft-owned servers (e.g. msdyn_DataverseMCPServer) which always publish as 'Microsoft'.");
+        command.AddOption(publisherNameOption);
+
         var dryRunOption = new Option<bool>("--dry-run", "Show what would be done without executing");
         command.AddOption(dryRunOption);
 
@@ -319,6 +324,7 @@ public static class DevelopMcpCommand
                 ServerName: context.ParseResult.GetValueForOption(serverNameOption),
                 Alias: context.ParseResult.GetValueForOption(aliasOption),
                 DisplayName: context.ParseResult.GetValueForOption(displayNameOption),
+                PublisherName: context.ParseResult.GetValueForOption(publisherNameOption),
                 DryRun: context.ParseResult.GetValueForOption(dryRunOption));
 
             var executor = new PublishCommandExecutor(logger, toolingService, graphApiService);

@@ -36,6 +36,7 @@ public class PublishCommandExecutorDryRunTests
             ServerName: serverName,
             Alias: alias,
             DisplayName: "Test Display",
+            PublisherName: null,
             DryRun: true);
 
         var executor = new PublishCommandExecutor(logger, toolingService, graphApiService: null);
@@ -87,6 +88,7 @@ public class PublishCommandExecutorDryRunTests
             ServerName: serverName,
             Alias: alias,
             DisplayName: "Test Display",
+            PublisherName: null,
             DryRun: true);
 
         var executor = new PublishCommandExecutor(logger, toolingService, graphApiService: null);
@@ -114,6 +116,36 @@ public class PublishCommandExecutorDryRunTests
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
 
+        await toolingService.DidNotReceiveWithAnyArgs().PublishServerV2Async(default!, default!, default!, default);
+    }
+
+    /// <summary>
+    /// Sanity check that <c>--publisher-name</c> threads through the executor without crashing the
+    /// dry-run flow. The platform's v2 validator rejects an empty publisher only for Custom servers;
+    /// at this CLI layer we don't classify, we just forward what was provided. This test pins that
+    /// the field is accepted on <see cref="RawPublishArgs"/>, no interactive prompt is invoked when
+    /// a value is supplied (the prompt would hang in xUnit without stdin), and the dry-run still
+    /// short-circuits before any platform call.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DryRun_AcceptsPublisherName_WithoutCallingPlatform()
+    {
+        var logger = Substitute.For<ILogger>();
+        var toolingService = Substitute.For<IAgent365ToolingService>();
+
+        var args = new RawPublishArgs(
+            EnvironmentId: "00000000-0000-0000-0000-000000000000",
+            ServerName: "mcp_TestServer",
+            Alias: "myAlias",
+            DisplayName: "Test Display",
+            PublisherName: "Contoso",
+            DryRun: true);
+
+        var executor = new PublishCommandExecutor(logger, toolingService, graphApiService: null);
+
+        await executor.ExecuteAsync(args, CancellationToken.None);
+
+        // Dry-run short-circuits before the platform publish call regardless of publisher.
         await toolingService.DidNotReceiveWithAnyArgs().PublishServerV2Async(default!, default!, default!, default);
     }
 }

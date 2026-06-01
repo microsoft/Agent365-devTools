@@ -43,4 +43,13 @@ public class PublishMcpServerRequest
     /// </summary>
     [JsonPropertyName("publicClientsAppId")]
     public string? PublicClientsAppId { get; set; }
+
+    /// <summary>
+    /// Publisher / developer name written into the MOS package manifest. Required for Custom
+    /// (user-created) servers — the platform's v2 publish validator rejects empty values for those.
+    /// Ignored for 1p Microsoft-owned app-based servers (e.g. <c>msdyn_DataverseMCPServer</c>),
+    /// which always publish under "Microsoft" regardless.
+    /// </summary>
+    [JsonPropertyName("publisherName")]
+    public string? PublisherName { get; set; }
 }
