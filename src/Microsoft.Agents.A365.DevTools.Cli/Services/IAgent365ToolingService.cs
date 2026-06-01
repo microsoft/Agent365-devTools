@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Models;
-using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -56,36 +55,6 @@ public interface IAgent365ToolingService
     /// <returns>True if successful, false otherwise</returns>
     Task<bool> UnpublishServerAsync(
         string environmentId,
-        string serverName,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Approves an MCP server
-    /// </summary>
-    /// <param name="serverName">MCP server name to approve</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>True if successful, false otherwise</returns>
-    Task<bool> ApproveServerAsync(
-        string serverName,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Blocks an MCP server
-    /// </summary>
-    /// <param name="serverName">MCP server name to block</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>True if successful, false otherwise</returns>
-    Task<bool> BlockServerAsync(
-        string serverName,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets MCP server information
-    /// </summary>
-    /// <param name="serverName">MCP server name</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>ServerInfo</returns>
-    public Task<ServerInfo> GetServerInfoAsync(
         string serverName,
         CancellationToken cancellationToken = default);
 

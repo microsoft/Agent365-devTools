@@ -111,6 +111,8 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `setup all`: fallback consent prompt now explains the ambiguity (declined vs error) and offers to grant the permissions programmatically via `az login`; per-audience permission lists and consent URLs show per-server MCP names (e.g. `mcp_MailTools`) instead of a generic `Agent 365 Tools` for every audience.
 
 ### Removed
+- `a365 develop-mcp approve` and `a365 develop-mcp block` commands — MCP server approval and blocking are now managed through the Microsoft Admin Center rather than the CLI.
+- `a365 develop-mcp package-mcp-server` command — MCP server package generation for Microsoft Admin Center submission is no longer produced by the CLI. The underlying `PackageMCPServerHelper` and `IAgent365ToolingService.GetServerInfoAsync`/`ApproveServerAsync`/`BlockServerAsync` service methods were removed with it.
 - `a365 config` command family (`config init`, `config display`, `config permissions`) — replaced by `a365 setup all --agent-name` and `a365 setup permissions custom`.
 
 ### Breaking Changes

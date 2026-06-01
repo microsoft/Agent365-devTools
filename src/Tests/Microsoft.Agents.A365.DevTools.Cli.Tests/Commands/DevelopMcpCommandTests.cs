@@ -41,7 +41,7 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(8);
+        command.Subcommands.Should().HaveCount(5);
 
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
         subcommandNames.Should().Contain(new[]
@@ -50,9 +50,6 @@ public class DevelopMcpCommandTests
             "list-servers",
             "publish",
             "unpublish",
-            "approve",
-            "block",
-            "package-mcp-server",
             "register-external-mcp-server"
         });
     }
@@ -184,73 +181,6 @@ public class DevelopMcpCommandTests
     }
 
     [Fact]
-    public void PackageMcpServerSubcommand_HasCorrectOptions()
-    {
-        // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "package-mcp-server");
-
-        // Assert
-        subcommand.Description.Should().Be("Generate MCP server package for submission on Microsoft admin center");
-
-        var options = subcommand.Options.ToList();
-        options.Should().HaveCount(6); // serverName, developerName, iconUrl, outputPath, dry-run, verbose
-
-        var optionNames = options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("developer-name");
-        optionNames.Should().Contain("icon-url");
-        optionNames.Should().Contain("output-path");
-        optionNames.Should().Contain("dry-run");
-        optionNames.Should().Contain("verbose");
-
-        options.First(o => o.Name == "server-name").IsRequired.Should().BeTrue();
-        options.First(o => o.Name == "developer-name").IsRequired.Should().BeTrue();
-        options.First(o => o.Name == "icon-url").IsRequired.Should().BeTrue();
-        options.First(o => o.Name == "output-path").IsRequired.Should().BeTrue();
-    }
-
-    [Fact]
-    public void ApproveSubcommand_IsImplementedWithCorrectOptions()
-    {
-        // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "approve");
-
-        // Assert
-        subcommand.Description.Should().Be("Approve an MCP server");
-
-        var options = subcommand.Options.ToList();
-        var optionNames = options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("dry-run");
-
-        // Verify server-name has short alias
-        var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
-        serverOption!.Aliases.Should().Contain("-s");
-    }
-
-    [Fact]
-    public void BlockSubcommand_IsImplementedWithCorrectOptions()
-    {
-        // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "block");
-
-        // Assert
-        subcommand.Description.Should().Be("Block an MCP server");
-
-        var options = subcommand.Options.ToList();
-        var optionNames = options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("dry-run");
-
-        // Verify server-name has short alias
-        var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
-        serverOption!.Aliases.Should().Contain("-s");
-    }
-
-    [Fact]
     public void AllSubcommands_SupportDryRunOption()
     {
         // Act
@@ -324,8 +254,6 @@ public class DevelopMcpCommandTests
     [InlineData("unpublish", "environment-id", "-e")]
     [InlineData("publish", "server-name", "-s")]
     [InlineData("unpublish", "server-name", "-s")]
-    [InlineData("approve", "server-name", "-s")]
-    [InlineData("block", "server-name", "-s")]
     [InlineData("register-external-mcp-server", "server-name", "-s")]
     [InlineData("register-external-mcp-server", "server-url", "-u")]
     [InlineData("register-external-mcp-server", "auth-type", "-a")]

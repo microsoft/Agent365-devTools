@@ -40,9 +40,7 @@ public class DevelopMcpCommandRegressionTests
             new[] { "list-environments", "--dry-run" },
             new[] { "list-servers", "-e", "test-env", "--dry-run" },
             new[] { "publish", "-e", "test-env", "-s", "test-server", "--dry-run" },
-            new[] { "unpublish", "-e", "test-env", "-s", "test-server", "--dry-run" },
-            new[] { "approve", "-s", "test-server", "--dry-run" },
-            new[] { "block", "-s", "test-server", "--dry-run" }
+            new[] { "unpublish", "-e", "test-env", "-s", "test-server", "--dry-run" }
         };
 
         foreach (var commandArgs in dryRunCommands)
@@ -56,8 +54,6 @@ public class DevelopMcpCommandRegressionTests
         await _mockToolingService.DidNotReceive().ListServersAsync(Arg.Any<string>());
         await _mockToolingService.DidNotReceive().PublishServerAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<PublishMcpServerRequest>());
         await _mockToolingService.DidNotReceive().UnpublishServerAsync(Arg.Any<string>(), Arg.Any<string>());
-        await _mockToolingService.DidNotReceive().ApproveServerAsync(Arg.Any<string>());
-        await _mockToolingService.DidNotReceive().BlockServerAsync(Arg.Any<string>());
     }
 
     [Theory]
@@ -66,10 +62,6 @@ public class DevelopMcpCommandRegressionTests
     [InlineData("publish", "-e", "test-env", "-s", "test-server")]
     [InlineData("publish", "--environment-id", "test-env", "--server-name", "test-server")]
     [InlineData("unpublish", "-e", "test-env", "-s", "test-server")]
-    [InlineData("approve", "-s", "test-server")]
-    [InlineData("approve", "--server-name", "test-server")]
-    [InlineData("block", "-s", "test-server")]
-    [InlineData("block", "--server-name", "test-server")]
     public async Task AzureCliStyleParameters_AreAcceptedCorrectly(string command, params string[] args)
     {
         // This test ensures we maintain Azure CLI compatibility with named options
@@ -80,8 +72,6 @@ public class DevelopMcpCommandRegressionTests
         _mockToolingService.PublishServerAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<PublishMcpServerRequest>())
             .Returns(new PublishMcpServerResponse { Status = "Success" });
         _mockToolingService.UnpublishServerAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
-        _mockToolingService.ApproveServerAsync(Arg.Any<string>()).Returns(true);
-        _mockToolingService.BlockServerAsync(Arg.Any<string>()).Returns(true);
 
         var fullCommand = new List<string> { command };
         fullCommand.AddRange(args);
@@ -356,35 +346,6 @@ public class DevelopMcpCommandRegressionTests
         // Assert
         result.Should().Be(0);
         await _mockToolingService.Received(1).UnpublishServerAsync(testEnvId, testServerName);
-    }
-
-    [Theory]
-    [InlineData("approve")]
-    [InlineData("block")]
-    public async Task NewCommands_ApproveAndBlock_WorkCorrectly(string commandName)
-    {
-        // Regression test: Ensures newly implemented approve/block commands function properly
-        
-        // Arrange
-        var testServerName = "msdyn_TestServer";
-
-        _mockToolingService.ApproveServerAsync(testServerName).Returns(true);
-        _mockToolingService.BlockServerAsync(testServerName).Returns(true);
-
-        // Act
-        var result = await _command.InvokeAsync(new[] { commandName, "-s", testServerName });
-
-        // Assert
-        result.Should().Be(0);
-        
-        if (commandName == "approve")
-        {
-            await _mockToolingService.Received(1).ApproveServerAsync(testServerName);
-        }
-        else
-        {
-            await _mockToolingService.Received(1).BlockServerAsync(testServerName);
-        }
     }
 
     [Fact]
