@@ -116,6 +116,9 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 config` command family (`config init`, `config display`, `config permissions`) — replaced by `a365 setup all --agent-name` and `a365 setup permissions custom`.
 
 ### Breaking Changes
+- **`a365 develop-mcp approve` removed** — server approval is now performed by tenant admins via the Microsoft Admin Center.
+- **`a365 develop-mcp block` removed** — server blocking is now performed by tenant admins via the Microsoft Admin Center.
+- **`a365 develop-mcp package-mcp-server` removed** — MCP server packages for Microsoft Admin Center submission are no longer produced by the CLI; admins onboard and manage servers directly through the Microsoft Admin Center.
 - **`a365 config init` removed** — replace with `a365 setup all --agent-name <name>`. This creates the agent blueprint, configures permissions, and registers the messaging endpoint in one step without requiring a pre-existing config file.
 - **`a365 config display` removed** — use `a365 query-entra blueprint-scopes` to inspect live blueprint permissions and consent state.
 - **`a365 config permissions` removed** — replace with `a365 setup permissions custom --resource-app-id <guid> --scopes <scopes>`.
