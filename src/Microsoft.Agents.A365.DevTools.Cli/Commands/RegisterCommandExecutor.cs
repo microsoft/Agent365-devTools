@@ -585,7 +585,8 @@ internal class RegisterCommandExecutor
         var factory = new EntraAppFactory(_logger, _graphApiService!, _retryHelper);
 
         var a365 = await factory.CreateProxyAppAsync(
-            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: input.ServiceTreeId);
+            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy",
+            serviceTreeId: input.ServiceTreeId, lifetimeMonths: input.SecretLifetimeMonths);
         if (a365 == null) return null;
 
         string? remoteProxyClientId = null;
@@ -596,7 +597,8 @@ internal class RegisterCommandExecutor
         if (input.IsEntra)
         {
             var remote = await factory.CreateProxyAppAsync(
-                input.ServerName, tenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy", serviceTreeId: input.ServiceTreeId);
+                input.ServerName, tenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy",
+                serviceTreeId: input.ServiceTreeId, lifetimeMonths: input.SecretLifetimeMonths);
             if (remote == null) return null;
 
             remoteProxyClientId = remote.ClientId;

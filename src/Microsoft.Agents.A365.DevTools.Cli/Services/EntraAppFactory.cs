@@ -52,12 +52,17 @@ internal class EntraAppFactory
     /// secret, and validates that the returned client ID is non-empty. Used for both the A365
     /// Proxy (publish + register) and the Remote Proxy (register, when auth is EntraOAuth).
     /// </summary>
+    /// <param name="lifetimeMonths">Optional secret lifetime in months, passed through to Graph's
+    /// <c>addPassword</c> call. When null, Graph applies its default (~2 years). Register surfaces
+    /// this via <c>--secret-lifetime-months</c> so users in tenants whose <c>appManagementPolicies</c>
+    /// cap credential lifetimes below 2 years can opt into a shorter expiry; publish leaves it null.</param>
     internal virtual async Task<ProxyAppResult?> CreateProxyAppAsync(
         string serverName,
         string tenantId,
         string suffix,
         string roleDisplay,
         string? serviceTreeId,
+        int? lifetimeMonths = null,
         CancellationToken ct = default)
     {
         var appName = $"{serverName}-{suffix}";
@@ -71,7 +76,7 @@ internal class EntraAppFactory
         }
         _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", appName, app.Value.ClientId);
 
-        var secret = await _graphApiService.AddAppPasswordAsync(tenantId, app.Value.ObjectId, ct: ct);
+        var secret = await _graphApiService.AddAppPasswordAsync(tenantId, app.Value.ObjectId, lifetimeMonths: lifetimeMonths, ct: ct);
         if (string.IsNullOrWhiteSpace(secret))
         {
             _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", appName);
