@@ -21,6 +21,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// Focused on the non-fatal phase-independence contract: each phase failure
 /// must not prevent subsequent phases from running.
 /// </summary>
+[Collection("Sequential")]
 public class BatchPermissionsOrchestratorTests : IDisposable
 {
     private readonly GraphApiService _graph;
@@ -40,12 +41,18 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Reset in Dispose so state does not leak into other test classes.
         BrowserHelper.OpenUrlOverrideForTests = (_, _) => { };
         AdminConsentHelper.BypassConsentChecksForTests = true;
+        // Bypass the missing-SP provisioning helper for the broader ConfigureAllPermissionsAsync
+        // tests in this class so they do not need to mock 'az ad sp create' calls. Tests that
+        // exercise that helper directly live in BatchPermissionsOrchestratorMissingSpTests and
+        // flip the flag back to false themselves.
+        BatchPermissionsOrchestrator.BypassSpProvisioningForTests = true;
     }
 
     public void Dispose()
     {
         BrowserHelper.OpenUrlOverrideForTests = null;
         AdminConsentHelper.BypassConsentChecksForTests = false;
+        BatchPermissionsOrchestrator.BypassSpProvisioningForTests = false;
         GC.SuppressFinalize(this);
     }
 
@@ -263,11 +270,14 @@ public class BatchPermissionsOrchestratorTests : IDisposable
     // for the Graph-only non-admin path. The admin (browser-launching) path is not unit-tested to
     // avoid invoking a real browser in CI.
 
-    // ---- PowerShell S2S fallback tests ----
-    // Use valid GUIDs for tenantId/blueprintAppId so PowerShellS2SRunner GUID validation passes.
+    // ---- az rest S2S fallback tests ----
+    // Use valid GUIDs for tenantId/blueprintAppId/blueprintSpObjectId so AzRestS2SRunner GUID
+    // validation passes. (The PowerShell fallback was replaced by an az rest path in issue #429.)
     private const string S2STenantId = "00000000-0000-0000-0000-000000000001";
     private const string S2SBlueprintAppId = "00000000-0000-0000-0000-000000000002";
-    private const string S2SBlueprintSpObjectId = "sp-object-id";
+    private const string S2SBlueprintSpObjectId = "00000000-0000-0000-0000-000000000003";
+    private const string S2SResourceSpId = "00000000-0000-0000-0000-000000000004";
+    private const string S2SAppRoleId = "00000000-0000-0000-0000-000000000005";
 
     private void ArrangeS2SPhase1AndAdminCheck()
     {
@@ -314,20 +324,16 @@ public class BatchPermissionsOrchestratorTests : IDisposable
 
     /// <summary>
     /// When the programmatic Graph API path for S2S fails (e.g. token lacks
-    /// AppRoleAssignment.ReadWrite.All even for a GA) and pwsh executes the
-    /// fallback script successfully, BlueprintS2SOutcome must be set to Granted
-    /// so the Action Required block is suppressed in the setup summary.
+    /// AppRoleAssignment.ReadWrite.All even for a GA) and the az rest fallback completes
+    /// every assignment, BlueprintS2SOutcome must be set to Granted so the Action Required
+    /// block is suppressed in the setup summary.
     /// </summary>
     [Fact]
-    public async Task ConfigureAllPermissions_WhenS2SFailsAndPwshSucceeds_SetsBlueprintS2SOutcomeGranted()
+    public async Task ConfigureAllPermissions_WhenS2SFailsAndAzRestSucceeds_SetsBlueprintS2SOutcomeGranted()
     {
         // Arrange
         ArrangeS2SPhase1AndAdminCheck();
-        _executor.ExecuteWithStreamingAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
-            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>())
-            .Returns(new CommandResult { ExitCode = 0 });
+        ArrangeAzRestS2SCalls(blueprintAlreadyAssigned: false, postExitCode: 0);
 
         var setupResults = new SetupResults();
 
@@ -342,25 +348,21 @@ public class BatchPermissionsOrchestratorTests : IDisposable
 
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Granted,
-            because: "when pwsh executes the S2S script successfully the Action Required block must be suppressed");
+            because: "when the az rest POST /appRoleAssignments succeeds the Action Required block must be suppressed");
     }
 
     /// <summary>
-    /// When the programmatic path fails and pwsh exits non-zero (e.g. exit code 2 from the
-    /// in-script Microsoft.Graph module check, or any other script failure), BlueprintS2SOutcome
-    /// must remain Failed so the Action Required block still surfaces — the user needs to
-    /// install the modules / fix the underlying issue and re-run.
+    /// When the programmatic path fails and az rest's POST exits non-zero (e.g. transient
+    /// Graph 5xx, throttling, or an unexpected validation error), BlueprintS2SOutcome must
+    /// remain Failed so the Action Required block still surfaces — the user needs to retry
+    /// or fix the underlying issue.
     /// </summary>
     [Fact]
-    public async Task ConfigureAllPermissions_WhenS2SFailsAndPwshExitsNonZero_OutcomeRemainsFailed()
+    public async Task ConfigureAllPermissions_WhenS2SFailsAndAzRestExitsNonZero_OutcomeRemainsFailed()
     {
         // Arrange
         ArrangeS2SPhase1AndAdminCheck();
-        _executor.ExecuteWithStreamingAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
-            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>())
-            .Returns(new CommandResult { ExitCode = 2 });
+        ArrangeAzRestS2SCalls(blueprintAlreadyAssigned: false, postExitCode: 1);
 
         var setupResults = new SetupResults();
 
@@ -375,16 +377,59 @@ public class BatchPermissionsOrchestratorTests : IDisposable
 
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
-            because: "a non-zero pwsh exit code means the fallback could not complete — Action Required must remain visible");
+            because: "a non-zero az rest exit code means the assignment was not created — Action Required must remain visible");
     }
 
     /// <summary>
-    /// Backward-compat contract: when no commandExecutor is supplied (e.g. callers that have not
-    /// been updated, or unattended/non-interactive runs), the PowerShell fallback is not attempted
-    /// and BlueprintS2SOutcome remains Failed exactly as before this feature was added.
+    /// Contract: when the operator declines the up-front S2S confirmation prompt, NEITHER
+    /// the primary Graph API path NOR the az rest fallback may run. BlueprintS2SOutcome is
+    /// set to Failed so DisplaySetupSummary surfaces the manual steps. This locks in the
+    /// fix for the regression where the prompt was only present in the fallback branch,
+    /// so operators on tenants where the primary path succeeded never saw a confirmation.
     /// </summary>
     [Fact]
-    public async Task ConfigureAllPermissions_WhenNoCommandExecutor_PwshFallbackNotAttempted()
+    public async Task ConfigureAllPermissions_WhenOperatorDeclinesS2SPrompt_NoGrantsAttempted()
+    {
+        // Arrange — Phase 1 + admin check OK, executor available, but operator says No.
+        ArrangeS2SPhase1AndAdminCheck();
+        var confirmationProvider = Substitute.For<IConfirmationProvider>();
+        confirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(false));
+
+        var setupResults = new SetupResults();
+
+        // Act
+        await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: S2SSpec(), _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            confirmationProvider: confirmationProvider,
+            commandExecutor: _executor);
+
+        // Assert — outcome is Failed (Action Required surfaces manual steps).
+        setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
+            because: "operator declined the confirmation, so no S2S grants were attempted; Action Required must surface the manual steps");
+
+        // Primary path: no Graph API S2S call should have been made.
+        await _blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string[]>(), Arg.Any<string[]>(), Arg.Any<CancellationToken>());
+
+        // Fallback path: no az rest call to the S2S appRoleAssignments endpoint either.
+        await _executor.DidNotReceive().ExecuteAsync(
+            "az",
+            Arg.Is<string>(s => s.Contains("/appRoleAssignments")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Backward-compat contract: when no commandExecutor is supplied (unattended/non-interactive
+    /// runs, or callers that have not been updated), the az rest fallback is not attempted and
+    /// BlueprintS2SOutcome remains Failed exactly as before this feature was added.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_WhenNoCommandExecutor_AzRestFallbackNotAttempted()
     {
         // Arrange
         ArrangeS2SPhase1AndAdminCheck();
@@ -401,19 +446,54 @@ public class BatchPermissionsOrchestratorTests : IDisposable
 
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
-            because: "without a commandExecutor the PowerShell fallback is not attempted and outcome stays Failed");
+            because: "without a commandExecutor the az rest fallback is not attempted and outcome stays Failed");
 
-        await _executor.DidNotReceive().ExecuteWithStreamingAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(),
-            Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(),
-            Arg.Any<IReadOnlyDictionary<string, string?>?>(), Arg.Any<bool>());
+        await _executor.DidNotReceive().ExecuteAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Mocks the three az rest calls the AzRestS2SRunner issues per spec:
+    /// <list type="number">
+    /// <item><description>GET /servicePrincipals/{blueprintSpId}/appRoleAssignments — existing-assignment lookup</description></item>
+    /// <item><description>GET /servicePrincipals?$filter=appId eq '...'&amp;$select=id,appRoles — resource SP + role table</description></item>
+    /// <item><description>POST /servicePrincipals/{blueprintSpId}/appRoleAssignments — the create call whose exit code drives the outcome</description></item>
+    /// </list>
+    /// <paramref name="blueprintAlreadyAssigned"/>=true short-circuits the POST entirely (idempotent path).
+    /// Otherwise <paramref name="postExitCode"/> determines whether the runner reports success or failure.
+    /// </summary>
+    private void ArrangeAzRestS2SCalls(bool blueprintAlreadyAssigned, int postExitCode)
+    {
+        var assignmentsJson = blueprintAlreadyAssigned
+            ? "{\"value\":[{\"resourceId\":\"" + S2SResourceSpId + "\",\"appRoleId\":\"" + S2SAppRoleId + "\"}]}"
+            : "{\"value\":[]}";
+
+        _executor
+            .ExecuteAsync("az",
+                Arg.Is<string>(s => s.Contains($"/servicePrincipals/{S2SBlueprintSpObjectId}/appRoleAssignments") && s.Contains("--method GET")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = assignmentsJson }));
+
+        var roleValue = ConfigConstants.ObservabilityApiOtelWriteScope;
+        var spLookupJson = "{\"value\":[{\"id\":\"" + S2SResourceSpId + "\",\"appRoles\":[{\"id\":\"" + S2SAppRoleId + "\",\"value\":\"" + roleValue + "\"}]}]}";
+        _executor
+            .ExecuteAsync("az",
+                Arg.Is<string>(s => s.Contains("/servicePrincipals?") && s.Contains($"appId eq '{ConfigConstants.ObservabilityApiAppId}'") && s.Contains("$select=id,appRoles")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = spLookupJson }));
+
+        _executor
+            .ExecuteAsync("az",
+                Arg.Is<string>(s => s.Contains("--method POST") && s.Contains($"/servicePrincipals/{S2SBlueprintSpObjectId}/appRoleAssignments")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = postExitCode, StandardError = postExitCode == 0 ? string.Empty : "Insufficient privileges." }));
     }
 
     /// <summary>
     /// When the caller is a non-admin and the spec list includes S2S (AppRoleScopes) entries,
     /// ConfigureAllPermissionsAsync must set BlueprintS2SOutcome = Failed so that
-    /// DisplaySetupSummary surfaces the PowerShell S2S hand-off block in the Action Required
-    /// section — just like it does for a GA whose Graph API call returns 403.
+    /// DisplaySetupSummary surfaces the S2S hand-off block in the Action Required section —
+    /// just like it does for a GA whose Graph API call returns 403.
     /// </summary>
     [Fact]
     public async Task ConfigureAllPermissions_NonAdmin_WithS2SSpecs_SetsBlueprintS2SOutcomeFailed()
@@ -452,7 +532,7 @@ public class BatchPermissionsOrchestratorTests : IDisposable
 
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
-            because: "a non-admin user cannot complete S2S app role assignment directly — the outcome must be marked Failed so DisplaySetupSummary surfaces the PowerShell hand-off block");
+            because: "a non-admin user cannot complete S2S app role assignment directly — the outcome must be marked Failed so DisplaySetupSummary surfaces the hand-off block");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────────────
@@ -766,5 +846,115 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert
         setupResults.InheritablePermissionsAlreadyExisted.Should().BeFalse(
             because: "a failed inheritable spec breaks the 'all already existed' claim — the aggregation must require r.configured AND r.alreadyExisted for every spec, not just r.alreadyExisted");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────────────────
+    // V2 audience routing through GrantAdminConsentAsync's catch-all spec loop.
+    //
+    // GetResourceIdentifierUri unit tests in SetupHelpersConsentUrlTests cover the helper's
+    // four branches in isolation. This test integrates through ConfigureAllPermissionsAsync
+    // and exercises the orchestrator's catch-all spec loop at GrantAdminConsentAsync — the
+    // layer where the original PR #432 bug lived (non-DW caller forgot to pass
+    // knownMcpAudienceAppIds, so V2 per-server audiences fell to api://{appId} → AADSTS500011).
+    //
+    // The compile-time fix (mcpScopesByAudience required on ExecuteBatchPermissionsStepAsync)
+    // makes the entry-point case unforgettable. This test additionally pins the contract at
+    // the deeper layer: that the URL-building loop honors knownMcpAudienceAppIds per spec.
+    // ──────────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Non-admin path: GrantAdminConsentAsync builds the unified consent URL via the catch-all
+    /// spec loop and returns it for hand-off. When a spec's appId is in knownMcpAudienceAppIds,
+    /// the URL must contain its bare-GUID-prefixed scope (no api://). When the appId is NOT in
+    /// the set, the URL must contain the api:// form. Both must hold simultaneously — the
+    /// per-spec decision must use the audience set, not a global flag.
+    /// </summary>
+    [Fact]
+    public async Task ConfigureAllPermissions_NonAdmin_McpAudienceUsesBareGuid_NonMcpUsesApiScheme()
+    {
+        // Arrange — non-admin path so GrantAdminConsentAsync builds and returns the URL.
+        // BypassConsentChecksForTests is true by default (ctor); override to false here so
+        // the pre-check actually runs, finds "no grants" via the mocked Graph response,
+        // and the orchestrator falls through to URL building. Restored in the finally below.
+        var priorBypass = AdminConsentHelper.BypassConsentChecksForTests;
+        AdminConsentHelper.BypassConsentChecksForTests = false;
+        try
+        {
+
+        const string mcpAudienceAppId = "16b1878d-62c7-4009-aa25-68989d63bbad"; // mcp_MailTools from ToolingManifest
+        const string mcpScope = "Tools.ListInvoke.All";
+        const string customAppId = "99999999-9999-9999-9999-999999999999";       // not in manifest
+        const string customScope = "Custom.Scope";
+
+        // The /me probe in UpdateBlueprintPermissionsAsync gets the user JSON; every other
+        // GraphGetAsync (oauth2PermissionGrants pre-check) gets an empty value array so the
+        // pre-check returns "not consented" and the URL-building path runs.
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Is<string>(p => p.Contains("/me", StringComparison.Ordinal)),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"id\":\"user-id\"}"));
+        _graph.GraphGetAsync(
+            Arg.Any<string>(), Arg.Is<string>(p => !p.Contains("/me", StringComparison.Ordinal)),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(JsonDocument.Parse("{\"value\":[]}"));
+
+        _graph.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(RoleCheckResult.DoesNotHaveRole);
+
+        // Phase 1 resource SP resolution succeeds for both appIds — the catch-all loop
+        // includes only specs whose SP was resolved (resolvedSpAppIds filter).
+        _graph.EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("resolved-sp-id"));
+
+        _blueprintService.SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((ok: true, alreadyExists: true, error: (string?)null)));
+
+        var specs = new[]
+        {
+            new ResourcePermissionSpec(mcpAudienceAppId, "Agent 365 Tools",
+                new[] { mcpScope }, SetInheritable: false),
+            new ResourcePermissionSpec(customAppId, "Custom Resource",
+                new[] { customScope }, SetInheritable: false),
+        };
+
+        var setupResults = new SetupResults();
+        var mcpAudienceSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { mcpAudienceAppId };
+
+        // Act
+        var (_, _, _, adminConsentUrl) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+            _graph, _blueprintService,
+            new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
+            blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
+            specs: specs, _logger, setupResults, ct: default,
+            knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+            commandExecutor: _executor,
+            knownMcpAudienceAppIds: mcpAudienceSet);
+
+        // Assert — the URL was generated (non-admin hand-off) and routes the two specs
+        // through the correct branches of GetResourceIdentifierUri.
+        adminConsentUrl.Should().NotBeNull(
+            because: "non-admin path must return a consent URL the operator can hand off to a GA");
+
+        // MCP per-server audience → bare GUID. Uri.EscapeDataString turns '/' into %2F.
+        adminConsentUrl.Should().Contain($"{mcpAudienceAppId}%2F{mcpScope}",
+            because: "the manifest-known MCP appId must route through the bare-GUID branch in GetResourceIdentifierUri — this is the AADSTS500011 fix");
+        adminConsentUrl.Should().NotContain($"api%3A%2F%2F{mcpAudienceAppId}",
+            because: "api://{appId} for a V2 MCP per-server audience produces AADSTS500011 because per-server SPs have identifierUris=null");
+
+        // Non-MCP custom resource → api://{appId}. EscapeDataString produces lowercase hex on
+        // some runtimes (api%3a%2f%2f) and uppercase on others (api%3A%2F%2F); FluentAssertions
+        // matches case-insensitively here to keep the test stable across .NET versions.
+        adminConsentUrl.Should().ContainEquivalentOf($"api%3A%2F%2F{customAppId}%2F{customScope}",
+            because: "non-MCP unknown resources keep the standard api://{appId} Application ID URI form (pre-PR-#432 behavior)");
+
+        }
+        finally
+        {
+            AdminConsentHelper.BypassConsentChecksForTests = priorBypass;
+        }
     }
 }

@@ -59,10 +59,18 @@ internal static class SetupHelpers
         var specs = new List<ResourcePermissionSpec>();
         if (isM365)
         {
+            // The Messaging Bot API resource SP exposes a single delegated scope:
+            // ConfigConstants.MessagingBotApiAdminConsentScope ("AgentData.ReadWrite"). Requesting
+            // any other scope name here (the previous "Authorization.ReadWrite" + "user_impersonation"
+            // pair did not exist on the resource) causes the unified /v2.0/adminconsent URL to be
+            // rejected with AADSTS650053. Pre-PR #424 the orchestrator went through a programmatic
+            // oauth2PermissionGrants POST that did not strictly validate scope existence; the unified
+            // URL endpoint does, so the spec must agree with the URL builders that already use this
+            // constant (BuildAdminConsentUrls, BuildCombinedConsentUrl). See issue #429.
             specs.Add(new ResourcePermissionSpec(
                 ConfigConstants.MessagingBotApiAppId,
                 "Messaging Bot API",
-                new[] { "Authorization.ReadWrite", "user_impersonation" },
+                new[] { ConfigConstants.MessagingBotApiAdminConsentScope },
                 setInheritable));
         }
         specs.Add(new ResourcePermissionSpec(
@@ -98,8 +106,15 @@ internal static class SetupHelpers
         Agent365Config config,
         bool setInheritable,
         bool isM365 = true,
-        Dictionary<string, string[]>? scopesByAudience = null)
+        Dictionary<string, string[]>? scopesByAudience = null,
+        Dictionary<string, List<string>>? serverNamesByAudience = null)
     {
+        // Manifest read at most once, and only when scopesByAudience is not pre-supplied.
+        // Callers that already have the manifest loaded (e.g. AllSubcommand.BuildPermissionSpecsAsync)
+        // pass both maps to avoid a second disk read; the BootstrapTests path supplies only
+        // scopesByAudience and accepts the generic "Agent 365 Tools" display fallback. This
+        // preserves the no-manifest-read contract documented in
+        // BuildConfiguredPermissionSpecsAsync_WithPreComputedScopes_DoesNotReadManifest.
         if (scopesByAudience is null)
         {
             var mcpManifestPath = Path.Combine(
@@ -107,7 +122,9 @@ internal static class SetupHelpers
                 McpConstants.ToolingManifestFileName);
             var atgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
             scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: atgAppId);
+            serverNamesByAudience ??= await ManifestHelper.GetServerNamesByAudienceAsync(mcpManifestPath, atgAppId);
         }
+        serverNamesByAudience ??= new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         var specs = new List<ResourcePermissionSpec>
         {
@@ -118,8 +135,17 @@ internal static class SetupHelpers
                 SetInheritable: setInheritable),
         };
 
+        // Per-server V2 audiences read their manifest McpServerName (e.g. "mcp_MailTools")
+        // instead of the generic shared name. The legacy shared ATG audience is excluded by
+        // GetServerNamesByAudienceAsync and falls through to "Agent 365 Tools" here.
         specs.AddRange(scopesByAudience.Select(kvp =>
-            new ResourcePermissionSpec(kvp.Key, "Agent 365 Tools", kvp.Value, SetInheritable: setInheritable)));
+            new ResourcePermissionSpec(
+                kvp.Key,
+                serverNamesByAudience.TryGetValue(kvp.Key, out var names) && names.Count > 0
+                    ? names[0]
+                    : "Agent 365 Tools",
+                kvp.Value,
+                SetInheritable: setInheritable)));
         specs.AddRange(GetFixedApiPermissionSpecs(setInheritable, isM365));
 
         foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -732,7 +758,8 @@ internal static class SetupHelpers
             results.MessagingEndpointResult == Models.EndpointRegistrationResult.SkippedContractMismatch;
         var messagingEndpointFailureRequired =
             results.MessagingEndpointResult == Models.EndpointRegistrationResult.Failed;
-        var hasActionRequired = pendingAdminAction || tenantConsentUnverified || results.ClientSecretManualActionRequired || pendingS2SAction || pendingDelegatedAction || messagingEndpointManualRequired || messagingEndpointFailureRequired;
+        var hasMissingSpActions = results.MissingSpActions.Count > 0;
+        var hasActionRequired = pendingAdminAction || tenantConsentUnverified || results.ClientSecretManualActionRequired || pendingS2SAction || pendingDelegatedAction || messagingEndpointManualRequired || messagingEndpointFailureRequired || hasMissingSpActions;
         if (hasActionRequired)
         {
             var blueprintAppId = results.BlueprintId ?? "<blueprint-app-id>";
@@ -888,6 +915,27 @@ internal static class SetupHelpers
                     logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
                 }
             }
+            if (hasMissingSpActions)
+            {
+                // Issue #429: resources whose SP could not be provisioned in-line during
+                // setup. Each entry is a two-step recovery the operator can complete
+                // without re-running 'a365 setup all': (1) provision the SP via az,
+                // (2) click the per-SP unified-consent URL to grant the blueprint consent
+                // for this resource's scopes. Step 2 is keyed to the BLUEPRINT as client
+                // (not the resource as client — that pattern fails AADSTS65003 for
+                // first-party token-to-self), so it is a normal cross-app consent and
+                // additive to whatever the unified consent URL already granted.
+                foreach (var action in results.MissingSpActions)
+                {
+                    actionCount++;
+                    logger.LogInformation("  {N}. Missing service principal — '{Name}' ({AppId}) (Global Administrator required)", actionCount, action.ResourceName, action.ResourceAppId);
+                    logger.LogInformation("     Scopes pending: {Scopes}", string.Join(", ", action.Scopes));
+                    logger.LogInformation("     Step 1) Provision the SP:");
+                    logger.LogInformation("       {AzCommand}", action.AzCreateCommand);
+                    logger.LogInformation("     Step 2) Grant the blueprint consent for this resource (click Accept):");
+                    logger.LogInformation("       {Url}", action.PerSpConsentUrl);
+                }
+            }
         }
 
         if (results.Errors.Count > 0)
@@ -973,11 +1021,18 @@ internal static class SetupHelpers
         Agent365Config config,
         string mcpResourceAppId,
         IEnumerable<string> mcpScopes,
-        bool isM365 = true)
+        bool isM365 = true,
+        IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
+        IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null)
     {
-        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, config.AgentApplicationScopes, mcpScopes, isM365);
+        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, config.AgentApplicationScopes, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames);
 
-        // Map resource names to App IDs for upsert into ResourceConsents
+        // Map resource names to App IDs for upsert into ResourceConsents. The fixed-name
+        // entries cover Graph + Bot + Obs + PP + the WorkIQ shared MCP audience. V2
+        // per-server audiences (issue #429) are emitted by BuildAdminConsentUrls with
+        // display names like "Agent 365 Tools (16b1878d-...)"; for those we extract the
+        // appId from the display name and create one ResourceConsent per audience so
+        // query-entra and the setup summary surface the right SP.
         var appIdByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["Microsoft Graph"]   = AuthenticationConstants.MicrosoftGraphResourceAppId,
@@ -990,7 +1045,20 @@ internal static class SetupHelpers
         var populated = new List<string>();
         foreach (var (resourceName, consentUrl) in urls)
         {
-            if (!appIdByName.TryGetValue(resourceName, out var appId)) continue;
+            string appId;
+            if (appIdByName.TryGetValue(resourceName, out var fixedAppId))
+            {
+                appId = fixedAppId;
+            }
+            else if (TryExtractAudienceAppIdFromResourceName(resourceName, out var audienceAppId))
+            {
+                // V2 per-server audience — appId is embedded in the display name we generated.
+                appId = audienceAppId;
+            }
+            else
+            {
+                continue;
+            }
 
             var existing = config.ResourceConsents.FirstOrDefault(
                 rc => rc.ResourceAppId.Equals(appId, StringComparison.OrdinalIgnoreCase));
@@ -1014,6 +1082,27 @@ internal static class SetupHelpers
     }
 
     /// <summary>
+    /// Parses display names produced by <see cref="BuildAdminConsentUrls"/> for V2
+    /// per-server audiences, e.g. <c>"Agent 365 Tools (16b1878d-62c7-4009-aa25-68989d63bbad)"</c>
+    /// or the per-server form <c>"mcp_MailTools (16b1878d-...)"</c>. Prefix-agnostic so the
+    /// extractor keeps working after BuildAdminConsentUrls started threading manifest-derived
+    /// server names into the display label. Returns the embedded audience appId when the name
+    /// ends with a parenthesized GUID; false otherwise.
+    /// </summary>
+    private static bool TryExtractAudienceAppIdFromResourceName(string resourceName, out string audienceAppId)
+    {
+        audienceAppId = string.Empty;
+        if (string.IsNullOrWhiteSpace(resourceName)) return false;
+        if (!resourceName.EndsWith(')')) return false;
+        var openIdx = resourceName.LastIndexOf('(');
+        if (openIdx < 0 || openIdx >= resourceName.Length - 2) return false;
+        var inner = resourceName.Substring(openIdx + 1, resourceName.Length - openIdx - 2);
+        if (!Guid.TryParse(inner, out _)) return false;
+        audienceAppId = inner;
+        return true;
+    }
+
+    /// <summary>
     /// Builds a single /v2.0/adminconsent URL from fully-qualified scope URIs.
     /// All callers must pass fully-qualified scopes (e.g. "https://graph.microsoft.com/User.Read").
     /// Each scope is individually Uri.EscapeDataString-encoded and joined with %20.
@@ -1027,26 +1116,23 @@ internal static class SetupHelpers
     }
 
     /// <summary>
-    /// Returns the canonical identifier URI for a known platform resource app ID
-    /// (Graph, Agent 365 Tools, Messaging Bot, Observability, Power Platform). For any
-    /// unknown app ID, returns the universally-valid <c>api://{appId}</c> form.
-    /// <para>
-    /// This is the single source of truth for building fully-qualified OAuth2 scope URIs
-    /// used in the /v2.0/adminconsent flow. Both the per-resource builder
-    /// (<see cref="BuildAdminConsentUrls"/>) and the combined-URL builder used by
-    /// <c>BatchPermissionsOrchestrator</c> resolve resource URIs through this helper so
-    /// the user always sees the same scope identifiers regardless of which code path
-    /// produced the URL.
-    /// </para>
-    /// <para>
-    /// The Agent 365 Tools (MCP) resource app ID is tenant-discovered and not a static
-    /// constant, so callers that know they are building scopes for MCP must pass the
-    /// resource name ("Agent 365 Tools") to resolve the canonical URI; without it, the
-    /// method falls back to <c>api://{appId}</c> (functionally equivalent but visually
-    /// inconsistent with the per-resource URL).
-    /// </para>
+    /// Returns the resource identifier the /v2.0/adminconsent endpoint expects as the
+    /// scope prefix for <paramref name="resourceAppId"/>.
+    /// <list type="bullet">
+    /// <item>Known platform resources (Graph, WorkIQ Tools, Messaging Bot, Observability,
+    /// Power Platform) → their canonical identifier URI.</item>
+    /// <item><paramref name="isMcpAudience"/>=true (V2 MCP per-server audience) → bare
+    /// appId GUID. Those SPs have <c>identifierUris=null</c>; api://{appId} triggers
+    /// AADSTS500011.</item>
+    /// <item>Everything else → the standard <c>api://{appId}</c> Application ID URI form.</item>
+    /// </list>
     /// </summary>
-    internal static string GetResourceIdentifierUri(string resourceAppId, string? resourceName = null)
+    /// <param name="resourceAppId">The application id of the resource.</param>
+    /// <param name="isMcpAudience">True when the caller knows <paramref name="resourceAppId"/>
+    /// is a V2 MCP per-server audience (e.g. it sits in the ToolingManifest audience set
+    /// or the call site is iterating <c>mcpScopesByAudience</c>). Default false preserves
+    /// the safe api://{appId} fallback for any caller that has not been updated.</param>
+    internal static string GetResourceIdentifierUri(string resourceAppId, bool isMcpAudience = false)
     {
         if (string.Equals(resourceAppId, AuthenticationConstants.MicrosoftGraphResourceAppId, StringComparison.OrdinalIgnoreCase))
             return AuthenticationConstants.MicrosoftGraphResourceUri;
@@ -1056,9 +1142,47 @@ internal static class SetupHelpers
             return ConfigConstants.ObservabilityApiIdentifierUri;
         if (string.Equals(resourceAppId, PowerPlatformConstants.PowerPlatformApiResourceAppId, StringComparison.OrdinalIgnoreCase))
             return PowerPlatformConstants.PowerPlatformApiIdentifierUri;
-        if (string.Equals(resourceName, "Agent 365 Tools", StringComparison.OrdinalIgnoreCase))
+        // WorkIQ Tools shared (issue #429): match by appId, not display name. V2 per-server
+        // audiences are also named "Agent 365 Tools" so the old name-based check collapsed
+        // them onto WorkIQ's URI and produced AADSTS650053.
+        if (IsAgent365ToolsResourceAppId(resourceAppId))
             return McpConstants.Agent365ToolsIdentifierUri;
+
+        // V2 MCP per-server audiences (identifierUris=null, only bare appId in
+        // servicePrincipalNames). Caller signals this via isMcpAudience=true — either
+        // because it is iterating mcpScopesByAudience, or because it checked the loaded
+        // ToolingManifest audience set for this appId.
+        if (isMcpAudience)
+            return resourceAppId;
+
         return $"api://{resourceAppId}";
+    }
+
+    /// <summary>
+    /// Returns true when the supplied resource appId is the WorkIQ Tools (Agent 365 Tools)
+    /// shared resource — either the hard-coded prod appId or an env-overridden value
+    /// pinned via <c>A365_MCP_APP_ID_&lt;env&gt;</c>. Used by
+    /// <see cref="GetResourceIdentifierUri"/> to distinguish the WorkIQ shared audience
+    /// (returns canonical https URI) from V2 MCP per-server audiences (returns bare appId
+    /// GUID because per-server SPs have <c>identifierUris = null</c> and Entra rejects
+    /// api://{appId} for them with AADSTS500011).
+    /// </summary>
+    private static bool IsAgent365ToolsResourceAppId(string resourceAppId)
+    {
+        if (string.IsNullOrWhiteSpace(resourceAppId)) return false;
+        if (string.Equals(resourceAppId, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
+            return true;
+        // Also accept any value the environment-aware resolver returns for known env keys.
+        // Cheaper than walking every possible env: only check the env on the running config
+        // when explicitly passed via env var. ConfigConstants.GetAgent365ToolsResourceAppId
+        // already short-circuits to the prod appId when no override is set.
+        foreach (var envKey in new[] { "prod", "preprod", "test", "dev" })
+        {
+            var resolved = ConfigConstants.GetAgent365ToolsResourceAppId(envKey);
+            if (string.Equals(resourceAppId, resolved, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -1066,8 +1190,11 @@ internal static class SetupHelpers
     /// Resolves the resource URI via <see cref="GetResourceIdentifierUri"/> so the resulting
     /// scope identifier matches what the per-resource URL builder emits.
     /// </summary>
-    internal static string BuildFullyQualifiedScope(string resourceAppId, string scope, string? resourceName = null)
-        => $"{GetResourceIdentifierUri(resourceAppId, resourceName)}/{scope}";
+    /// <param name="isMcpAudience">Forwarded to <see cref="GetResourceIdentifierUri"/>; pass
+    /// true when the caller knows <paramref name="resourceAppId"/> is a V2 MCP per-server
+    /// audience (e.g. found in the loaded ToolingManifest audience set). Default false.</param>
+    internal static string BuildFullyQualifiedScope(string resourceAppId, string scope, bool isMcpAudience = false)
+        => $"{GetResourceIdentifierUri(resourceAppId, isMcpAudience)}/{scope}";
 
     /// <summary>
     /// Builds per-resource admin consent URLs covering every resource stamped on the blueprint
@@ -1087,7 +1214,9 @@ internal static class SetupHelpers
         string blueprintClientId,
         IEnumerable<string> graphScopes,
         IEnumerable<string> mcpScopes,
-        bool isM365 = true)
+        bool isM365 = true,
+        IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
+        IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null)
     {
         var urls = new List<(string, string)>();
 
@@ -1098,9 +1227,53 @@ internal static class SetupHelpers
         if (graphScopeList.Count > 0)
             urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList)));
 
-        var mcpScopeList = mcpScopes.ToList();
-        if (mcpScopeList.Count > 0)
-            urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
+        // V2 per-server audiences (issue #429): when the caller passes a by-audience map,
+        // emit one URL fragment per audience whose resource identifier is resolved by
+        // GetResourceIdentifierUri (the WorkIQ shared audience keeps its canonical https
+        // URI; per-server audiences use the bare appId GUID — see GetResourceIdentifierUri
+        // for why api://{appId} fails with AADSTS500011 against per-server SPs). The legacy
+        // flat-list <paramref name="mcpScopes"/> path is preserved unchanged below for V1
+        // callers and existing tests that have no by-audience info to thread through.
+        if (mcpScopesByAudience is { Count: > 0 })
+        {
+            foreach (var (audienceAppId, scopes) in mcpScopesByAudience)
+            {
+                if (scopes is null || scopes.Length == 0) continue;
+                // The loop iterates over manifest-derived MCP audiences; every key here is
+                // by definition an MCP per-server audience appId.
+                var resourceUri = GetResourceIdentifierUri(audienceAppId, isMcpAudience: true);
+                // Display name: WorkIQ shared audience keeps the legacy "Agent 365 Tools"
+                // label. Per-server audiences use the manifest McpServerName when supplied
+                // (e.g. "mcp_MailTools (16b1878d-...)") so the consent URL block matches the
+                // names shown in the spec list and grant log lines. Fall back to the generic
+                // "Agent 365 Tools ({appId})" form when no display-name map is passed in
+                // (legacy callers, tests). The parenthetical appId is required by
+                // TryExtractAudienceAppIdFromResourceName for the PopulateAdminConsentUrls
+                // upsert path.
+                string resourceName;
+                if (IsAgent365ToolsResourceAppId(audienceAppId))
+                {
+                    resourceName = "Agent 365 Tools";
+                }
+                else if (mcpAudienceDisplayNames is not null
+                         && mcpAudienceDisplayNames.TryGetValue(audienceAppId, out var names)
+                         && names.Count > 0)
+                {
+                    resourceName = $"{names[0]} ({audienceAppId})";
+                }
+                else
+                {
+                    resourceName = $"Agent 365 Tools ({audienceAppId})";
+                }
+                urls.Add((resourceName, Build(tenantId, blueprintClientId, resourceUri, scopes)));
+            }
+        }
+        else
+        {
+            var mcpScopeList = mcpScopes.ToList();
+            if (mcpScopeList.Count > 0)
+                urls.Add(("Agent 365 Tools", Build(tenantId, blueprintClientId, McpConstants.Agent365ToolsIdentifierUri, mcpScopeList)));
+        }
 
         if (isM365)
             urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
@@ -1127,13 +1300,37 @@ internal static class SetupHelpers
         string blueprintClientId,
         IEnumerable<string> graphScopes,
         IEnumerable<string> mcpScopes,
-        bool isM365 = true)
+        bool isM365 = true,
+        IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null)
     {
         var allScopes = new List<string>();
         foreach (var s in graphScopes)
             allScopes.Add($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
-        foreach (var s in mcpScopes)
-            allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
+
+        // V2 per-server audiences (issue #429): when the caller passes a by-audience map,
+        // emit per-audience scope URIs using GetResourceIdentifierUri so the WorkIQ
+        // shared audience keeps its https URI and per-server audiences use the bare appId
+        // GUID (api://{appId} fails for per-server SPs with AADSTS500011 — see
+        // GetResourceIdentifierUri). Without this, every MCP scope landed on the WorkIQ URI
+        // and Entra returned AADSTS650053 for any scope the WorkIQ SP did not publish.
+        if (mcpScopesByAudience is { Count: > 0 })
+        {
+            foreach (var (audienceAppId, scopes) in mcpScopesByAudience)
+            {
+                if (scopes is null) continue;
+                // The loop iterates over manifest-derived MCP audiences; every key here is
+                // by definition an MCP per-server audience appId.
+                var resourceUri = GetResourceIdentifierUri(audienceAppId, isMcpAudience: true);
+                foreach (var s in scopes)
+                    allScopes.Add($"{resourceUri}/{s}");
+            }
+        }
+        else
+        {
+            foreach (var s in mcpScopes)
+                allScopes.Add($"{McpConstants.Agent365ToolsIdentifierUri}/{s}");
+        }
+
         if (isM365)
             allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
         allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
@@ -1157,17 +1354,19 @@ internal static class SetupHelpers
         string mcpResourceAppId,
         IEnumerable<string> graphScopes,
         IEnumerable<string> mcpScopes,
-        bool isM365 = true)
+        bool isM365 = true,
+        IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
+        IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null)
     {
         if (ctx.Results.TenantWideConsentOutcome == Models.GrantOutcome.Granted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
             return;
 
-        var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes, isM365);
+        var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames);
         ctx.Results.ConsentUrlsSavedToPath = ctx.GeneratedConfigPath;
         ctx.Results.ConsentResourceNames.AddRange(consentResourceNames);
         ctx.Results.CombinedConsentUrl = BuildCombinedConsentUrl(
             ctx.Config.TenantId!, ctx.Config.AgentBlueprintId!,
-            graphScopes, mcpScopes, isM365);
+            graphScopes, mcpScopes, isM365, mcpScopesByAudience);
     }
 
     /// <summary>

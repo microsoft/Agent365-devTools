@@ -92,7 +92,7 @@ The review does not assume docs will be updated later — a user-visible surface
 - **Not excuses**: "it's preview/opt-in/temporary", "Microsoft Learn will cover it", "you can see it in the diff". The CHANGELOG is the release's source of truth.
 
 ### Cross-Cutting Contract Checks
-Five checks that static per-file analysis tends to miss — each requires tracing across multiple files or comparing code against docs/descriptions:
+Nine checks that static per-file analysis tends to miss — each requires tracing across multiple files or comparing code against docs/descriptions:
 
 - **Return-value null semantics (Rule N)**: When a method documents that `null` (or a sentinel) carries a special meaning (e.g., "null = verified, safe to persist"), grep every call site and verify the producer returns null in exactly the documented cases. A path that returns non-null when the contract says "verified" silently breaks the caller's persistence gate.
 - **CHANGELOG vs code numeric consistency (Rule O)**: After reading CHANGELOG `[Unreleased]`, extract every numeric claim (interval, retry count, timeout). Grep production code for the corresponding literals. Flag any mismatch — the CHANGELOG and the code must agree.
@@ -100,7 +100,41 @@ Five checks that static per-file analysis tends to miss — each requires tracin
 - **Test-only escape hatch declared `public` (Rule Q)**: When a property/field named `*ForTests*` or `*TestOverride*` is declared `public` in a production assembly, check the `.csproj` for `InternalsVisibleTo`. If present, `public` is unnecessary and widens the security surface — flag as MEDIUM and suggest `internal`.
 - **`--help` text accuracy (Rule R)**: When the diff changes how a command surfaces output (new URL handoff, removed PowerShell path, added fallback), read every description string in the same file and its parent command. If the description still names an output form that no longer matches the code, flag as MEDIUM.
 
-Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through R.
+**Added 2026-05-29 after PR #432 Copilot review surfaced gaps Rules N–R didn't catch. See [.codereviews/why-review-staged-missed-copilot-findings-20260529T190832Z.md](../../codereviews/why-review-staged-missed-copilot-findings-20260529T190832Z.md) for the full miss analysis.**
+
+- **Branch-wide stale-mechanism sweep (Rule S)**: When the staged diff replaces mechanism X with mechanism Y (e.g., PowerShell fallback → az rest, `api://{appId}` → bare appId GUID, `per-app admin-consent URLs` → `az ad sp create`), enumerate the terms being replaced and `grep -rn` the **entire branch** (not just the staged delta) for each term. For every hit outside the staged delta, classify:
+  - Stale comment (FIX — code/comment lie about behavior).
+  - Stale user-facing log/warning/exception text (FIX — operators read these in production).
+  - Stale doc comment / XML doc (FIX — IDE surfaces these to consumers).
+  - Intentional historical reference (KEEP — e.g., commit message archaeology, CHANGELOG `[Released]` entries).
+
+  This is the analog of "rename hygiene" applied to behavior changes. It catches the family of issues where the implementation moves but the surrounding documentation lies. **Treat each surviving reference as MEDIUM if user-facing (LogWarning, LogError, exception messages, Warnings collection entries), LOW if internal-only (private comments).**
+  
+  Six of the nine unique findings in PR #432's Copilot review were of this exact shape — all stale `"PowerShell fallback"` and `"api://{appId}"` references on lines outside the staged delta.
+
+- **Test-class parallelism safety (Rule T)**: For every test class in the diff (or anywhere on the branch), check whether the class reads or writes any static property or field whose name matches the pattern `*ForTests*` or `*TestOverride*` (these are the conventional escape hatches in this codebase). If yes, the class **must** carry either:
+  - `[Collection("Sequential")]` attribute, OR
+  - `[CollectionDefinition(..., DisableParallelization = true)]` for a class-specific collection it owns.
+
+  Without one of these, xUnit may run the class in parallel with other classes that also mutate the same static state, producing flaky cross-class races. **Severity: MEDIUM.** The fix is one line. Two PR #432 findings (`BatchPermissionsOrchestratorTests`, `BatchPermissionsOrchestratorMissingSpTests`) were exactly this — both mutated `BypassSpProvisioningForTests` without `[Collection]` until Copilot flagged it.
+
+  Implementation: `grep -rn "BypassConsentChecksForTests\|BypassSpProvisioningForTests\|OpenUrlOverrideForTests\|<OtherKnownForTestsName>" <test_files>`. For each hit, read the enclosing test class and verify the attribute is present.
+
+- **Branch-scope completeness checkpoint (Rule U)**: **The single biggest miss category in the PR #432 review.** Before declaring the review complete, list every file that appears in the **branch diff** (`git diff $(git merge-base HEAD origin/main)...HEAD --name-only`), not just the staged delta. The review must touch each file in that list at least to the extent of running the other rules against it.
+
+  In practice this means: if the staged delta is 4 files but the branch diff is 22 files, the review surface is 22, not 4. Prior `/review-staged` runs do **not** absolve the current run of covering the rest of the branch — assume nothing has been covered until you've explicitly read it in this run.
+
+- **Hardening-bypass detection (Rule V)**: **Added 2026-05-29 after PR #432's second Copilot review caught a regression Rules N–U missed.** When the staged diff hardens an entry-point helper by making a parameter required (so the compiler forces it through one path), the lower-level function it delegates to typically still keeps the parameter optional — and **any direct caller of the lower-level function bypasses the hardening**. The hardening only protects the path that goes through the helper.
+
+  Detection: when the diff includes a signature change of the shape "parameter X was optional with `= null` default, now required (no default)", identify the **lower-level function** the helper delegates to. If that function still has X optional, run `grep -rn "<LowerLevelFunctionName>" --include="*.cs" src/<ProductionPath>/` (production callers only) and verify each direct caller passes X. Any caller that doesn't is a recurrence of the exact bug the hardening was meant to prevent.
+
+  Concrete PR #432 example: commit `7a1e317` made `mcpScopesByAudience` required on `ExecuteBatchPermissionsStepAsync` so the AllSubcommand and NonDwBlueprintSetupOrchestrator entry points couldn't forget it. But `ConfigureAllPermissionsAsync` (the lower-level orchestrator method) still had `knownMcpAudienceAppIds` optional, and `PermissionsSubcommand.ConfigureMcpPermissionsAsync` called it directly — bypassing the hardening and re-introducing the AADSTS500011 V2 routing regression. Copilot flagged it as HIGH; the skill missed it.
+
+  **Severity: HIGH** when the bypassed call site is in production code (live regression risk). LOW when it's a test fixture (tests routinely use null defaults). Treat the parameter-becoming-required signature change in the diff as a trigger: the moment you see one, follow the call chain down and grep direct callers of the lower-level function.
+
+  Implementation: at the start of the review, emit the list of branch-level files and treat them as the review surface. At the end, verify each file was read or explicitly justified as "no rule applies."
+
+Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through V.
 
 ### Context Awareness
 The skill differentiates between:

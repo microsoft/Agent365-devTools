@@ -24,10 +24,10 @@ public enum ConsentPollResult
     Verified,
 
     /// <summary>
-    /// The timeout elapsed without detecting a grant, or the user pressed Enter to skip
-    /// verification. The CLI did NOT observe the grant directly. Callers must NOT update
-    /// persisted consent state on this outcome and must keep the consent URL visible so the
-    /// user can verify manually (for example via 'a365 query-entra inheritance').
+    /// The timeout elapsed without detecting a grant. The CLI did NOT observe the grant
+    /// directly. Callers must NOT update persisted consent state on this outcome and must
+    /// keep the consent URL visible so the user can verify manually (for example via
+    /// 'a365 query-entra inheritance').
     /// </summary>
     AssumedComplete,
 
@@ -68,32 +68,6 @@ public static class AdminConsentHelper
     private static readonly AsyncLocal<bool> _bypassConsentChecks = new();
 
     /// <summary>
-    /// Non-blocking check for a buffered Enter keypress. Used by the consent polling loop
-    /// to let the operator skip waiting and continue without blocking on stdin.
-    /// Safe when stdin is redirected (e.g. test/CI): returns false and any other buffered keys
-    /// are consumed harmlessly. Returns true only when an Enter key was pressed and consumed.
-    /// </summary>
-    private static bool TryConsumeEnterKey()
-    {
-        try
-        {
-            while (Console.KeyAvailable)
-            {
-                var key = Console.ReadKey(intercept: true);
-                if (key.Key == ConsoleKey.Enter)
-                {
-                    return true;
-                }
-            }
-        }
-        catch
-        {
-            // Console.KeyAvailable throws when stdin is redirected. Treat as "no Enter".
-        }
-        return false;
-    }
-
-    /// <summary>
     /// Polls Azure AD/Graph (via az rest) to detect an oauth2 permission grant for the provided appId.
     /// Mirrors the behavior previously implemented in A365SetupRunner.PollAdminConsentAsync.
     /// </summary>
@@ -114,7 +88,7 @@ public static class AdminConsentHelper
         int lastProgressReportSeconds = 0;
 
         logger.LogInformation(
-            "Waiting for admin consent to be granted. Open the URL above in a browser and complete the consent flow. The CLI will continue automatically (timeout: {TimeoutSeconds}s).",
+            "   Sign in and Accept the permission(s). If the tab shows an error after Accept, consent likely succeeded — the CLI will still detect it (timeout: {TimeoutSeconds}s).",
             timeoutSeconds);
 
         try
@@ -173,21 +147,21 @@ public static class AdminConsentHelper
                     }
                 }
 
-                // Delay between polls. If cancellation is requested this will throw OperationCanceledException,
-                // which we catch below and treat as a graceful cancellation resulting in 'false'.
                 await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
             }
 
-            logger.LogWarning(
-                "Admin consent was not detected within {TimeoutSeconds}s. Continuing — you can re-run this command after granting consent.",
+            logger.LogDebug(
+                "Admin consent was not detected within {TimeoutSeconds}s. The browser flow may not have completed, or 'az login' may be signed into a different tenant than the consent target. Verify with 'az account show'.",
                 timeoutSeconds);
             return false;
         }
         catch (OperationCanceledException)
         {
-            // Treat cancellation as a graceful timeout/no-consent scenario
-            logger.LogDebug("Polling for admin consent was cancelled or timed out for app {AppId} ({Scope}).", appId, scopeDescriptor);
-            return false;
+            // Propagate so Ctrl+C aborts setup cleanly via AllSubcommand's OCE handler,
+            // instead of falling into the az rest fallback prompt with a stale "permission(s)?"
+            // question. Mirrors the Graph overload below.
+            logger.LogDebug("Polling for admin consent was cancelled for app {AppId} ({Scope}).", appId, scopeDescriptor);
+            throw;
         }
     }
 
@@ -202,9 +176,8 @@ public static class AdminConsentHelper
     /// <returns>
     /// <see cref="ConsentPollResult.Verified"/> when a grant was observed in Graph.
     /// <see cref="ConsentPollResult.AssumedComplete"/> when the timeout elapsed without detecting
-    /// a grant, or when the user pressed Enter to skip verification — the grant was NOT directly
-    /// observed. Callers must NOT update persisted consent state on this outcome and must keep
-    /// the consent URL visible so the user can verify manually.
+    /// a grant — the grant was NOT directly observed. Callers must NOT update persisted consent
+    /// state on this outcome and must keep the consent URL visible so the user can verify manually.
     /// <see cref="ConsentPollResult.NotDetected"/> when the blueprint SP id is not available.
     /// Throws <see cref="OperationCanceledException"/> when <paramref name="ct"/> is cancelled —
     /// callers must let the exception propagate so user Ctrl+C is honored consistently with the
@@ -233,7 +206,7 @@ public static class AdminConsentHelper
         }
 
         logger.LogInformation(
-            "Waiting for admin consent to be granted. Complete the consent flow in the browser. The CLI will continue automatically (timeout: {TimeoutSeconds}s).",
+            "   Sign in and Accept the permission(s). If the tab shows an error after Accept, consent likely succeeded — the CLI will still detect it (timeout: {TimeoutSeconds}s).",
             timeoutSeconds);
 
         var start = DateTime.UtcNow;
@@ -248,14 +221,8 @@ public static class AdminConsentHelper
                 {
                     lastProgressReportSeconds = elapsedSeconds;
                     logger.LogInformation(
-                        "Still waiting for admin consent... ({ElapsedSeconds}s / {TimeoutSeconds}s). Press Enter to skip verification and continue.",
+                        "Still waiting for admin consent... ({ElapsedSeconds}s / {TimeoutSeconds}s).",
                         elapsedSeconds, timeoutSeconds);
-                }
-
-                if (TryConsumeEnterKey())
-                {
-                    logger.LogInformation("Continuing. Run 'a365 query-entra inheritance' later to confirm permissions if needed.");
-                    return ConsentPollResult.AssumedComplete;
                 }
 
                 // Use the caller's full permission scopes so the request uses the broad delegated
@@ -277,22 +244,11 @@ public static class AdminConsentHelper
 
                 logger.LogDebug("No consent grants found for blueprint SP {ClientSpId} yet.", clientSpId);
 
-                // Short-poll loop so an Enter keypress is detected within 250 ms rather than
-                // waiting a full intervalSeconds before the next Graph check.
-                var pollEnd = DateTime.UtcNow.AddSeconds(intervalSeconds);
-                while (DateTime.UtcNow < pollEnd && !ct.IsCancellationRequested)
-                {
-                    if (TryConsumeEnterKey())
-                    {
-                        logger.LogInformation("Continuing. Run 'a365 query-entra inheritance' later to confirm permissions if needed.");
-                        return ConsentPollResult.AssumedComplete;
-                    }
-                    await Task.Delay(250, ct);
-                }
+                await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), ct);
             }
 
-            logger.LogWarning(
-                "Admin consent was not detected within {TimeoutSeconds}s. Continuing — run 'a365 query-entra inheritance' later to verify.",
+            logger.LogDebug(
+                "Admin consent was not detected within {TimeoutSeconds}s. The browser flow may not have completed, or 'az login' may be signed into a different tenant than the consent target. Verify with 'az account show'.",
                 timeoutSeconds);
             return ConsentPollResult.AssumedComplete;
         }

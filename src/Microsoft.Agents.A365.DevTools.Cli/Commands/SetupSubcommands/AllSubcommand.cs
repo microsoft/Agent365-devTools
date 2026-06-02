@@ -146,6 +146,16 @@ internal static class AllSubcommand
                          "  both — delegated grants (OBO) and app permissions (S2S).\n" +
                          "Not supported with --aiteammate true.");
 
+        var skipSpProvisioningOption = new Option<bool>(
+            "--skip-sp-provisioning",
+            description: "Skip the interactive in-line provisioning of missing resource service principals.\n" +
+                        "Default: setup detects resources (e.g. V2 MCP per-server audiences) whose SP is missing\n" +
+                        "from this tenant, prompts per-resource, and shells out to 'az ad sp create --id <appId>'\n" +
+                        "using the operator's existing az login. With --skip-sp-provisioning, missing SPs are\n" +
+                        "excluded from the unified admin-consent URL and surfaced as numbered items in the Action\n" +
+                        "Required block, each with the az command and a per-SP consent URL.\n" +
+                        "Implicitly enabled when stdin is redirected (CI / coding-agent / pipe scenarios).");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -156,6 +166,7 @@ internal static class AllSubcommand
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(authModeOption);
+        command.AddOption(skipSpProvisioningOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -163,6 +174,11 @@ internal static class AllSubcommand
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
+            // --skip-sp-provisioning flag (off by default). Also auto-on when stdin is
+            // redirected so CI / coding-agent / pipe scenarios don't hang on the per-SP
+            // prompt loop.
+            var skipSpProvisioningFlag = context.ParseResult.GetValueForOption(skipSpProvisioningOption);
+            var skipSpProvisioning = skipSpProvisioningFlag || Console.IsInputRedirected;
             // Tri-state: null = not specified (respect config), true/false = explicit override.
             // Option<bool> means bare --aiteammate sets it to true without requiring "true" as a value.
             bool? aiTeammateFlag = context.ParseResult.CommandResult.FindResultFor(aiTeammateOption) != null
@@ -383,7 +399,8 @@ internal static class AllSubcommand
                     isBootstrap: isBootstrap,
                     isM365: isM365,
                     authMode: authMode ?? nonDwConfig.AuthMode,
-                    confirmationProvider: confirmationProvider);
+                    confirmationProvider: confirmationProvider,
+                    skipSpProvisioning: skipSpProvisioning);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -530,7 +547,8 @@ internal static class AllSubcommand
                     blueprintLookupService: blueprintLookupService,
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
-                    isM365: isM365);
+                    isM365: isM365,
+                    skipSpProvisioning: skipSpProvisioning);
 
                 // Step 1: Infrastructure (optional, DW only)
                 await ExecuteInfrastructureStepAsync(ctx);
@@ -539,18 +557,24 @@ internal static class AllSubcommand
                 await ExecuteBlueprintStepAsync(ctx);
 
                 // Step 3: Configure all permissions in a batch.
-                var (specs, mcpResourceAppId, mcpScopes) = await BuildPermissionSpecsAsync(ctx);
+                var (specs, mcpResourceAppId, mcpScopes, mcpScopesByAudience, mcpServerNamesByAudience) = await BuildPermissionSpecsAsync(ctx);
 
                 await ExecuteBatchPermissionsStepAsync(
-                    ctx, specs,
+                    ctx, specs, mcpScopesByAudience,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
-                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes, isM365: ctx.IsM365);
+                SetupHelpers.ApplyConsentUrlsIfNeeded(
+                    ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes,
+                    isM365: ctx.IsM365,
+                    mcpScopesByAudience: mcpScopesByAudience,
+                    mcpAudienceDisplayNames: mcpServerNamesByAudience);
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config, ctx.GeneratedConfigPath);
 
                 // Step 4: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
                 await ExecuteMessagingEndpointStepAsync(ctx);
+
+                logger.LogInformation("");
 
                 // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
                 setupResults.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
@@ -578,6 +602,12 @@ internal static class AllSubcommand
                 logger.LogInformation("");
                 SetupHelpers.DisplaySetupSummary(setupResults, logger);
                 ExceptionHandler.ExitWithCleanup(1);
+            }
+            catch (OperationCanceledException)
+            {
+                // Must sit before the catch-all below so Ctrl+C bypasses DisplaySetupSummary,
+                // which would render not-yet-attempted phases as "failed".
+                throw;
             }
             catch (Exception ex)
             {
@@ -743,8 +773,15 @@ internal static class AllSubcommand
     internal static async Task ExecuteBatchPermissionsStepAsync(
         SetupContext ctx,
         List<ResourcePermissionSpec> specs,
+        IReadOnlyDictionary<string, string[]> mcpScopesByAudience,
         string? knownBlueprintSpObjectId = null)
     {
+        // Required parameter — every caller must thread the loaded ToolingManifest
+        // audience map through. Forgetting it would route V2 MCP per-server audiences
+        // to api://{appId} and trigger AADSTS500011 (see commit 7a1e317's incomplete
+        // wiring of the non-DW path).
+        var knownMcpAudienceAppIds = mcpScopesByAudience.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         try
         {
             var (blueprintPermissionsUpdated, inheritedPermissionsConfigured, consentGranted, adminConsentUrl) =
@@ -754,7 +791,9 @@ internal static class AllSubcommand
                     specs, ctx.Logger, ctx.Results, ctx.CancellationToken,
                     knownBlueprintSpObjectId: knownBlueprintSpObjectId,
                     confirmationProvider: ctx.ConfirmationProvider,
-                    commandExecutor: ctx.Executor);
+                    commandExecutor: ctx.Executor,
+                    skipSpProvisioning: ctx.SkipSpProvisioning,
+                    knownMcpAudienceAppIds: knownMcpAudienceAppIds);
 
             ctx.Results.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
             ctx.Results.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
@@ -791,6 +830,10 @@ internal static class AllSubcommand
         // Not an M365 agent — leave MessagingEndpointResult null so the summary shows "skipped".
         if (!ctx.IsM365)
             return;
+
+        // Phase separator: emit only after the non-M365 early-return so the non-M365 run
+        // does not get a stray blank line followed by silent no-op output.
+        ctx.Logger.LogInformation("");
 
         // Blueprint step failed; there is no blueprint to attach an endpoint to. Record this as
         // a distinct Failed + "BlueprintMissing" so the summary doesn't mislead the user with the
@@ -845,7 +888,7 @@ internal static class AllSubcommand
     /// Shared by both DW and non-DW flows so permissions are always consistent — the only difference
     /// is that non-M365 agents exclude Messaging Bot API.
     /// </summary>
-    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx)
+    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes, Dictionary<string, string[]> scopesByAudience, Dictionary<string, List<string>> serverNamesByAudience)> BuildPermissionSpecsAsync(SetupContext ctx)
     {
         var desiredCustomIds = new HashSet<string>(
             (ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -859,16 +902,27 @@ internal static class AllSubcommand
             McpConstants.ToolingManifestFileName);
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
         var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: mcpResourceAppId);
+        var serverNamesByAudience = await ManifestHelper.GetServerNamesByAudienceAsync(mcpManifestPath, mcpResourceAppId);
         // V1-compatible: extract ATG scopes for consent URL helpers (empty for V2-only manifests)
         var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes) ? atgScopes : Array.Empty<string>();
 
-        // Pass the already-computed scopesByAudience to avoid reading the MCP manifest twice.
-        // BuildConfiguredPermissionSpecsAsync stamps Graph + manifest MCP audiences + fixed APIs
-        // (Bot only when isM365) + custom permissions for both DW and non-DW agents.
+        // Pass the already-computed scopesByAudience and serverNamesByAudience to avoid
+        // reading the MCP manifest a second time. BuildConfiguredPermissionSpecsAsync stamps
+        // Graph + manifest MCP audiences + fixed APIs (Bot only when isM365) + custom permissions
+        // for both DW and non-DW agents; serverNamesByAudience drives the per-server display
+        // names so V2 audiences read as e.g. "mcp_MailTools" rather than "Agent 365 Tools".
         var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
-            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience);
+            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience);
 
-        return (specs, mcpResourceAppId, mcpScopes);
+        // Return the full scopesByAudience map alongside the V1-compat mcpScopes so V2
+        // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to the bare
+        // appId GUID resource identifier instead of collapsing them onto the WorkIQ Tools
+        // URI (issue #429). api://{appId} is NOT used — per-server SPs have identifierUris
+        // null and only the bare appId GUID is in servicePrincipalNames, so api:// triggers
+        // AADSTS500011. serverNamesByAudience flows through to ApplyConsentUrlsIfNeeded so
+        // the Action Required block's per-audience consent URLs display the same per-server
+        // names the spec list uses.
+        return (specs, mcpResourceAppId, mcpScopes, scopesByAudience, serverNamesByAudience);
     }
 
     /// <summary>

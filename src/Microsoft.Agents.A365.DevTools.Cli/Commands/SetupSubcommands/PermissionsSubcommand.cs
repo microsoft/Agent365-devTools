@@ -53,7 +53,7 @@ internal static class PermissionsSubcommand
         var permissionsCommand = new Command("permissions",
             "Configure OAuth2 permission grants and inheritable permissions on the blueprint\n" +
             "Required role: Agent ID Developer for inheritable permissions; Global Administrator\n" +
-            "for tenant-wide OAuth2 consent. Non-admins get copy-paste PowerShell to forward.\n");
+            "for tenant-wide OAuth2 consent. Non-admins get a unified /v2.0/adminconsent URL to forward.\n");
 
         // Add subcommands
         permissionsCommand.AddCommand(CreateMcpSubcommand(logger, authValidator, configService, executor, graphApiService, blueprintService, confirmationProvider, resolver));
@@ -80,7 +80,7 @@ internal static class PermissionsSubcommand
         var command = new Command("mcp",
             "Configure MCP server OAuth2 grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
-            "(non-admins receive copy-paste PowerShell to forward to an admin).\n\n");
+            "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n");
 
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
@@ -138,20 +138,30 @@ internal static class PermissionsSubcommand
                 var dryRunAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(dryRunConfig.Environment);
                 if (removeLegacyScopes)
                 {
+                    // Source-of-truth: drive both the "Would CONFIGURE" and "Would REMOVE" sets
+                    // from the same GetScopesByAudienceAsync(excludeLegacyAtg: true) call that the
+                    // non-dry-run flow uses. The diff is computed per-scope (not per-audience) so
+                    // the ATG audience correctly shows McpServersMetadata.Read.All under CONFIGURE
+                    // and only the legacy McpServers.*.All scopes under REMOVE.
                     var allScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: false, resolvedAtgAppId: dryRunAtgAppId);
-                    var remainingScopes = allScopes
-                        .Where(kvp => !string.Equals(kvp.Key, dryRunAtgAppId, StringComparison.OrdinalIgnoreCase))
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
-                    var removedAudiences = allScopes.Keys
-                        .Where(k => !remainingScopes.ContainsKey(k))
-                        .ToList();
+                    var remainingScopes = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, excludeLegacyAtg: true, resolvedAtgAppId: dryRunAtgAppId);
 
-                    if (removedAudiences.Count > 0)
+                    var removedByAudience = new SortedDictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (audience, scopes) in allScopes)
+                    {
+                        remainingScopes.TryGetValue(audience, out var kept);
+                        var keptSet = new HashSet<string>(kept ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+                        var dropped = scopes.Where(s => !keptSet.Contains(s)).ToArray();
+                        if (dropped.Length > 0)
+                            removedByAudience[audience] = dropped;
+                    }
+
+                    if (removedByAudience.Count > 0)
                     {
                         logger.LogInformation("Would REMOVE (--remove-legacy-scopes):");
-                        foreach (var audience in removedAudiences)
+                        foreach (var (audience, scopes) in removedByAudience)
                             logger.LogInformation("  - Resource: {Audience}  Scopes: {Scopes}",
-                                audience, string.Join(", ", allScopes[audience]));
+                                audience, string.Join(", ", scopes));
                     }
 
                     logger.LogInformation("Would CONFIGURE:");
@@ -202,9 +212,11 @@ internal static class PermissionsSubcommand
             if (removeLegacyScopes)
             {
                 logger.LogWarning(
-                    "WARNING: --remove-legacy-scopes will permanently remove the shared ATG audience ({AtgAppId}) " +
-                    "from the agent blueprint. Any agent instances still using the old SDK will immediately lose " +
-                    "access to MCP tools. Ensure all agent instances have been upgraded to the new SDK before proceeding.",
+                    "WARNING: --remove-legacy-scopes will permanently remove the legacy per-server scopes that resolve " +
+                    "to the shared ATG audience ({AtgAppId}) from the agent blueprint. The Agent 365 Tools resource " +
+                    "itself remains with the required McpServersMetadata.Read.All scope. Any agent instances still using " +
+                    "the old SDK will immediately lose access to MCP tools. Ensure all agent instances have been upgraded " +
+                    "to the new SDK before proceeding.",
                     McpConstants.WorkIQToolsProdAppId);
 
                 var confirmed = await confirmationProvider.ConfirmAsync("Continue? [y/N]: ");
@@ -248,7 +260,7 @@ internal static class PermissionsSubcommand
         var command = new Command("bot",
             "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
-            "(non-admins receive copy-paste PowerShell to forward to an admin).\n\n" +
+            "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n" +
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
             "Next step: Run 'a365 publish' to package your agent for upload to the Microsoft 365 Admin Center");
 
@@ -296,7 +308,7 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("Dry run: Configure Bot API Permissions");
                 logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", dryRunConfig.AgentBlueprintId);
-                logger.LogInformation("  - Messaging Bot API: Authorization.ReadWrite, user_impersonation");
+                logger.LogInformation("  - Messaging Bot API: {Scope}", ConfigConstants.MessagingBotApiAdminConsentScope);
                 logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
                 logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 logger.LogInformation("No changes made. Run without --dry-run to execute.");
@@ -363,7 +375,7 @@ internal static class PermissionsSubcommand
         var command = new Command("custom",
             "Configure custom resource OAuth2 grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
-            "(non-admins receive copy-paste PowerShell to forward to an admin).\n\n" +
+            "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n" +
             "Prerequisites: Blueprint created (run 'a365 setup blueprint' first)\n");
 
         var agentNameOption = new Option<string?>(
@@ -679,13 +691,19 @@ internal static class PermissionsSubcommand
                     spec.ResourceAppId, string.Join(", ", spec.Scopes));
 
             var localResults = setupResults ?? new SetupResults();
+            // Every spec built above came from scopesByAudience.Keys — they are all MCP
+            // per-server audiences. Passing the same set as knownMcpAudienceAppIds ensures
+            // the orchestrator's catch-all spec loop routes them through the bare-GUID
+            // branch of GetResourceIdentifierUri (api://{appId} would trigger AADSTS500011
+            // because per-server SPs have identifierUris=null).
             var (_, _, consentGranted, adminConsentUrl) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                 graphApiService, blueprintService, setupConfig,
                 setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                 specs, logger, localResults, cancellationToken,
                 knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
                 confirmationProvider: confirmationProvider,
-                commandExecutor: executor);
+                commandExecutor: executor,
+                knownMcpAudienceAppIds: scopesByAudience.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
 
             // Ensure the Action Required block prints the blueprint and tenant context even when this
             // subcommand is run standalone (setup all populates these earlier; standalone runs don't).
@@ -1066,13 +1084,25 @@ internal static class PermissionsSubcommand
             var localResults = setupResults ?? new SetupResults();
             if (specList.Count > 0)
             {
+                // Operators can paste a ToolingManifest audience appId (e.g. "Windows 365 for
+                // Agents MCP", da81128c-...) into customPermissions. If we don't load the
+                // manifest here, those entries route through the api://{appId} branch in
+                // GetResourceIdentifierUri and trigger AADSTS500011 because per-server SPs
+                // have identifierUris=null. Loading the audience set lets the catch-all spec
+                // loop route them to the bare-GUID branch.
+                var customManifestPath = Path.Combine(setupConfig.DeploymentProjectPath ?? string.Empty, McpConstants.ToolingManifestFileName);
+                var customAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+                var customManifestAudiences = await ManifestHelper.GetScopesByAudienceAsync(
+                    customManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: customAtgAppId);
+
                 var (_, _, consentGranted, adminConsentUrl) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
                     graphApiService, blueprintService, setupConfig,
                     setupConfig.AgentBlueprintId!, setupConfig.TenantId,
                     specList, logger, localResults, cancellationToken,
                     knownBlueprintSpObjectId: setupConfig.AgentBlueprintServicePrincipalObjectId,
                     confirmationProvider: confirmationProvider,
-                    commandExecutor: executor);
+                    commandExecutor: executor,
+                    knownMcpAudienceAppIds: customManifestAudiences.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
 
                 customAdminConsentUrl = adminConsentUrl;
                 customConsentGranted = consentGranted;

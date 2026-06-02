@@ -359,14 +359,21 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Non-fatal: a failure here (e.g. caller lacks Global Administrator) logs a warning
                 // and continues so the agent-identity grants below still apply.
                 await AllSubcommand.ExecuteBatchPermissionsStepAsync(
-                    ctx, specs,
+                    ctx, specs, buildResult.scopesByAudience,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
                 // If admin consent wasn't granted (non-GA caller), persist per-resource consent URLs
                 // and a combined URL so a Global Administrator can complete the hand-off out-of-band.
                 // Messaging Bot is gated on isM365 to avoid AADSTS650053 in tenants without the Bot SP.
+                // V2 audience routing (issue #429): pass the full scopesByAudience map so per-server
+                // audiences land on the bare appId GUID resource identifier rather than collapsing
+                // onto the WorkIQ Tools URI. api:// is NOT used — per-server SPs have
+                // identifierUris null and the bare GUID is what's in servicePrincipalNames.
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
-                    ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes, isM365: ctx.IsM365);
+                    ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes,
+                    isM365: ctx.IsM365,
+                    mcpScopesByAudience: buildResult.scopesByAudience,
+                    mcpAudienceDisplayNames: buildResult.serverNamesByAudience);
 
                 // Save state before agent identity steps so progress (blueprint stamping outcomes,
                 // consent URLs) is not lost on failure in the steps below.
@@ -622,6 +629,8 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // Step 6.5: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
         // Skipped for --agent-registration-only (skipIdentityAndPermissions) — endpoint is already registered.
+        // Phase separator is emitted inside ExecuteMessagingEndpointStepAsync after the
+        // non-M365 early-return so non-M365 runs don't accumulate a stray blank line.
         if (!skipIdentityAndPermissions)
             await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
 
@@ -629,6 +638,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // to register the agent, not to regenerate appsettings files.
         if (!skipIdentityAndPermissions)
         {
+            ctx.Logger.LogInformation("");
             ctx.Logger.LogInformation("Updating project settings...");
             using (ctx.Logger.Indent())
             {
