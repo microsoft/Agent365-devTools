@@ -18,6 +18,7 @@ internal record RawPublishArgs(
     string? Alias,
     string? DisplayName,
     string? PublisherName,
+    bool Yes,
     bool DryRun);
 
 /// <summary>
@@ -32,6 +33,9 @@ internal record RawPublishArgs(
 /// </summary>
 internal class PublishCommandExecutor
 {
+    // protected (instead of private) on the seam methods + non-sealed class so tests can stub
+    // out the parts that hit external systems (Azure CLI for tenant detection). The class is
+    // still internal — overrides only happen in the test assembly via InternalsVisibleTo.
     private readonly ILogger _logger;
     private readonly IAgent365ToolingService _toolingService;
     private readonly GraphApiService? _graphApiService;
@@ -62,6 +66,10 @@ internal class PublishCommandExecutor
         // classify ahead of time without knowing the server's mapping, so it leaves the value
         // null when unspecified and lets the platform decide.
         public string? PublisherName { get; init; }
+
+        // When true, skip the interactive "Proceed with publish? (y/N)" confirmation. Set via
+        // --yes / -y. Required for non-interactive contexts (CI scripts, automation).
+        public required bool Yes { get; init; }
     }
 
     internal sealed record EntraAppSet(
@@ -94,14 +102,21 @@ internal class PublishCommandExecutor
             return true;
         }
 
-        Console.Write("Proceed with publish? (y/N): ");
-        var confirmation = Console.ReadLine()?.Trim().ToLowerInvariant();
-        if (confirmation != "y" && confirmation != "yes")
+        if (!input.Yes)
         {
-            Console.WriteLine("Publish cancelled.");
-            // User cancellation is not a failure — exit 0. Matches the register command's same
-            // prompt-cancel path.
-            return true;
+            Console.Write("Proceed with publish? (y/N): ");
+            var confirmation = Console.ReadLine()?.Trim().ToLowerInvariant();
+            if (confirmation != "y" && confirmation != "yes")
+            {
+                Console.WriteLine("Publish cancelled.");
+                // User cancellation is not a failure — exit 0. Matches the register command's same
+                // prompt-cancel path.
+                return true;
+            }
+        }
+        else
+        {
+            _logger.LogDebug("Skipping interactive confirmation (--yes was supplied).");
         }
 
         Console.WriteLine();
@@ -276,6 +291,7 @@ internal class PublishCommandExecutor
                 Alias = alias,
                 DisplayName = displayName,
                 PublisherName = string.IsNullOrWhiteSpace(publisherName) ? null : publisherName,
+                Yes = args.Yes,
                 DryRun = args.DryRun,
             };
         }
@@ -302,7 +318,7 @@ internal class PublishCommandExecutor
         Console.WriteLine();
     }
 
-    private async Task<string?> DetectTenantIdAsync()
+    protected virtual async Task<string?> DetectTenantIdAsync()
     {
         var tenantId = await TenantDetectionHelper.DetectTenantIdAsync(null, _logger);
 

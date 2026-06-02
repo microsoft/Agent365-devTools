@@ -95,13 +95,13 @@ public class DevelopMcpCommandRegressionTests
     }
 
     [Fact]
-    public async Task ServiceIntegration_PublishCommand_AcceptsAllNamedParameters()
+    public async Task PublishCommand_AcceptsAllNamedParameters_InDryRun()
     {
-        // Verifies the publish CLI parses every documented flag without error. The publish flow now
-        // orchestrates Entra app creation + redirect-URI back-fill via GraphApiService (mirroring
-        // register-external-mcp-server), so end-to-end "params flow to PublishServerAsync" can't be
-        // exercised here without mocking Graph too — that path is covered by the
-        // <see cref="DryRunMode_NeverCallsActualServices"/> regression test and by manual E2E testing.
+        // Verifies the publish CLI parses every documented flag without error. Dry-run
+        // short-circuits before any platform call, so this is a pure CLI parsing test —
+        // it does NOT verify that the parsed values flow into PublishServerAsync.
+        // That contract is covered by PublishCommand_ForwardsParsedParametersToToolingService
+        // (which mocks Graph + tenant detection so the non-dry-run path can be exercised).
 
         // Arrange
         var testEnvId = "test-environment-123";
@@ -121,8 +121,140 @@ public class DevelopMcpCommandRegressionTests
         });
 
         // Assert — successful parse + dispatch, no service calls.
-        result.Should().Be(0);
-        await _mockToolingService.DidNotReceive().PublishServerAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<PublishMcpServerRequest>());
+        result.Should().Be(
+            0,
+            because: "dry-run should never trigger a non-zero exit code when all flags parse cleanly.");
+        await _mockToolingService.DidNotReceive().PublishServerAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<PublishMcpServerRequest>());
+    }
+
+    /// <summary>
+    /// Strengthened contract test: verifies that every parsed publish flag flows into the actual
+    /// <see cref="IAgent365ToolingService.PublishServerAsync"/> call. Exercises the non-dry-run
+    /// path by (a) using <c>--yes</c> to bypass the interactive confirmation prompt, (b) mocking
+    /// <see cref="GraphApiService"/> so Entra app creation succeeds without a real tenant, and
+    /// (c) subclassing <see cref="PublishCommandExecutor"/> to stub out tenant auto-detection so
+    /// the executor doesn't shell out to Azure CLI in CI. Catches breakage of the CLI-to-service
+    /// contract (alias/display-name/publisher-name mapping, request shaping, and selecting the
+    /// correct service method) that the dry-run-only test above can't catch.
+    /// </summary>
+    [Fact]
+    public async Task PublishCommand_ForwardsParsedParametersToToolingService()
+    {
+        // Arrange
+        const string TestTenantId = "test-tenant-99999";
+        const string TestEnvironmentId = "test-env-forward";
+        const string TestServerName = "msdyn_TestServer";
+        const string TestAlias = "test-alias-forward";
+        const string TestDisplayName = "Test Display Forward";
+        const string TestPublisherName = "Contoso Forward";
+        const string TestPublicClientsObjectId = "public-clients-object-id";
+        const string TestPublicClientsClientId = "public-clients-client-id";
+
+        var logger = Substitute.For<ILogger>();
+        var toolingService = Substitute.For<IAgent365ToolingService>();
+        var graphApiService = Substitute.For<GraphApiService>();
+
+        // Mock Graph so CreateEntraAppsAsync → factory.CreatePublicClientsAppAsync succeeds.
+        graphApiService.CreateEntraAppAsync(
+                TestTenantId, Arg.Any<string>(), serviceTreeId: Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(string ObjectId, string ClientId)?>(
+                (TestPublicClientsObjectId, TestPublicClientsClientId)));
+        graphApiService.UpdateAppPublicClientRedirectUrisAsync(
+                TestTenantId, TestPublicClientsObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        // Mock Graph for ConfigureEntraAppsAsync → required-resource-access grant on Public Clients.
+        graphApiService.GetOAuth2PermissionScopeIdAsync(
+                TestTenantId, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<Guid?>(Guid.NewGuid()));
+        graphApiService.AddRequiredResourceAccessAsync(
+                TestTenantId, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        // Capture what gets forwarded to PublishServerAsync.
+        string? capturedEnvId = null;
+        string? capturedServerName = null;
+        PublishMcpServerRequest? capturedRequest = null;
+        toolingService.PublishServerAsync(
+                Arg.Do<string>(e => capturedEnvId = e),
+                Arg.Do<string>(s => capturedServerName = s),
+                Arg.Do<PublishMcpServerRequest>(r => capturedRequest = r),
+                Arg.Any<CancellationToken>())
+            .Returns(new PublishMcpServerResponse
+            {
+                Status = "Success",
+                McpServerAppId = Guid.NewGuid().ToString(),
+                McpServerScope = "Tools.ListInvoke.All",
+            });
+
+        var executor = new TestablePublishCommandExecutor(
+            logger, toolingService, graphApiService, TestTenantId);
+
+        var args = new RawPublishArgs(
+            EnvironmentId: TestEnvironmentId,
+            ServerName: TestServerName,
+            Alias: TestAlias,
+            DisplayName: TestDisplayName,
+            PublisherName: TestPublisherName,
+            Yes: true,
+            DryRun: false);
+
+        // Act
+        var result = await executor.ExecuteAsync(args);
+
+        // Assert
+        result.Should().BeTrue(
+            because: "the happy path with all dependencies mocked must return true so the publish " +
+                     "handler exits 0.");
+        capturedRequest.Should().NotBeNull(
+            because: "PublishServerAsync must be invoked once the prompt is skipped, the tenant " +
+                     "is detected, and the Public Clients app is created.");
+        capturedEnvId.Should().Be(
+            TestEnvironmentId,
+            because: "--environment-id must flow unchanged into PublishServerAsync's first positional arg.");
+        capturedServerName.Should().Be(
+            TestServerName,
+            because: "--server-name must flow unchanged into PublishServerAsync's second positional arg.");
+        capturedRequest!.Alias.Should().Be(
+            TestAlias,
+            because: "--alias must populate request.Alias; this is the platform's `name` for the published row.");
+        capturedRequest.DisplayName.Should().Be(
+            TestDisplayName,
+            because: "--display-name must populate request.DisplayName; the platform's v2 validator " +
+                     "requires it and surfaces it in MOS.");
+        capturedRequest.PublisherName.Should().Be(
+            TestPublisherName,
+            because: "--publisher-name must populate request.PublisherName so the MOS manifest's " +
+                     "developer field is set for custom servers (the platform rejects empty values " +
+                     "for non-1p servers).");
+        capturedRequest.PublicClientsAppId.Should().Be(
+            TestPublicClientsClientId,
+            because: "the just-created Public Clients Entra app's clientId must be carried to the " +
+                     "platform so it can be echoed back and the CLI can grant the PPMI scope on it " +
+                     "post-publish.");
+    }
+
+    /// <summary>
+    /// Test-only subclass of <see cref="PublishCommandExecutor"/> that stubs out
+    /// <see cref="PublishCommandExecutor.DetectTenantIdAsync"/> with a known value, so the
+    /// strengthened contract test doesn't need to shell out to <c>az account show</c> in CI.
+    /// </summary>
+    private sealed class TestablePublishCommandExecutor : PublishCommandExecutor
+    {
+        private readonly string? _tenantId;
+
+        public TestablePublishCommandExecutor(
+            ILogger logger,
+            IAgent365ToolingService toolingService,
+            GraphApiService? graphApiService,
+            string? tenantId)
+            : base(logger, toolingService, graphApiService)
+        {
+            _tenantId = tenantId;
+        }
+
+        protected override Task<string?> DetectTenantIdAsync() => Task.FromResult(_tenantId);
     }
 
     [Fact]

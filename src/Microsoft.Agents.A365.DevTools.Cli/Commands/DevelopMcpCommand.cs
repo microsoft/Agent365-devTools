@@ -311,6 +311,11 @@ public static class DevelopMcpCommand
             description: "Publisher name written into the MOS package manifest. Required for custom (user-created) MCP servers; ignored for 1p Microsoft-owned servers (e.g. msdyn_DataverseMCPServer) which always publish as 'Microsoft'.");
         command.AddOption(publisherNameOption);
 
+        var yesOption = new Option<bool>(
+            ["--yes", "-y"],
+            description: "Skip the interactive 'Proceed with publish? (y/N)' confirmation. Useful for non-interactive contexts (CI/CD pipelines, scripts). Matches az CLI convention.");
+        command.AddOption(yesOption);
+
         var dryRunOption = new Option<bool>("--dry-run", "Show what would be done without executing");
         command.AddOption(dryRunOption);
 
@@ -325,6 +330,7 @@ public static class DevelopMcpCommand
                 Alias: context.ParseResult.GetValueForOption(aliasOption),
                 DisplayName: context.ParseResult.GetValueForOption(displayNameOption),
                 PublisherName: context.ParseResult.GetValueForOption(publisherNameOption),
+                Yes: context.ParseResult.GetValueForOption(yesOption),
                 DryRun: context.ParseResult.GetValueForOption(dryRunOption));
 
             var executor = new PublishCommandExecutor(logger, toolingService, graphApiService);

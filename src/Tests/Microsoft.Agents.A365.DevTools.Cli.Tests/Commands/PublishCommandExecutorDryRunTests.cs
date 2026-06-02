@@ -37,6 +37,7 @@ public class PublishCommandExecutorDryRunTests
             Alias: alias,
             DisplayName: "Test Display",
             PublisherName: null,
+            Yes: false,
             DryRun: true);
 
         var executor = new PublishCommandExecutor(logger, toolingService, graphApiService: null);
@@ -89,6 +90,7 @@ public class PublishCommandExecutorDryRunTests
             Alias: alias,
             DisplayName: "Test Display",
             PublisherName: null,
+            Yes: false,
             DryRun: true);
 
         var executor = new PublishCommandExecutor(logger, toolingService, graphApiService: null);
@@ -139,6 +141,7 @@ public class PublishCommandExecutorDryRunTests
             Alias: "myAlias",
             DisplayName: "Test Display",
             PublisherName: "Contoso",
+            Yes: false,
             DryRun: true);
 
         var executor = new PublishCommandExecutor(logger, toolingService, graphApiService: null);
