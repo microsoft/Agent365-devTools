@@ -81,7 +81,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         if (engine == EvalEngine.None)
         {
             await WriteChecklistAsync(checklist, checklistPath, cancellationToken);
-            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: false, agentAttempted: false);
+            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: false, agentAttempted: false, requested: engine);
             return new ChecklistEvaluationResult { Checklist = checklist, Outcome = EvaluationOutcome.OptedOut };
         }
 
@@ -93,7 +93,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
         if (enginesToTry.Count == 0)
         {
-            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: true, agentAttempted: false);
+            LogManualEvaluationInstructions(checklistPath, totalUnevaluatedBefore, engineNotFound: true, agentAttempted: false, requested: engine);
             return new ChecklistEvaluationResult { Checklist = checklist, Outcome = EvaluationOutcome.CouldNotEvaluate };
         }
 
@@ -183,7 +183,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             // hit tool-permission limits, timed out, or returned without edits. Rather
             // than silently producing an inflated report, give the user the same BYOL
             // fallback they'd get if no agent was installed at all.
-            LogManualEvaluationInstructions(checklistPath, remainingUnevaluated, engineNotFound: false, agentAttempted: true);
+            LogManualEvaluationInstructions(checklistPath, remainingUnevaluated, engineNotFound: false, agentAttempted: true, requested: engine);
         }
 
         // Only treat evaluation as completed when nothing is left unscored.
@@ -617,7 +617,7 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         return count;
     }
 
-    private void LogManualEvaluationInstructions(string checklistPath, int unscoredCount, bool engineNotFound, bool agentAttempted)
+    private void LogManualEvaluationInstructions(string checklistPath, int unscoredCount, bool engineNotFound, bool agentAttempted, EvalEngine requested)
     {
         var fullPath = Path.GetFullPath(checklistPath);
         var promptPath = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".", "semantic_eval_prompt.txt");
@@ -635,7 +635,20 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
 
         if (engineNotFound)
         {
-            _logger.LogWarning("      No coding agent CLI detected (looked for `copilot` and `claude`)");
+            if (requested == EvalEngine.Auto)
+            {
+                // Built from the registry so a newly added engine appears here automatically.
+                var probed = string.Join(" and ", _launchers.Select(l => $"{l.DisplayName} (`{l.CliCommand}`)"));
+                _logger.LogWarning("      No coding agent CLI detected (looked for {Probed}). Run with -v to see why each probe failed.", probed);
+            }
+            else
+            {
+                // The user asked for one specific engine; name only that one, not both.
+                var launcher = LauncherFor(requested);
+                var name = launcher?.DisplayName ?? FormatEngineName(requested);
+                var binary = launcher?.CliCommand ?? requested.ToString();
+                _logger.LogWarning("      {Name} CLI not found on PATH (looked for `{Binary}`). Run with -v to see why the probe failed.", name, binary);
+            }
         }
         else if (agentAttempted)
         {

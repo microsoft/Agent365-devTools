@@ -71,7 +71,3 @@ Three output files are written to the directory you specify with `--output-dir`:
 Temporary files created during the run (the prompt file passed to the coding agent CLI) are deleted automatically when the run finishes or is cancelled. The auth token supplied via `--auth-token` is never written to disk.
 
 If you want to remove all evaluation output, delete the three files above from your output directory. No other local state is created by this command.
-
----
-
-For the full technical record — threat model, STRIDE analysis, and XPIA mitigation details — see [`docs/rai/`](../../../../docs/rai/README.md).

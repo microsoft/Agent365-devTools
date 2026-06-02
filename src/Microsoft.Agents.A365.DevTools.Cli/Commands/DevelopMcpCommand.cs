@@ -47,7 +47,7 @@ public static class DevelopMcpCommand
 
         if (evaluationPipelineService is not null)
         {
-            developMcpCommand.AddCommand(CreateEvaluateSubcommand(evaluationPipelineService));
+            developMcpCommand.AddCommand(CreateEvaluateSubcommand(logger, evaluationPipelineService));
         }
 
         return developMcpCommand;
@@ -56,14 +56,15 @@ public static class DevelopMcpCommand
     /// <summary>
     /// Creates the evaluate subcommand for MCP server tool schema quality evaluation.
     /// </summary>
-    private static Command CreateEvaluateSubcommand(IEvaluationPipelineService pipelineService)
+    private static Command CreateEvaluateSubcommand(ILogger logger, IEvaluationPipelineService pipelineService)
     {
         var command = new Command(
             "evaluate",
             "Evaluate MCP server tool schema quality and generate an HTML report. " +
             "Uses a locally installed coding agent (GitHub Copilot or Claude Code) to score semantic checks. " +
             "If no agent is detected, the command stops after writing the checklist so you can score it manually with your own LLM, " +
-            "or pass --eval-engine none to skip agent probing entirely.");
+            "or pass --eval-engine none to skip agent probing entirely. " +
+            "Only run this against MCP servers you trust: the server's tool names and descriptions are sent to a locally running coding agent.");
 
         // Use a required option (not a positional argument) for consistency with other
         // develop-mcp subcommands and Azure CLI conventions.
@@ -89,7 +90,7 @@ public static class DevelopMcpCommand
 
         var authTokenOption = new Option<string?>(
             "--auth-token",
-            "Bearer token for MCP server authentication");
+            "Bearer token for MCP server authentication. Prefer the A365_MCP_AUTH_TOKEN environment variable; a token passed on the command line is visible to process listings (ps / Task Manager) and shell history.");
 
         command.AddOption(serverUrlOption);
         command.AddOption(outputDirOption);
@@ -103,6 +104,19 @@ public static class DevelopMcpCommand
             var evalEngine = context.ParseResult.GetValueForOption(evalEngineOption)!;
             var authToken = context.ParseResult.GetValueForOption(authTokenOption);
             var ct = context.GetCancellationToken();
+
+            // Secret handling: a token on the command line is visible to other processes
+            // (ps / Task Manager) and lands in shell history. A non-empty value here can
+            // only have come from --auth-token, so warn and steer to the env var; when the
+            // flag is absent, fall back to A365_MCP_AUTH_TOKEN.
+            if (!string.IsNullOrWhiteSpace(authToken))
+            {
+                logger.LogWarning("Passing a token via --auth-token exposes it to process listings (ps / Task Manager) and shell history. Prefer the A365_MCP_AUTH_TOKEN environment variable.");
+            }
+            else
+            {
+                authToken = Environment.GetEnvironmentVariable("A365_MCP_AUTH_TOKEN");
+            }
 
             context.ExitCode = await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct);
         });

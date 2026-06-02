@@ -16,7 +16,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 /// Implements the MCP protocol handshake (initialize, notifications/initialized, tools/list)
 /// over JSON-RPC 2.0 POST requests.
 /// </summary>
-internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService
+internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposable
 {
     private const string McpProtocolVersion = "2025-03-26";
     private const string ClientName = "a365-evaluate";
@@ -32,6 +32,14 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService
         _logger = logger;
         _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
     }
+
+    /// <summary>
+    /// Disposes the owned <see cref="HttpClient"/>. The service is registered as a
+    /// singleton (Program.cs), so in practice this runs at process shutdown;
+    /// implementing it keeps the IDisposable contract correct if the registration
+    /// lifetime ever changes to transient or scoped.
+    /// </summary>
+    public void Dispose() => _httpClient.Dispose();
 
     /// <inheritdoc />
     public async Task<List<ToolSchema>> DiscoverToolsAsync(string serverUrl, string? authToken = null, CancellationToken cancellationToken = default)

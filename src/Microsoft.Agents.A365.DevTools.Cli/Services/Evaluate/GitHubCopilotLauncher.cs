@@ -13,10 +13,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 /// </summary>
 internal sealed class GitHubCopilotLauncher : CodingAgentLauncherBase
 {
-    // Copilot requires an exact model ID (no aliases like "haiku").
-    // Update this when a newer Haiku version becomes available.
-    private const string CopilotModel = "claude-haiku-4.5";
-
     public GitHubCopilotLauncher(CommandExecutor executor, ILogger<GitHubCopilotLauncher> logger)
         : base(executor, logger)
     {
@@ -28,7 +24,7 @@ internal sealed class GitHubCopilotLauncher : CodingAgentLauncherBase
 
     public override SemanticCheckPrompts.AgentToolset Toolset => new(ReadToolName: "view", EditToolName: "edit");
 
-    protected override string ProbeCommand => "copilot";
+    public override string CliCommand => "copilot";
 
     public override async Task<bool> LaunchAsync(
         string prompt,
@@ -57,7 +53,7 @@ internal sealed class GitHubCopilotLauncher : CodingAgentLauncherBase
             // sandbox — so view/create/edit stay confined.
             var (fileName, fileArguments) = WrapForPlatform(
                 "copilot",
-                $"-p \"{metaPrompt}\" --model {CopilotModel} --allow-all-tools " +
+                $"-p \"{metaPrompt}\" --model {EvalModelConstants.CopilotModel} --allow-all-tools " +
                 // Restrict visible tools to just read + edit. `create` is specifically
                 // excluded because Copilot's create cannot overwrite existing files and
                 // exposing it leads the model down workaround loops (sibling files,

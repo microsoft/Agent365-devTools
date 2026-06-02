@@ -63,12 +63,12 @@ internal abstract class CodingAgentLauncherBase : ICodingAgentLauncher
     /// <inheritdoc />
     public abstract SemanticCheckPrompts.AgentToolset Toolset { get; }
 
-    /// <summary>The CLI binary probed with <c>--version</c> to detect availability.</summary>
-    protected abstract string ProbeCommand { get; }
+    /// <inheritdoc />
+    public abstract string CliCommand { get; }
 
     /// <inheritdoc />
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
-        => ProbeCommandAsync(ProbeCommand, "--version", cancellationToken);
+        => ProbeCommandAsync(CliCommand, "--version", cancellationToken);
 
     /// <inheritdoc />
     public abstract Task<bool> LaunchAsync(string prompt, string workingDirectory, TimeSpan timeout, CancellationToken cancellationToken = default);
@@ -184,6 +184,15 @@ internal abstract class CodingAgentLauncherBase : ICodingAgentLauncher
                 captureOutput: true,
                 suppressErrorLogging: true,
                 cancellationToken: cancellationToken);
+
+            if (!result.Success)
+            {
+                // The probe ran but reported failure (non-zero exit) rather than being
+                // absent. Surface why at Debug so `-v` distinguishes "not installed" from
+                // "installed but broken" (auth failure, changed --version flag, etc.).
+                Logger.LogDebug("{Command} probe exited {ExitCode}; treating as unavailable. {StdErr}",
+                    command, result.ExitCode, result.StandardError?.Trim());
+            }
 
             return result.Success;
         }

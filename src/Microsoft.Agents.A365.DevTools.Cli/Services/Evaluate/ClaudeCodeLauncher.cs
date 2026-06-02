@@ -29,7 +29,7 @@ internal sealed class ClaudeCodeLauncher : CodingAgentLauncherBase
 
     public override SemanticCheckPrompts.AgentToolset Toolset => new(ReadToolName: "Read", EditToolName: "Edit");
 
-    protected override string ProbeCommand => "claude";
+    public override string CliCommand => "claude";
 
     public override async Task<bool> LaunchAsync(
         string prompt,
@@ -63,7 +63,7 @@ internal sealed class ClaudeCodeLauncher : CodingAgentLauncherBase
             await File.WriteAllTextAsync(promptFile, prompt, cancellationToken);
 
             var metaPrompt = $"Read and follow the instructions in the file at: {promptFile}";
-            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model haiku --allowedTools Read,Edit");
+            var (fileName, fileArguments) = WrapForPlatform("claude", $"-p \"{metaPrompt}\" --model {EvalModelConstants.ClaudeModel} --allowedTools Read,Edit");
 
             var startInfo = new ProcessStartInfo
             {
@@ -98,7 +98,7 @@ internal sealed class ClaudeCodeLauncher : CodingAgentLauncherBase
         var startInfo = new ProcessStartInfo
         {
             FileName = "claude",
-            Arguments = "-p - --model haiku --allowedTools Read,Edit",
+            Arguments = $"-p - --model {EvalModelConstants.ClaudeModel} --allowedTools Read,Edit",
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,

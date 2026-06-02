@@ -89,4 +89,19 @@ public class EvaluationPipelineServiceExitCodeTests
 
         exitCode.Should().Be(0, because: "--eval-engine none is a deliberate bring-your-own-LLM stop, not a failure");
     }
+
+    [Fact]
+    public async Task RunAsync_WhenOutputDirIsWhitespace_ReturnsExitCode1()
+    {
+        var sut = BuildSut(Substitute.For<IChecklistEvaluator>());
+
+        var exitCode = await sut.RunAsync(
+            serverUrl: "http://localhost:9999/mcp",
+            outputDir: "   ",
+            evalEngine: "auto",
+            authToken: null,
+            cancellationToken: CancellationToken.None);
+
+        exitCode.Should().Be(1, because: "an empty or whitespace --output-dir must fail fast with a targeted error, not a deep exception late in the run");
+    }
 }

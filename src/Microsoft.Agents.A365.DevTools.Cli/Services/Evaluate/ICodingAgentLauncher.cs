@@ -29,6 +29,9 @@ internal interface ICodingAgentLauncher
     /// </summary>
     SemanticCheckPrompts.AgentToolset Toolset { get; }
 
+    /// <summary>The CLI binary name on PATH (e.g. "copilot", "claude").</summary>
+    string CliCommand { get; }
+
     /// <summary>
     /// Returns true when the agent's CLI is installed and responds on PATH.
     /// </summary>

@@ -53,11 +53,31 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
     {
         try
         {
-            // Fire-and-forget telemetry marker so non-CLI surfaces that drive evaluations
-            // also get attributed. Identity is extracted server-side from the bearer token.
-            // CLI does not pass the evaluated server URL — that is customer content.
-            // Failures are swallowed inside the service.
-            await _toolingService.LogEvaluateUsageAsync(cancellationToken);
+            // Validate the output directory up front so an explicit empty value fails fast
+            // with a targeted error instead of a deep exception from Directory.CreateDirectory
+            // late in the run.
+            if (string.IsNullOrWhiteSpace(outputDir))
+            {
+                _logger.LogError("--output-dir cannot be empty or whitespace.");
+                return 1;
+            }
+
+            // Best-effort usage telemetry, time-bounded so a slow or hung endpoint cannot
+            // stall the user's run before discovery starts. Identity is extracted server-side
+            // from the bearer token; the CLI does not pass the evaluated server URL (customer
+            // content). Failures (swallowed inside the service) and the timeout are ignored.
+            using (var telemetryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                telemetryCts.CancelAfter(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await _toolingService.LogEvaluateUsageAsync(telemetryCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Telemetry timed out — non-fatal; continue with the evaluation.
+                }
+            }
 
             var engine = ParseEvalEngine(evalEngine);
 
