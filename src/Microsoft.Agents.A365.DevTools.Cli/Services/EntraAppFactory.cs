@@ -71,21 +71,64 @@ internal class EntraAppFactory
         }
         _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", appName, app.Value.ClientId);
 
-        var secret = await _graphApiService.AddAppPasswordAsync(tenantId, app.Value.ObjectId);
+        var secret = await _graphApiService.AddAppPasswordAsync(tenantId, app.Value.ObjectId, ct: ct);
         if (string.IsNullOrWhiteSpace(secret))
         {
             _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", appName);
+            await TryDeleteOrphanedAppAsync(tenantId, app.Value.ObjectId, appName, "secret-creation failed", ct);
             return null;
         }
 
         if (string.IsNullOrWhiteSpace(app.Value.ClientId))
         {
             _logger.LogError("{Role} Entra application was created but returned an empty client ID", roleDisplay);
+            await TryDeleteOrphanedAppAsync(tenantId, app.Value.ObjectId, appName, "empty client ID returned", ct);
             return null;
         }
 
         _logger.LogDebug("Created {Role} app: {ClientId}", roleDisplay, app.Value.ClientId);
         return new ProxyAppResult(app.Value.ClientId, secret, app.Value.ObjectId, appName);
+    }
+
+    /// <summary>
+    /// Best-effort compensating delete for an Entra app that was successfully created but failed
+    /// a follow-up step (secret creation, post-create validation). Without this, partial failures
+    /// in <see cref="CreateProxyAppAsync"/> leak orphan app registrations into the user's tenant
+    /// on a likely failure mode (Graph throttling, permission gaps). Delete failures are surfaced
+    /// as warnings — the caller has already returned null with a clear error, so we don't want a
+    /// secondary cleanup error to drown the root cause; the user can clean up manually using the
+    /// objectId we log.
+    /// </summary>
+    private async Task TryDeleteOrphanedAppAsync(string tenantId, string objectId, string appName, string reason, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(objectId))
+        {
+            return;
+        }
+
+        try
+        {
+            var deleted = await _graphApiService.DeleteEntraAppAsync(tenantId, objectId, ct);
+            if (deleted)
+            {
+                _logger.LogInformation(
+                    "Rolled back orphan Entra app '{AppName}' (objectId {ObjectId}) after {Reason}.",
+                    appName, objectId, reason);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Could not roll back Entra app '{AppName}' (objectId {ObjectId}) after {Reason}. Delete it manually in the Azure portal.",
+                    appName, objectId, reason);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Exception rolling back Entra app '{AppName}' (objectId {ObjectId}) after {Reason}. Delete it manually in the Azure portal.",
+                appName, objectId, reason);
+        }
     }
 
     /// <summary>
@@ -124,7 +167,8 @@ internal class EntraAppFactory
         {
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, objectId, publicClientUris, retryCt),
-                result => !result);
+                result => !result,
+                cancellationToken: ct);
             if (!success)
             {
                 var msg = $"Failed to set redirect URIs on Public Clients app '{appName}' after retries.";

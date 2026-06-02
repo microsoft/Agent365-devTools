@@ -115,10 +115,13 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
         var subcommand = command.Subcommands.First(sc => sc.Name == "publish");
 
-        // Assert — description copy was extended in the BYO-parity work to call out the Entra app +
-        // back-fill orchestration the executor now performs, so match on the Azure-CLI-style verb prefix
-        // rather than the full string.
-        subcommand.Description.Should().StartWith("Publish an MCP server to a Dataverse environment");
+        // Assert — exact match. The description is intentionally terse (no internal-implementation
+        // details exposed to end users); a regression that re-adds back-fill / orchestration prose
+        // should fail this test until the user-facing copy is reviewed.
+        subcommand.Description.Should().Be(
+            "Publish an MCP server to a Dataverse environment.",
+            because: "publish description is user-facing and must stay terse; do not leak internal " +
+                     "orchestration details (Entra apps, back-fill, etc.) into the help output.");
 
         var options = subcommand.Options.ToList();
 
@@ -130,8 +133,14 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("server-name");
         optionNames.Should().Contain("alias");
         optionNames.Should().Contain("display-name");
-        optionNames.Should().NotContain("tenant-id");
-        optionNames.Should().NotContain("service-tree-id");
+        optionNames.Should().NotContain(
+            "tenant-id",
+            because: "tenant id is auto-detected from the current 'az login' session; exposing " +
+                     "--tenant-id would imply per-publish tenant targeting that the executor does not support.");
+        optionNames.Should().NotContain(
+            "service-tree-id",
+            because: "publish targets a customer's Dataverse env, not a Microsoft corp tenant — " +
+                     "the ServiceTree tagging that --service-tree-id provides is not applicable here.");
         optionNames.Should().Contain("dry-run");
 
         // Verify critical aliases for Azure CLI compliance

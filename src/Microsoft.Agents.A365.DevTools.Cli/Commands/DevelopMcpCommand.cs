@@ -328,7 +328,11 @@ public static class DevelopMcpCommand
                 DryRun: context.ParseResult.GetValueForOption(dryRunOption));
 
             var executor = new PublishCommandExecutor(logger, toolingService, graphApiService);
-            await executor.ExecuteAsync(args, context.GetCancellationToken());
+            var success = await executor.ExecuteAsync(args, context.GetCancellationToken());
+            if (!success)
+            {
+                context.ExitCode = 1;
+            }
         });
 
         return command;

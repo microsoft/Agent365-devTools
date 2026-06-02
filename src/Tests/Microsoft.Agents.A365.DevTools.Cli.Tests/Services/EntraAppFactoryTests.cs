@@ -159,13 +159,20 @@ public class EntraAppFactoryTests
 
         capturedUris.Should().ContainSingle();
         var uris = capturedUris[0];
-        uris.Should().BeEquivalentTo(new[]
-        {
-            $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{AppClientId}",
-            "http://localhost:8080/callback",
-            "https://vscode.dev/redirect",
-            "http://localhost",
-        }, opt => opt.WithStrictOrdering());
+        uris.Should().BeEquivalentTo(
+            new[]
+            {
+                $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{AppClientId}",
+                "http://localhost:8080/callback",
+                "https://vscode.dev/redirect",
+                "http://localhost",
+            },
+            opt => opt.WithStrictOrdering(),
+            because: "Public Clients redirect URIs are part of the OAuth contract with VS Code / " +
+                     "Copilot CLI and the Windows broker. The broker URI is required for WAM/SSO " +
+                     "on Windows, the localhost callbacks support MSAL.NET and Copilot CLI flows, " +
+                     "and vscode.dev/redirect supports the VS Code web client. Silently " +
+                     "adding/removing/reordering entries breaks one of those flows.");
     }
 
     [Fact]

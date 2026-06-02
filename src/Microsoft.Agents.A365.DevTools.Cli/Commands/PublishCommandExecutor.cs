@@ -73,10 +73,10 @@ internal class PublishCommandExecutor
         string? PublicClientsObjectId,
         string PublicClientsAppName);
 
-    internal async Task ExecuteAsync(RawPublishArgs args, CancellationToken ct = default)
+    internal async Task<bool> ExecuteAsync(RawPublishArgs args, CancellationToken ct = default)
     {
         var input = ResolveInputs(args);
-        if (input is null) return;
+        if (input is null) return false;
 
         DisplayPublishSummary(input);
 
@@ -91,7 +91,7 @@ internal class PublishCommandExecutor
             */
             _logger.LogInformation("[DRY RUN] Would create Entra app '{PublicClients}' in tenant", $"{input.ServerName}-PublicClients");
             _logger.LogInformation("[DRY RUN] Would call publish endpoint and back-fill PPMI scope on the created app");
-            return;
+            return true;
         }
 
         Console.Write("Proceed with publish? (y/N): ");
@@ -99,7 +99,9 @@ internal class PublishCommandExecutor
         if (confirmation != "y" && confirmation != "yes")
         {
             Console.WriteLine("Publish cancelled.");
-            return;
+            // User cancellation is not a failure — exit 0. Matches the register command's same
+            // prompt-cancel path.
+            return true;
         }
 
         Console.WriteLine();
@@ -107,17 +109,17 @@ internal class PublishCommandExecutor
         Console.WriteLine($"Publishing MCP server '{input.ServerName}' as '{input.Alias}' to environment {input.EnvironmentId}...");
 
         var tenantId = await DetectTenantIdAsync();
-        if (tenantId is null) return;
+        if (tenantId is null) return false;
 
         if (_graphApiService is null)
         {
             _logger.LogError("Graph API service is not available. Cannot create Entra applications.");
-            return;
+            return false;
         }
 
         var warnings = new List<string>();
-        var apps = await CreateEntraAppsAsync(input, tenantId, warnings);
-        if (apps is null) return;
+        var apps = await CreateEntraAppsAsync(input, tenantId, warnings, ct);
+        if (apps is null) return false;
 
         ct.ThrowIfCancellationRequested();
 
@@ -131,7 +133,7 @@ internal class PublishCommandExecutor
         {
             _logger.LogError("A365 Proxy Entra app returned an invalid client ID '{ClientId}'. Expected a GUID. Cannot continue publish.", apps.A365AppClientId);
             await RollbackEntraAppsAsync(apps, tenantId, ct);
-            return;
+            return false;
         }
         */
 
@@ -160,7 +162,7 @@ internal class PublishCommandExecutor
             _logger.LogError("Failed to publish MCP server '{ServerName}': {Error}", input.ServerName, ex.Message);
             _logger.LogDebug("Exception details: {Exception}", ex.ToString());
             await RollbackEntraAppsAsync(apps, tenantId, ct);
-            return;
+            return false;
         }
 
         if (publishResponse is null || !publishResponse.IsSuccess)
@@ -168,7 +170,7 @@ internal class PublishCommandExecutor
             var errorMsg = publishResponse?.Message ?? "No response received";
             _logger.LogError("Failed to publish MCP server {ServerName}: {Error}", input.ServerName, errorMsg);
             await RollbackEntraAppsAsync(apps, tenantId, ct);
-            return;
+            return false;
         }
 
         _logger.LogDebug("Successfully published MCP server {ServerName}", input.ServerName);
@@ -176,16 +178,25 @@ internal class PublishCommandExecutor
         await ConfigureEntraAppsAsync(input, apps, publishResponse, tenantId, warnings, ct);
 
         DisplayResults(input, warnings);
+        return true;
     }
 
     private ResolvedInput? ResolveInputs(RawPublishArgs args)
     {
+        // Dry-run skips interactive prompts so the command stays scriptable / CI-friendly.
+        // Missing required values get a clearly-labeled placeholder for summary purposes; the
+        // executor short-circuits before any platform call, so the placeholders never leave
+        // this process. User-supplied values still go through normal validation.
+        const string DryRunPlaceholder = "(unspecified)";
+
         try
         {
             var environmentId = args.EnvironmentId;
             if (string.IsNullOrWhiteSpace(environmentId))
             {
-                environmentId = DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter Dataverse environment ID: ", "Environment ID");
+                environmentId = args.DryRun
+                    ? DryRunPlaceholder
+                    : DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter Dataverse environment ID: ", "Environment ID");
                 if (string.IsNullOrWhiteSpace(environmentId)) { _logger.LogError("Environment ID is required"); return null; }
             }
             else
@@ -197,7 +208,9 @@ internal class PublishCommandExecutor
             var serverName = args.ServerName;
             if (string.IsNullOrWhiteSpace(serverName))
             {
-                serverName = DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to publish: ", "Server name", 100);
+                serverName = args.DryRun
+                    ? DryRunPlaceholder
+                    : DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to publish: ", "Server name", 100);
                 if (string.IsNullOrWhiteSpace(serverName)) { _logger.LogError("Server name is required"); return null; }
             }
             else
@@ -209,7 +222,9 @@ internal class PublishCommandExecutor
             var alias = args.Alias;
             if (string.IsNullOrWhiteSpace(alias))
             {
-                alias = DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter alias for the MCP server: ", "Alias", 50);
+                alias = args.DryRun
+                    ? DryRunPlaceholder
+                    : DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter alias for the MCP server: ", "Alias", 50);
                 if (string.IsNullOrWhiteSpace(alias)) { _logger.LogError("Alias is required"); return null; }
             }
             else
@@ -221,7 +236,9 @@ internal class PublishCommandExecutor
             var displayName = args.DisplayName;
             if (string.IsNullOrWhiteSpace(displayName))
             {
-                displayName = DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter display name for the MCP server: ", "Display name", 30);
+                displayName = args.DryRun
+                    ? DryRunPlaceholder
+                    : DevelopMcpCommand.InputValidator.PromptAndValidateRequiredInput("Enter display name for the MCP server: ", "Display name", 30);
                 if (string.IsNullOrWhiteSpace(displayName)) { _logger.LogError("Display name is required"); return null; }
             }
             else
@@ -235,14 +252,16 @@ internal class PublishCommandExecutor
             // 1p app-based servers. Prompt the user when not supplied, but allow empty input —
             // a Microsoft developer publishing msdyn_DataverseMCPServer shouldn't have to type
             // anything. If they're publishing a custom server with no value, the platform's
-            // error message tells them what's missing.
+            // error message tells them what's missing. Dry-run also skips the prompt.
             var publisherName = args.PublisherName;
             if (string.IsNullOrWhiteSpace(publisherName))
             {
-                publisherName = DevelopMcpCommand.InputValidator.PromptAndValidateOptionalInput(
-                    "Enter publisher name (optional for 1p Microsoft-owned servers, required otherwise): ",
-                    "Publisher name",
-                    maxLength: 100);
+                publisherName = args.DryRun
+                    ? null
+                    : DevelopMcpCommand.InputValidator.PromptAndValidateOptionalInput(
+                        "Enter publisher name (optional for 1p Microsoft-owned servers, required otherwise): ",
+                        "Publisher name",
+                        maxLength: 100);
             }
             else
             {
@@ -296,7 +315,7 @@ internal class PublishCommandExecutor
         return tenantId;
     }
 
-    private async Task<EntraAppSet?> CreateEntraAppsAsync(ResolvedInput input, string tenantId, List<string> warnings)
+    private async Task<EntraAppSet?> CreateEntraAppsAsync(ResolvedInput input, string tenantId, List<string> warnings, CancellationToken ct = default)
     {
         var factory = new EntraAppFactory(_logger, _graphApiService!, _retryHelper);
 
@@ -306,12 +325,12 @@ internal class PublishCommandExecutor
         // platform flow. A365App* fields on the returned EntraAppSet are placeholder empties.
         /*
         var a365 = await factory.CreateProxyAppAsync(
-            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
+            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null, ct);
         if (a365 == null) return null;
         */
 
         var publicClients = await factory.CreatePublicClientsAppAsync(
-            input.ServerName, tenantId, serviceTreeId: null, warnings);
+            input.ServerName, tenantId, serviceTreeId: null, warnings, ct);
 
         return new EntraAppSet(
             A365AppClientId: string.Empty,
