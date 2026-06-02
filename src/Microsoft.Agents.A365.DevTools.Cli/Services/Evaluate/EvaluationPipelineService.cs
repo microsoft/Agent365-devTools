@@ -81,6 +81,14 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
 
             var engine = ParseEvalEngine(evalEngine);
 
+            // Trust boundary: when an agent will run, the server's tool names and
+            // descriptions are handed to a locally running coding agent. Surface this
+            // once per run. (--eval-engine none keeps everything local, so it doesn't apply.)
+            if (engine != EvalEngine.None)
+            {
+                _logger.LogWarning("The server's tool names and descriptions are sent to a locally running coding agent for scoring. Only evaluate MCP servers you trust.");
+            }
+
             // Brief intro so first-time users know what backing service this needs.
             if (engine == EvalEngine.Auto)
             {
