@@ -148,12 +148,12 @@ internal class PublishCommandExecutor
         PublishMcpServerResponse? publishResponse;
         try
         {
-            // Hits the v2 publish endpoint, which performs the full elevation orchestration
-            // (PPMI, MOS upload). A365 Proxy CMS connector creation is TEMPORARILY DISABLED
-            // on the platform side (see PublishMCPServerV2Async Step 3 comment block) while the
-            // custom connector flow is being re-evaluated. v1's PublishServerAsync is preserved on
-            // the platform for any callers relying on the original behavior.
-            publishResponse = await _toolingService.PublishServerV2Async(input.EnvironmentId, input.ServerName, request, ct);
+            // Hits the platform's v2 publish endpoint via the tooling service, which performs the
+            // full elevation orchestration (PPMI provisioning, MOS upload). A365 Proxy CMS
+            // connector creation is TEMPORARILY DISABLED on the platform side (see
+            // PublishMCPServerV2Async Step 3 comment block) while the custom connector flow is
+            // being re-evaluated. The platform's v1 endpoint remains for older CLI binaries.
+            publishResponse = await _toolingService.PublishServerAsync(input.EnvironmentId, input.ServerName, request, ct);
         }
         catch (Exception ex)
         {

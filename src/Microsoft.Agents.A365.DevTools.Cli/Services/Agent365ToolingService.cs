@@ -251,27 +251,15 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <summary>
-    /// Builds URL for publishing an MCP server to a Dataverse environment (v1)
+    /// Builds URL for publishing an MCP server to a Dataverse environment. Hits the platform's v2
+    /// publish endpoint, which performs the full elevation orchestration (PPMI provisioning and MOS
+    /// upload).
     /// </summary>
     /// <param name="environment">Environment name</param>
     /// <param name="environmentId">Dataverse environment ID</param>
     /// <param name="serverName">MCP server name</param>
     /// <returns>Full URL for publish MCP server endpoint</returns>
     private string BuildPublishMcpServerUrl(string environment, string environmentId, string serverName)
-    {
-        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
-        return $"{baseUrl}/agents/dataverse/environments/{environmentId}/mcpServers/{serverName}/publish";
-    }
-
-    /// <summary>
-    /// Builds URL for the v2 publish endpoint, which performs the full elevation orchestration
-    /// (lazy PPMI, MOS upload, A365 Proxy CMS connector creation).
-    /// </summary>
-    /// <param name="environment">Environment name</param>
-    /// <param name="environmentId">Dataverse environment ID</param>
-    /// <param name="serverName">MCP server name</param>
-    /// <returns>Full URL for v2 publish MCP server endpoint</returns>
-    private string BuildPublishMcpServerV2Url(string environment, string environmentId, string serverName)
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
         return $"{baseUrl}/agents/dataverse/environments/{environmentId}/mcpServers/{serverName}/publish/v2";
@@ -591,80 +579,6 @@ public class Agent365ToolingService : IAgent365ToolingService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to publish MCP server {ServerName} to environment {EnvId}", serverName, environmentId);
-            return null;
-        }
-    }
-
-    /// <inheritdoc />
-    public async Task<PublishMcpServerResponse?> PublishServerV2Async(
-        string environmentId,
-        string serverName,
-        PublishMcpServerRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(environmentId))
-            throw new ArgumentException("Environment ID cannot be null or empty", nameof(environmentId));
-        if (string.IsNullOrWhiteSpace(serverName))
-            throw new ArgumentException("Server name cannot be null or empty", nameof(serverName));
-        if (request == null)
-            throw new ArgumentNullException(nameof(request));
-
-        try
-        {
-            var endpointUrl = BuildPublishMcpServerV2Url(_environment, environmentId, serverName);
-            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
-
-            _logger.LogDebug("Publishing (v2) MCP server {ServerName} to environment {EnvId} (CorrelationId: {CorrelationId})", serverName, environmentId, correlationId);
-            _logger.LogDebug("Environment: {Env}", _environment);
-            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
-
-            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
-
-            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
-            if (string.IsNullOrWhiteSpace(authToken))
-            {
-                _logger.LogError("Failed to acquire authentication token");
-                return null;
-            }
-
-            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
-
-            var requestPayload = JsonSerializer.Serialize(request);
-            var jsonContent = new StringContent(requestPayload, System.Text.Encoding.UTF8, "application/json");
-
-            LogRequest("POST", endpointUrl, requestPayload);
-
-            using var response = await httpClient.PostAsync(endpointUrl, jsonContent, cancellationToken);
-
-            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "publish (v2) MCP server", cancellationToken);
-            if (!isSuccess)
-            {
-                return null;
-            }
-
-            if (string.IsNullOrWhiteSpace(responseContent))
-            {
-                return new PublishMcpServerResponse
-                {
-                    Status = "Success",
-                    Message = $"Successfully published {serverName}",
-                };
-            }
-
-            var publishResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<PublishMcpServerResponse>(
-                responseContent, _logger);
-
-            return publishResponse ?? new PublishMcpServerResponse
-            {
-                Status = "Success",
-                Message = $"Successfully published {serverName}",
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to publish (v2) MCP server {ServerName} to environment {EnvId}", serverName, environmentId);
             return null;
         }
     }

@@ -62,7 +62,7 @@ public class PublishCommandExecutorDryRunTests
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
 
-        await toolingService.DidNotReceiveWithAnyArgs().PublishServerV2Async(default!, default!, default!, default);
+        await toolingService.DidNotReceiveWithAnyArgs().PublishServerAsync(default!, default!, default!, default);
     }
 
     /// <summary>
@@ -116,7 +116,7 @@ public class PublishCommandExecutorDryRunTests
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
 
-        await toolingService.DidNotReceiveWithAnyArgs().PublishServerV2Async(default!, default!, default!, default);
+        await toolingService.DidNotReceiveWithAnyArgs().PublishServerAsync(default!, default!, default!, default);
     }
 
     /// <summary>
@@ -146,6 +146,6 @@ public class PublishCommandExecutorDryRunTests
         await executor.ExecuteAsync(args, CancellationToken.None);
 
         // Dry-run short-circuits before the platform publish call regardless of publisher.
-        await toolingService.DidNotReceiveWithAnyArgs().PublishServerV2Async(default!, default!, default!, default);
+        await toolingService.DidNotReceiveWithAnyArgs().PublishServerAsync(default!, default!, default!, default);
     }
 }

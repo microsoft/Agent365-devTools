@@ -33,31 +33,15 @@ public interface IAgent365ToolingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Publishes an MCP server to a Dataverse environment
+    /// Publishes an MCP server to a Dataverse environment via the platform's v2 publish endpoint,
+    /// which performs the full elevation orchestration (PPMI provisioning and MOS upload).
     /// </summary>
     /// <param name="environmentId">Dataverse environment ID</param>
     /// <param name="serverName">MCP server name to publish</param>
-    /// <param name="request">Publish request with alias, display name, and description</param>
+    /// <param name="request">Publish request with alias, display name, optional Entra app credentials, and optional publisher name</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Response from the publish operation</returns>
+    /// <returns>Response from the publish operation, including the underlying server's PPMI app id and redirect URI</returns>
     Task<PublishMcpServerResponse?> PublishServerAsync(
-        string environmentId,
-        string serverName,
-        PublishMcpServerRequest request,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Publishes an MCP server via the v2 endpoint, which performs the full elevation orchestration
-    /// (lazy PPMI provision, MOS upload, A365 Proxy CMS connector creation when Entra creds are
-    /// supplied in the request). v1 <see cref="PublishServerAsync"/> remains for callers relying on
-    /// the original side-effect-free behavior.
-    /// </summary>
-    /// <param name="environmentId">Dataverse environment ID</param>
-    /// <param name="serverName">MCP server name to publish</param>
-    /// <param name="request">Publish request with alias, display name, and optional Entra app credentials</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Response from the publish operation, including PPMI app id, A365 Proxy connector id, and redirect URI</returns>
-    Task<PublishMcpServerResponse?> PublishServerV2Async(
         string environmentId,
         string serverName,
         PublishMcpServerRequest request,
