@@ -27,7 +27,7 @@ Microsoft's role is supplying the `a365` CLI that orchestrates steps 1–2. Step
 |---|---|---|
 | Runtime data from your MCP server (live payloads, user requests) | **No** | Only the static schema from `tools/list` |
 | Personal data of your MCP server's end users | **No** | Schemas describe tool APIs, not user data |
-| Auth token supplied via `--auth-token` | **No** (AI never sees it) | Token is held in memory, sent only as the HTTP `Authorization` header to your server, and never logged or passed to the coding agent |
+| Auth token supplied via `--auth-token` or `A365_MCP_AUTH_TOKEN` | **No** (AI never sees it) | Token is held in memory, sent only as the HTTP `Authorization` header to your server, and never logged or passed to the coding agent. Prefer the `A365_MCP_AUTH_TOKEN` environment variable over the flag — it keeps the token out of process listings (`ps` / Task Manager) and shell history; the CLI warns once if you use the flag. |
 | Telemetry or usage data | **No** | This feature adds no telemetry to the base CLI |
 | Output report or checklist JSON | **No** (not sent anywhere) | Files are written to the `--output-dir` you specify and stay on your machine |
 
@@ -35,7 +35,9 @@ Microsoft's role is supplying the `a365` CLI that orchestrates steps 1–2. Step
 
 ## Q3. Which AI model performs the evaluation, and who controls it?
 
-By default the evaluation uses **`claude-haiku-4-5`**, invoked through whichever coding agent CLI you have installed (GitHub Copilot CLI or Claude Code CLI). You can override the engine with `--eval-engine github-copilot` or `--eval-engine claude-code`.
+By default the evaluation uses **Claude Haiku 4.5**, invoked through whichever coding agent CLI you have installed (GitHub Copilot CLI or Claude Code CLI). You can override the engine with `--eval-engine github-copilot` or `--eval-engine claude-code`.
+
+To run a **different model** without waiting for a CLI update, set an environment variable before the run: `A365_EVAL_COPILOT_MODEL` for GitHub Copilot (needs an exact model ID, e.g. `claude-haiku-4.5`) or `A365_EVAL_CLAUDE_MODEL` for Claude Code (accepts an alias, e.g. `haiku`).
 
 The CLI that runs the model is **yours**, installed from npm by you, authenticated with your credentials. Microsoft does not host or resell the model API call — it is made directly by your CLI to the AI provider under your own terms of service and billing. The `a365` CLI specifies the model flag but does not mediate the API call.
 

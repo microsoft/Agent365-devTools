@@ -61,7 +61,7 @@ After all three questions are answered, create all todos for the path and mark T
 
 **RULE 6 — SILENT EXECUTION.** Work silently. Do NOT narrate what you are about to do, announce step transitions, print todo state, emoji checklists, or step completion summaries. Only speak to the user when you need input, have an error to report, or need confirmation before a destructive action.
 
-**RULE 7 — DO NOT SHIP THE TOKEN.** If the user provided an auth token in Question 2, pass it only via the `--auth-token` flag at the moment you invoke the CLI. Do NOT write it to a file, paste it back into chat, or commit it to any config.
+**RULE 7 — DO NOT SHIP THE TOKEN.** If the user provided an auth token in Question 2, pass it only via the `--auth-token` flag or the `A365_MCP_AUTH_TOKEN` environment variable at the moment you invoke the CLI (the env var is preferred — it keeps the token out of process listings and shell history). Do NOT write it to a file, paste it back into chat, or commit it to any config.
 
 ---
 
@@ -178,6 +178,18 @@ a365 develop-mcp evaluate \
   --eval-engine "$evalEngine" \
   ${authToken:+--auth-token "$authToken"}
 ```
+
+### Optional: configure via environment variables
+
+These settings can come from environment variables instead of (or alongside) the flags:
+
+| Env var | Purpose |
+|---|---|
+| `A365_MCP_AUTH_TOKEN` | Bearer token for the MCP server, used when `--auth-token` is not passed. **Preferred over the flag** — it keeps the token out of process listings (`ps` / Task Manager) and shell history. If you pass `--auth-token`, the CLI prints a one-time warning recommending this variable. |
+| `A365_EVAL_COPILOT_MODEL` | Override the GitHub Copilot model (exact model ID, e.g. `claude-haiku-4.5`). |
+| `A365_EVAL_CLAUDE_MODEL` | Override the Claude Code model (alias, e.g. `haiku`). |
+
+The model defaults to Claude Haiku 4.5; override only to move to a newer model without waiting for a CLI release.
 
 ### What you will see
 
