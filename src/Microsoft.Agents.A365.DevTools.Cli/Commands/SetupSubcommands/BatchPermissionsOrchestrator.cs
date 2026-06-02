@@ -206,46 +206,50 @@ internal static class BatchPermissionsOrchestrator
                 // operators on tenants where the primary path succeeded never saw a confirmation
                 // for an admin-level write. The fallback path now reuses the same operator
                 // decision rather than re-asking.
-                var operatorConfirmedS2S = false;
                 if (hasS2SWork)
                 {
-                    operatorConfirmedS2S = await PromptForBlueprintPermissionGrantAsync(
-                        BlueprintPermissionKind.Application, specs, confirmationProvider, logger);
-                    if (!operatorConfirmedS2S)
+                    // Section header + one scope so every line below (prompt, outcome, fallback) nests under it.
+                    logger.LogInformation("");
+                    logger.LogInformation("Configuring application permissions...");
+                    using (logger.Indent())
                     {
-                        logger.LogInformation("Skipping S2S app role assignment per operator response. The setup summary lists the manual steps.");
-                        if (setupResults is not null)
-                            setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Failed;
-                    }
-                }
-
-                if (operatorConfirmedS2S)
-                {
-                    await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result!.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
-
-                    // When the programmatic Graph API path fails (e.g. CLI token lacks
-                    // AppRoleAssignment.ReadWrite.All even for a GA), fall back to issuing the
-                    // same writes via `az rest` against the operator's existing az session. A
-                    // GA's az token implicitly carries every Graph application permission via
-                    // the directory role — including AppRoleAssignment.ReadWrite.All — so
-                    // POST /appRoleAssignments succeeds without any additional consent. The
-                    // operator already authorized the action at the single prompt above; no
-                    // second prompt is required here.
-                    if (setupResults?.BlueprintS2SOutcome == Models.GrantOutcome.Failed
-                        && commandExecutor != null)
-                    {
-                        logger.LogDebug("S2S app role assignments could not be completed via the Graph API; falling back to az rest.");
-                        var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
-                            commandExecutor, phase1Result.BlueprintSpObjectId, specs, logger, ct);
-                        if (attempted && succeeded)
+                        var operatorConfirmedS2S = await PromptForBlueprintPermissionGrantAsync(
+                            BlueprintPermissionKind.Application, specs, confirmationProvider, logger,
+                            suppressLeadingBlank: true, alignPromptToBody: true);
+                        if (!operatorConfirmedS2S)
                         {
-                            logger.LogInformation("Application permissions granted.");
-                            setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Granted;
+                            logger.LogInformation("Skipping S2S app role assignment per operator response. The setup summary lists the manual steps.");
+                            if (setupResults is not null)
+                                setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Failed;
                         }
-                        else if (attempted)
-                            logger.LogWarning("Some app role assignments did not complete - see output above. Manual steps in summary.");
-                        // else: validation rejected the input or no S2S specs were present.
-                        // AzRestS2SRunner already logged an actionable warning; Action Required surfaces the rest.
+                        else
+                        {
+                            await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result!.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
+
+                            // When the programmatic Graph API path fails (e.g. CLI token lacks
+                            // AppRoleAssignment.ReadWrite.All even for a GA), fall back to issuing the
+                            // same writes via `az rest` against the operator's existing az session. A
+                            // GA's az token implicitly carries every Graph application permission via
+                            // the directory role, so POST /appRoleAssignments succeeds without any
+                            // additional consent. The operator already authorized at the single prompt
+                            // above; no second prompt is required here.
+                            if (setupResults?.BlueprintS2SOutcome == Models.GrantOutcome.Failed
+                                && commandExecutor != null)
+                            {
+                                logger.LogDebug("S2S app role assignments could not be completed via the Graph API; falling back to az rest.");
+                                var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
+                                    commandExecutor, phase1Result.BlueprintSpObjectId, specs, logger, ct);
+                                if (attempted && succeeded)
+                                {
+                                    logger.LogInformation("Application permissions granted.");
+                                    setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Granted;
+                                }
+                                else if (attempted)
+                                    logger.LogWarning("Some app role assignments did not complete - see output above. Manual steps in summary.");
+                                // else: validation rejected the input or no S2S specs were present.
+                                // AzRestS2SRunner already logged an actionable warning; Action Required surfaces the rest.
+                            }
+                        }
                     }
                 }
             }
@@ -494,9 +498,7 @@ internal static class BatchPermissionsOrchestrator
             return;
         }
 
-        logger.LogInformation("");
-        logger.LogInformation("Configuring S2S app role assignments...");
-
+        // No header here — the caller prints it and this method runs indented beneath it.
         var allS2SOk = true;
         // Aggregate "every requested role was already assigned" across all specs. Initialised
         // true so the early-return-protected loop (zero specs cannot reach here) stays true
@@ -505,7 +507,7 @@ internal static class BatchPermissionsOrchestrator
         foreach (var spec in s2sSpecs)
         {
             logger.LogDebug(
-                "   - App role assignment: blueprint -> {ResourceName} [{AppRoles}]",
+                "App role assignment: blueprint -> {ResourceName} [{AppRoles}]",
                 spec.ResourceName, string.Join(' ', spec.AppRoleScopes!));
 
             var grantResult = await blueprintService.GrantAppRoleAssignmentAsync(
@@ -519,13 +521,13 @@ internal static class BatchPermissionsOrchestrator
             if (grantResult.AllSucceeded)
             {
                 if (grantResult.AllAlreadyAssigned)
-                    logger.LogInformation("   - S2S app role already assigned for {ResourceName}", spec.ResourceName);
+                    logger.LogInformation("S2S app role already assigned for {ResourceName}", spec.ResourceName);
                 else
-                    logger.LogInformation("   - S2S app role assigned for {ResourceName}", spec.ResourceName);
+                    logger.LogInformation("S2S app role assigned for {ResourceName}", spec.ResourceName);
             }
             else
             {
-                logger.LogDebug("   - Failed to assign S2S app role for {ResourceName}.", spec.ResourceName);
+                logger.LogDebug("Failed to assign S2S app role for {ResourceName}.", spec.ResourceName);
                 // Do not add a Warnings entry here: the Setup Summary's Action Required block
                 // already emits a copy-paste PowerShell snippet for the failed S2S grant
                 // (gated on BlueprintS2SOutcome=Failed via pendingS2SAction). A bare warning
@@ -751,7 +753,8 @@ internal static class BatchPermissionsOrchestrator
 
                 if (allConsented)
                 {
-                    logger.LogInformation("   - Delegated admin consent already granted for all required scopes");
+                    using (logger.Indent())
+                        logger.LogInformation("Delegated admin consent already granted for all required scopes");
                     if (setupResults is not null)
                         setupResults.TenantWideConsentAlreadyExisted = true;
                     return (true, null);
@@ -784,45 +787,49 @@ internal static class BatchPermissionsOrchestrator
         // the freshly opened browser tab is the user-visible confirmation. If the browser
         // fails to launch, BrowserHelper.TryOpenUrl logs the URL itself, and if consent is
         // not detected within the timeout the Action Required block surfaces the URL again.
-        logger.LogInformation("   - Opening browser for admin consent...");
-        BrowserHelper.TryOpenUrl(consentUrl!, logger);
-
+        // Whole browser + poll block renders one level under "Configuring delegated permissions...".
         bool consentGranted;
         bool consentVerified;
-        if (commandExecutor != null)
+        using (logger.Indent())
         {
-            // Use az-cli (az rest) to poll. The Azure CLI token carries GA-level Graph access
-            // including DelegatedPermissionGrant.Read.All, which the MSAL delegated token no
-            // longer holds since PR #409 removed that scope from the CLI client app registration.
-            var found = await AdminConsentHelper.PollAdminConsentAsync(
-                commandExecutor, logger, blueprintAppId,
-                "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct);
-            consentVerified = found;
-            // Browser was opened regardless — either the grant was directly observed (Verified)
-            // or the timeout elapsed without observing it (AssumedComplete). Either way, setup
-            // proceeds; the Action Required block surfaces the consent URL for AssumedComplete.
-            consentGranted = true;
-        }
-        else if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
-        {
-            // Fallback for contexts without az-cli (tests). Graph overload may not detect grants
-            // when the token lacks DelegatedPermissionGrant.Read.All, but BypassConsentChecksForTests
-            // prevents this branch from running in practice.
-            var pollResult = await AdminConsentHelper.PollAdminConsentAsync(
-                graph, logger, tenantId, phase1Result.BlueprintSpObjectId,
-                "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct,
-                permScopes: AuthenticationConstants.BlueprintOperationScopes);
-            consentVerified = pollResult == ConsentPollResult.Verified;
-            consentGranted = pollResult != ConsentPollResult.NotDetected;
-        }
-        else
-        {
-            // No executor and no blueprint SP — cannot poll. Surface URL for manual completion.
-            logger.LogWarning(
-                "Cannot poll for consent: blueprint service principal was not resolved. " +
-                "Please verify consent was granted at: {ConsentUrl}", consentUrl);
-            consentGranted = false;
-            consentVerified = false;
+            logger.LogInformation("Opening browser for admin consent...");
+            BrowserHelper.TryOpenUrl(consentUrl!, logger);
+
+            if (commandExecutor != null)
+            {
+                // Use az-cli (az rest) to poll. The Azure CLI token carries GA-level Graph access
+                // including DelegatedPermissionGrant.Read.All, which the MSAL delegated token no
+                // longer holds since PR #409 removed that scope from the CLI client app registration.
+                var found = await AdminConsentHelper.PollAdminConsentAsync(
+                    commandExecutor, logger, blueprintAppId,
+                    "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct);
+                consentVerified = found;
+                // Browser was opened regardless — either the grant was directly observed (Verified)
+                // or the timeout elapsed without observing it (AssumedComplete). Either way, setup
+                // proceeds; the Action Required block surfaces the consent URL for AssumedComplete.
+                consentGranted = true;
+            }
+            else if (phase1Result != null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
+            {
+                // Fallback for contexts without az-cli (tests). Graph overload may not detect grants
+                // when the token lacks DelegatedPermissionGrant.Read.All, but BypassConsentChecksForTests
+                // prevents this branch from running in practice.
+                var pollResult = await AdminConsentHelper.PollAdminConsentAsync(
+                    graph, logger, tenantId, phase1Result.BlueprintSpObjectId,
+                    "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct,
+                    permScopes: AuthenticationConstants.BlueprintOperationScopes);
+                consentVerified = pollResult == ConsentPollResult.Verified;
+                consentGranted = pollResult != ConsentPollResult.NotDetected;
+            }
+            else
+            {
+                // No executor and no blueprint SP — cannot poll. Surface URL for manual completion.
+                logger.LogWarning(
+                    "Cannot poll for consent: blueprint service principal was not resolved. " +
+                    "Please verify consent was granted at: {ConsentUrl}", consentUrl);
+                consentGranted = false;
+                consentVerified = false;
+            }
         }
 
         if (consentGranted)
@@ -858,8 +865,11 @@ internal static class BatchPermissionsOrchestrator
             && phase1Result is { } p
             && !string.IsNullOrWhiteSpace(p.BlueprintSpObjectId))
         {
-            var shouldRunConsent = await PromptForBlueprintPermissionGrantAsync(
-                BlueprintPermissionKind.Delegated, originalSpecs, confirmationProvider, logger);
+            bool shouldRunConsent;
+            using (logger.Indent())
+                shouldRunConsent = await PromptForBlueprintPermissionGrantAsync(
+                    BlueprintPermissionKind.Delegated, originalSpecs, confirmationProvider, logger,
+                    alignPromptToBody: true);
             if (!shouldRunConsent)
             {
                 logger.LogInformation("Admin consent not granted. Re-run setup or grant via the URL above when ready.");
@@ -1057,18 +1067,22 @@ internal static class BatchPermissionsOrchestrator
         var maxNameWidth = stillMissing.Max(s => s.ResourceName.Length);
 
         logger.LogInformation("");
-        logger.LogInformation("{Count} {Noun} {Verb} missing in your tenant.", stillMissing.Count, pluralNoun, pluralVerb);
-        logger.LogInformation("Provisioning will run 'az ad sp create' using your current az login.");
-        logger.LogInformation("You will be prompted before each is provisioned.");
-        logger.LogInformation("");
-
-        // Upfront list — name padded so the appId column lines up. Numbering uses "{i}."
-        // to match the per-prompt prefix below for visual correspondence.
-        for (int i = 0; i < stillMissing.Count; i++)
+        logger.LogInformation("Provisioning missing service principals...");
+        using (logger.Indent())
         {
-            var spec = stillMissing[i];
-            logger.LogInformation("  {Idx}. {Name}  {AppId}",
-                i + 1, spec.ResourceName.PadRight(maxNameWidth), spec.ResourceAppId);
+            logger.LogInformation("{Count} {Noun} {Verb} missing in your tenant.", stillMissing.Count, pluralNoun, pluralVerb);
+            logger.LogInformation("Provisioning will run 'az ad sp create' using your current az login.");
+            logger.LogInformation("You will be prompted before each is provisioned.");
+            logger.LogInformation("");
+
+            // Upfront list — name padded so the appId column lines up. Numbering uses "{i}."
+            // to match the per-prompt prefix below for visual correspondence.
+            for (int i = 0; i < stillMissing.Count; i++)
+            {
+                var spec = stillMissing[i];
+                logger.LogInformation("{Idx}. {Name}  {AppId}",
+                    i + 1, spec.ResourceName.PadRight(maxNameWidth), spec.ResourceAppId);
+            }
         }
 
         for (int i = 0; i < stillMissing.Count; i++)
@@ -1078,67 +1092,76 @@ internal static class BatchPermissionsOrchestrator
 
             logger.LogInformation("");
 
-            // GUID guard: appId originates from manifest / typed config, but custom
-            // permissions are user-supplied and reach this loop too. Validate before
-            // interpolating into the shell command — defense in depth against injection.
-            if (!Guid.TryParse(spec.ResourceAppId, out _))
+            using (logger.Indent())
             {
-                logger.LogWarning(
-                    "  {Idx}. {Name} ({AppId}): skipping — resource app id is not a valid GUID.",
-                    i + 1, spec.ResourceName, spec.ResourceAppId);
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
-                continue;
-            }
+                // GUID guard: appId originates from manifest / typed config, but custom
+                // permissions are user-supplied and reach this loop too. Validate before
+                // interpolating into the shell command — defense in depth against injection.
+                if (!Guid.TryParse(spec.ResourceAppId, out _))
+                {
+                    logger.LogWarning(
+                        "{Idx}. {Name} ({AppId}): skipping — resource app id is not a valid GUID.",
+                        i + 1, spec.ResourceName, spec.ResourceAppId);
+                    RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                    continue;
+                }
 
-            // Per-SP confirmation. Default No (must type y). Null confirmationProvider
-            // preserves the legacy "auto-yes" behavior under test, mirroring the other
-            // PromptForBlueprintPermissionGrantAsync call sites.
-            var prompt = $"  {i + 1}. {spec.ResourceName} - Provision via 'az ad sp create'? [y/N]: ";
-            var shouldProvision = confirmationProvider is null
-                || await confirmationProvider.ConfirmAsync(prompt);
-            if (!shouldProvision)
-            {
-                logger.LogInformation("  Skipped.");
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
-                continue;
-            }
+                // Per-SP confirmation. Default No (must type y). Null confirmationProvider
+                // preserves the legacy "auto-yes" behavior under test, mirroring the other
+                // PromptForBlueprintPermissionGrantAsync call sites. The [y/N] prompt is a
+                // Console.Write, so its level-1 indent is prepended directly.
+                var prompt = $"    {i + 1}. {spec.ResourceName} - Provision via 'az ad sp create'? [y/N]: ";
+                var shouldProvision = confirmationProvider is null
+                    || await confirmationProvider.ConfirmAsync(prompt);
 
-            var azArgs = $"ad sp create --id {spec.ResourceAppId}";
-            logger.LogInformation("  Running: az {AzArgs}", azArgs);
-            var azResult = await commandExecutor.ExecuteAsync(
-                "az", azArgs,
-                captureOutput: true,
-                suppressErrorLogging: true,
-                cancellationToken: ct);
+                // Per-SP action/result nests one level under the numbered prompt.
+                using (logger.Indent())
+                {
+                    if (!shouldProvision)
+                    {
+                        logger.LogInformation("Skipped.");
+                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                        continue;
+                    }
 
-            if (!azResult.Success)
-            {
-                var stderr = string.IsNullOrWhiteSpace(azResult.StandardError) ? azResult.StandardOutput : azResult.StandardError;
-                logger.LogWarning("  Failed: {Error}", (stderr ?? string.Empty).Trim());
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
-                continue;
-            }
+                    var azArgs = $"ad sp create --id {spec.ResourceAppId}";
+                    logger.LogInformation("Running: az {AzArgs}", azArgs);
+                    var azResult = await commandExecutor.ExecuteAsync(
+                        "az", azArgs,
+                        captureOutput: true,
+                        suppressErrorLogging: true,
+                        cancellationToken: ct);
 
-            // az exit 0 plus a parseable SP id in its JSON output is authoritative — the
-            // shell-out and the Graph backend are the same Entra tenant, so an SP id in the
-            // command output means the SP exists. The previous post-create Graph re-poll
-            // produced false "Graph still does not see the SP" warnings on slow replicas
-            // even when az clearly succeeded; trusting az output eliminates that.
-            string? newSpId = TryExtractSpIdFromAzOutput(azResult.StandardOutput);
-            if (!string.IsNullOrWhiteSpace(newSpId))
-            {
-                logger.LogInformation("  Done. Service principal created for '{Name}' (id: {SpId}).", spec.ResourceName, newSpId);
-                resolvedSpAppIds.Add(spec.ResourceAppId);
-            }
-            else
-            {
-                // az exited 0 but its stdout did not parse — extremely unusual. Surface the
-                // raw output so the operator can diagnose, and record the action so the
-                // setup summary surfaces the recovery steps.
-                logger.LogWarning(
-                    "  az exited 0 but the output did not contain a service principal id. Output: {Output}",
-                    (azResult.StandardOutput ?? string.Empty).Trim());
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                    if (!azResult.Success)
+                    {
+                        var stderr = string.IsNullOrWhiteSpace(azResult.StandardError) ? azResult.StandardOutput : azResult.StandardError;
+                        logger.LogWarning("Failed: {Error}", (stderr ?? string.Empty).Trim());
+                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                        continue;
+                    }
+
+                    // az exit 0 plus a parseable SP id in its JSON output is authoritative — the
+                    // shell-out and the Graph backend are the same Entra tenant, so an SP id in the
+                    // command output means the SP exists. The previous post-create Graph re-poll
+                    // produced false "Graph still does not see the SP" warnings on slow replicas
+                    // even when az clearly succeeded; trusting az output eliminates that.
+                    string? newSpId = TryExtractSpIdFromAzOutput(azResult.StandardOutput);
+                    if (!string.IsNullOrWhiteSpace(newSpId))
+                    {
+                        logger.LogInformation("Done. Service principal created for '{Name}' (id: {SpId}).", spec.ResourceName, newSpId);
+                        resolvedSpAppIds.Add(spec.ResourceAppId);
+                    }
+                    else
+                    {
+                        // az exited 0 but its stdout did not parse — extremely unusual. Surface the
+                        // raw output so the operator can diagnose, and record the action so the
+                        // setup summary surfaces the recovery steps.
+                        logger.LogWarning(
+                            "az exited 0 but the output did not contain a service principal id. Output: {Output}",
+                            (azResult.StandardOutput ?? string.Empty).Trim());
+                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                    }
+                }
             }
         }
 
@@ -1292,7 +1315,9 @@ internal static class BatchPermissionsOrchestrator
         BlueprintPermissionKind kind,
         IReadOnlyList<ResourcePermissionSpec> specs,
         IConfirmationProvider? confirmationProvider,
-        ILogger logger)
+        ILogger logger,
+        bool suppressLeadingBlank = false,
+        bool alignPromptToBody = false)
     {
         // Per-kind wording: delegated permissions go through admin consent (tenant-wide
         // OAuth2 grant); application permissions are a direct app role assignment on the
@@ -1311,7 +1336,7 @@ internal static class BatchPermissionsOrchestrator
 
         var items = specs
             .Where(s => scopesSelector(s) is { Count: > 0 })
-            .Select(s => $"  - {s.ResourceName}: {string.Join(", ", scopesSelector(s)!)}")
+            .Select(s => $"{s.ResourceName}: {string.Join(", ", scopesSelector(s)!)}")
             .ToList();
 
         if (items.Count == 0) return false;
@@ -1330,16 +1355,24 @@ internal static class BatchPermissionsOrchestrator
             ? $"Add {demonstrative} {permissionWord} to the blueprint programmatically? [y/N]: "
             : $"Assign {demonstrative} {kindWord} {permissionWord} now? [y/N]: ";
 
-        logger.LogInformation("");
+        if (!suppressLeadingBlank)
+            logger.LogInformation("");
         if (preamble is not null)
             logger.LogInformation("{Preamble}", preamble);
+
         logger.LogInformation("{Header}", header);
-        foreach (var item in items)
-            logger.LogInformation("{Item}", item);
+        // Items nest one level under the header line.
+        using (logger.Indent())
+        {
+            foreach (var item in items)
+                logger.LogInformation("{Item}", item);
+        }
         logger.LogInformation("");
 
+        // The [y/N] prompt is a Console.Write, so it bypasses indent scopes — prepend the indent directly.
+        var prompt = alignPromptToBody ? "    " + confirmPrompt : confirmPrompt;
         return confirmationProvider is null
-            || await confirmationProvider.ConfirmAsync(confirmPrompt);
+            || await confirmationProvider.ConfirmAsync(prompt);
     }
 
     /// <summary>

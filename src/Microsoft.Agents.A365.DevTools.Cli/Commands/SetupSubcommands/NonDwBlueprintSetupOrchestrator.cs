@@ -33,9 +33,13 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
+        // --messaging-endpoint flag (if supplied) wins over the init-only config value for the plan.
+        var plannedEndpoint = !string.IsNullOrWhiteSpace(messagingEndpointOverride)
+            ? messagingEndpointOverride
+            : config.MessagingEndpoint;
 
         // Use explicitly-passed tokens when available; fall back to a known-correct default.
         // Environment.GetCommandLineArgs() is unreliable in dotnet tool / test hosting scenarios.
@@ -69,9 +73,9 @@ internal static class NonDwBlueprintSetupOrchestrator
 
             if (isM365)
             {
-                var endpointDetail = string.IsNullOrWhiteSpace(config.MessagingEndpoint)
-                    ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
-                    : $"register via Teams Graph: {config.MessagingEndpoint}";
+                var endpointDetail = string.IsNullOrWhiteSpace(plannedEndpoint)
+                    ? "deferred — pass --messaging-endpoint <url> or configure after deploy"
+                    : $"register via Teams Graph: {plannedEndpoint}";
                 logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
             }
             else
@@ -152,10 +156,9 @@ internal static class NonDwBlueprintSetupOrchestrator
         // 7. Messaging endpoint (M365 opt-in)
         if (isM365)
         {
-            var endpointForDisplay = config.MessagingEndpoint;
-            var endpointDetail = string.IsNullOrWhiteSpace(endpointForDisplay)
-                ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
-                : $"register via Teams Graph: {endpointForDisplay}";
+            var endpointDetail = string.IsNullOrWhiteSpace(plannedEndpoint)
+                ? "deferred — pass --messaging-endpoint <url> or configure after deploy"
+                : $"register via Teams Graph: {plannedEndpoint}";
             logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
         }
         else
@@ -200,8 +203,11 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("The following required permissions are not yet consented for your client app ({ClientAppId}):", clientAppId);
-        foreach (var p in unconsented)
-            ctx.Logger.LogInformation("  - {Permission}", p);
+        using (ctx.Logger.Indent())
+        {
+            foreach (var p in unconsented)
+                ctx.Logger.LogInformation("{Permission}", p);
+        }
         ctx.Logger.LogInformation("");
 
         // OAuth2 grant operations require Global Administrator. Skip the prompt for non-admins

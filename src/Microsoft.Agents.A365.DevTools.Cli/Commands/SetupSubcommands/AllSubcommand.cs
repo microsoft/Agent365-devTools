@@ -156,6 +156,14 @@ internal static class AllSubcommand
                         "Required block, each with the az command and a per-SP consent URL.\n" +
                         "Implicitly enabled when stdin is redirected (CI / coding-agent / pipe scenarios).");
 
+        var messagingEndpointOption = new Option<string?>(
+            "--messaging-endpoint",
+            description: "HTTPS URL where the deployed M365 agent receives messages (--m365 only).\n" +
+                        "When supplied, the endpoint is registered as part of setup. When omitted, an\n" +
+                        "interactive run prompts for it and a non-interactive run defers it — the endpoint\n" +
+                        "is a post-deploy artifact, so it can be set later with\n" +
+                        "'a365 setup blueprint --endpoint-only --m365 --messaging-endpoint <url>'.");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -167,6 +175,7 @@ internal static class AllSubcommand
         command.AddOption(tenantIdOption);
         command.AddOption(authModeOption);
         command.AddOption(skipSpProvisioningOption);
+        command.AddOption(messagingEndpointOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -189,7 +198,18 @@ internal static class AllSubcommand
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             bool isM365 = context.ParseResult.GetValueForOption(m365Option);
             var authMode = context.ParseResult.GetValueForOption(authModeOption)?.ToLowerInvariant();
+            var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
             var ct = context.GetCancellationToken();
+
+            // --messaging-endpoint validation: must be a well-formed HTTPS URL when supplied.
+            if (!string.IsNullOrWhiteSpace(messagingEndpointFlag) &&
+                (!Uri.TryCreate(messagingEndpointFlag, UriKind.Absolute, out var msgEndpointUri) ||
+                 msgEndpointUri.Scheme != Uri.UriSchemeHttps))
+            {
+                logger.LogError("Invalid --messaging-endpoint value '{Value}'. Provide a valid HTTPS URL (e.g. https://my-agent.example.com/api/messages).", messagingEndpointFlag);
+                context.ExitCode = 1;
+                return;
+            }
 
             // --authmode validation
             if (authMode is not null && authMode is not ("obo" or "s2s" or "both"))
@@ -363,7 +383,7 @@ internal static class AllSubcommand
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
                     var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag);
                     return;
                 }
 
@@ -400,7 +420,9 @@ internal static class AllSubcommand
                     isM365: isM365,
                     authMode: authMode ?? nonDwConfig.AuthMode,
                     confirmationProvider: confirmationProvider,
-                    skipSpProvisioning: skipSpProvisioning);
+                    skipSpProvisioning: skipSpProvisioning,
+                    messagingEndpointOverride: messagingEndpointFlag,
+                    nonInteractive: Console.IsInputRedirected);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -420,7 +442,7 @@ internal static class AllSubcommand
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { /* config is optional for dry-run display */ }
-                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365);
+                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365, messagingEndpointFlag);
                 return;
             }
 
@@ -548,7 +570,9 @@ internal static class AllSubcommand
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
                     isM365: isM365,
-                    skipSpProvisioning: skipSpProvisioning);
+                    skipSpProvisioning: skipSpProvisioning,
+                    messagingEndpointOverride: messagingEndpointFlag,
+                    nonInteractive: Console.IsInputRedirected);
 
                 // Step 1: Infrastructure (optional, DW only)
                 await ExecuteInfrastructureStepAsync(ctx);
@@ -848,38 +872,99 @@ internal static class AllSubcommand
             return;
         }
 
-        try
-        {
-            var (result, failureReason) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-                ctx.Config,
-                ctx.Logger,
-                ctx.BackendConfigurator,
-                correlationId: ctx.CorrelationId);
+        // Endpoint: --messaging-endpoint flag wins, else the init-only config value. Absent = deferred.
+        var endpoint = !string.IsNullOrWhiteSpace(ctx.MessagingEndpointOverride)
+            ? ctx.MessagingEndpointOverride
+            : ctx.Config.MessagingEndpoint;
 
-            ctx.Results.MessagingEndpointResult = result;
-            ctx.Results.MessagingEndpoint = ctx.Config.BotMessagingEndpoint ?? ctx.Config.MessagingEndpoint;
-
-            if (result == Models.EndpointRegistrationResult.Created ||
-                result == Models.EndpointRegistrationResult.AlreadyExists)
-            {
-                ctx.Results.MessagingEndpointRegistered = true;
-                ctx.Results.EndpointAlreadyExisted = result == Models.EndpointRegistrationResult.AlreadyExists;
-            }
-            else if (result == Models.EndpointRegistrationResult.Failed)
-            {
-                ctx.Results.MessagingEndpointFailureReason = failureReason;
-            }
-        }
-        catch (SetupValidationException ex)
+        // No endpoint and non-interactive (CI / coding agent): defer silently, before the header.
+        if (string.IsNullOrWhiteSpace(endpoint) && ctx.NonInteractive)
         {
-            // Configuration problem (e.g. invalid HTTPS URL, missing endpoint). Don't rethrow —
-            // setup should continue; surface the failure in the summary as a warning.
-            ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
-            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.Other;
-            ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
-            ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
+            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.NotConfigured;
+            ctx.Results.MessagingEndpoint = null;
+            return;
         }
+
+        // Single section header; the prompt (if any) and registration both render beneath it.
+        ctx.Logger.LogInformation("Configuring messaging endpoint...");
+        using (ctx.Logger.Indent())
+        {
+            if (string.IsNullOrWhiteSpace(endpoint))
+                endpoint = await PromptForMessagingEndpointAsync(ctx);
+
+            if (string.IsNullOrWhiteSpace(endpoint))
+            {
+                // Deferred (blank prompt): summary renders "configure after you deploy", not a failure.
+                ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
+                ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.NotConfigured;
+                ctx.Results.MessagingEndpoint = null;
+                return;
+            }
+
+            try
+            {
+                var (result, failureReason) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+                    ctx.Config,
+                    ctx.Logger,
+                    ctx.BackendConfigurator,
+                    overrideEndpointUrl: endpoint,
+                    correlationId: ctx.CorrelationId);
+
+                ctx.Results.MessagingEndpointResult = result;
+                ctx.Results.MessagingEndpoint = ctx.Config.BotMessagingEndpoint ?? endpoint;
+
+                if (result == Models.EndpointRegistrationResult.Created ||
+                    result == Models.EndpointRegistrationResult.AlreadyExists)
+                {
+                    ctx.Results.MessagingEndpointRegistered = true;
+                    ctx.Results.EndpointAlreadyExisted = result == Models.EndpointRegistrationResult.AlreadyExists;
+                }
+                else if (result == Models.EndpointRegistrationResult.Failed)
+                {
+                    ctx.Results.MessagingEndpointFailureReason = failureReason;
+                }
+            }
+            catch (SetupValidationException ex)
+            {
+                // Config problem (e.g. invalid URL) — don't rethrow; surface as a summary warning.
+                ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
+                ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
+                ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.Other;
+                ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
+                ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Prompts for the messaging endpoint URL. Returns the entered HTTPS URL, or null to defer
+    /// (blank entry). The caller prints the section header and opens the indent scope.
+    /// </summary>
+    private static async Task<string?> PromptForMessagingEndpointAsync(SetupContext ctx)
+    {
+        if (ctx.NonInteractive)
+            return null;
+
+        ctx.Logger.LogInformation("The HTTPS URL where your deployed agent receives messages.");
+        ctx.Logger.LogInformation("Leave blank to configure it later, after you deploy the agent.");
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            // Console.Write bypasses the log formatter's indent scope, so prepend the level-1 indent.
+            Console.Write("    Messaging endpoint URL: ");
+            var entered = ConsoleHelper.ReadLineCancellable(ctx.CancellationToken)?.Trim();
+
+            if (string.IsNullOrWhiteSpace(entered))
+                return null;
+
+            if (Uri.TryCreate(entered, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
+                return entered;
+
+            ctx.Logger.LogWarning("Enter a valid HTTPS URL (e.g. https://my-agent.example.com/api/messages), or leave blank to skip.");
+        }
+
+        return null;
     }
 
     /// <summary>

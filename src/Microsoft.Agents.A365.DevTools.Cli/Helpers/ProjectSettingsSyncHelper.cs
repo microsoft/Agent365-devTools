@@ -124,7 +124,7 @@ public static class ProjectSettingsSyncHelper
             }
 
             default:
-                logger.LogWarning("Could not detect project platform in {ProjectPath}; no files updated.", project);
+                logger.LogInformation("No .NET, Node.js, or Python project detected in {ProjectPath}; skipping project settings update.", project);
                 return false;
         }
 

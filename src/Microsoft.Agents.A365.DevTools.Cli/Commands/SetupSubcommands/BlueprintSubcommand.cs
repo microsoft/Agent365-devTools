@@ -160,6 +160,11 @@ internal static class BlueprintSubcommand
             "--update-endpoint",
             description: "Delete the existing messaging endpoint and register a new one with the specified URL");
 
+        var messagingEndpointOption = new Option<string?>(
+            "--messaging-endpoint",
+            description: "HTTPS URL to register with --endpoint-only. Overrides the messagingEndpoint value\n" +
+                        "in config. Typically used after deploy, once the agent's callback URL is known.");
+
         var skipRequirementsOption = new Option<bool>(
             "--skip-requirements",
             description: "Skip requirements validation check\n" +
@@ -184,6 +189,7 @@ internal static class BlueprintSubcommand
         command.AddOption(skipEndpointRegistrationOption);
         command.AddOption(endpointOnlyOption);
         command.AddOption(updateEndpointOption);
+        command.AddOption(messagingEndpointOption);
         command.AddOption(skipRequirementsOption);
         command.AddOption(m365Option);
         command.AddOption(showSecretOption);
@@ -198,6 +204,7 @@ internal static class BlueprintSubcommand
             var skipEndpointRegistration = context.ParseResult.GetValueForOption(skipEndpointRegistrationOption);
             var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
             var updateEndpoint = context.ParseResult.GetValueForOption(updateEndpointOption);
+            var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
             var showSecret = context.ParseResult.GetValueForOption(showSecretOption);
@@ -276,6 +283,16 @@ internal static class BlueprintSubcommand
                 skipEndpointRegistration: skipEndpointRegistration,
                 logger: logger))
             {
+                context.ExitCode = 1;
+                return;
+            }
+
+            // --messaging-endpoint validation: must be a well-formed HTTPS URL when supplied.
+            if (!string.IsNullOrWhiteSpace(messagingEndpointFlag) &&
+                (!Uri.TryCreate(messagingEndpointFlag, UriKind.Absolute, out var msgEndpointUri) ||
+                 msgEndpointUri.Scheme != Uri.UriSchemeHttps))
+            {
+                logger.LogError("Invalid --messaging-endpoint value '{Value}'. Provide a valid HTTPS URL (e.g. https://my-agent.example.com/api/messages).", messagingEndpointFlag);
                 context.ExitCode = 1;
                 return;
             }
@@ -387,6 +404,7 @@ internal static class BlueprintSubcommand
                     configService,
                     backendConfigurator,
                     platformDetector,
+                    overrideEndpointUrl: messagingEndpointFlag,
                     correlationId: correlationId,
                     cancellationToken: ct);
                 return;
@@ -860,8 +878,11 @@ internal static class BlueprintSubcommand
             if (lookupResult.Found)
             {
                 logger.LogInformation("Found existing blueprint by display name");
-                logger.LogInformation("  Blueprint ID: {AppId}", lookupResult.AppId);
-                logger.LogDebug("  Object ID: {ObjectId}", lookupResult.ObjectId);
+                using (logger.Indent())
+                {
+                    logger.LogInformation("Blueprint ID: {AppId}", lookupResult.AppId);
+                    logger.LogDebug("Object ID: {ObjectId}", lookupResult.ObjectId);
+                }
 
                 existingObjectId = lookupResult.ObjectId;
                 existingAppId = lookupResult.AppId;
@@ -2266,9 +2287,10 @@ internal static class BlueprintSubcommand
             await configService.SaveStateAsync(setupConfig, generatedConfigPath);
 
             logger.LogInformation("Client secret created successfully!");
-            logger.LogInformation("");
-            Console.WriteLine($"  Blueprint client secret: {secretText}");
-            logger.LogDebug("  Blueprint client secret: [displayed to terminal]");
+            // Console.WriteLine bypasses the log formatter's indent scope (the secret is never written
+            // to the log file), so prepend the level-2 indent to align it under this section.
+            Console.WriteLine($"        Blueprint client secret: {secretText}");
+            logger.LogDebug("Blueprint client secret: [displayed to terminal]");
             logger.LogWarning("Copy this value now — it will not be shown again automatically.");
             if (isProtected)
                 logger.LogWarning("To retrieve it later, run 'a365 setup blueprint --show-secret' from the same folder, Windows machine, and user account.");
@@ -2392,6 +2414,7 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         ITeamsGraphBackendConfigurator backendConfigurator,
         PlatformDetector platformDetector,
+        string? overrideEndpointUrl = null,
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
@@ -2409,8 +2432,9 @@ internal static class BlueprintSubcommand
 
         // Only the Status value is relevant here — inline CLI output for --endpoint-only doesn't
         // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
+        // overrideEndpointUrl (from --messaging-endpoint) wins over the config value when supplied.
         var (result, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, backendConfigurator, correlationId: correlationId);
+            setupConfig, logger, backendConfigurator, overrideEndpointUrl, correlationId: correlationId);
 
         setupConfig.Completed = true;
         setupConfig.CompletedAt = DateTime.UtcNow;
@@ -2501,14 +2525,14 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Updating messaging endpoint...");
         logger.LogInformation("");
 
-        // Step 1: Clear the existing backend configuration (idempotent no-op if nothing is registered).
-        logger.LogInformation("Clearing existing backend configuration...");
+        // Step 1: Remove any existing messaging endpoint (idempotent no-op if none is registered).
+        logger.LogInformation("Removing existing messaging endpoint...");
         var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
             setupConfig.AgentBlueprintId, correlationId: correlationId);
 
         if (!cleared)
         {
-            logger.LogWarning("Could not confirm clearing of existing backend configuration — proceeding with registration anyway.");
+            logger.LogWarning("Could not confirm removal of the existing messaging endpoint — proceeding with registration anyway.");
         }
 
         // Step 2: Register the new endpoint.
@@ -2649,9 +2673,12 @@ internal static class BlueprintSubcommand
 
                 if (result.success)
                 {
-                    logger.LogInformation("  - Credential Name: {Name}", credentialName);
-                    logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-                    logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                    using (logger.Indent())
+                    {
+                        logger.LogInformation("Credential Name: {Name}", credentialName);
+                        logger.LogInformation("Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
+                        logger.LogInformation("Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                    }
                     return true;
                 }
 

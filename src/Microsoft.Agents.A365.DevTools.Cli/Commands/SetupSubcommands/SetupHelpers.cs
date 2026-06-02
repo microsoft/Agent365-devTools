@@ -734,7 +734,9 @@ internal static class SetupHelpers
                     }
                     else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotConfigured, StringComparison.Ordinal))
                     {
-                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not configured — register manually in the Teams Developer Portal");
+                        // Deferred, not failed: the endpoint is a post-deploy artifact. Render it as an
+                        // expected pending step (informational, not a warning) with a single pointer below.
+                        logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "deferred — configure after you deploy (see Next steps)");
                     }
                     else
                     {
@@ -756,8 +758,15 @@ internal static class SetupHelpers
         // ── Action Required ────────────────────────────────────────────────────
         var messagingEndpointManualRequired =
             results.MessagingEndpointResult == Models.EndpointRegistrationResult.SkippedContractMismatch;
+        // A missing endpoint (NotConfigured) is deferred, not an action: the endpoint is a post-deploy
+        // artifact. It is surfaced once in the Next steps block below, never as an Action Required item,
+        // and does not downgrade the overall status line.
+        var messagingEndpointDeferred =
+            results.MessagingEndpointResult == Models.EndpointRegistrationResult.Failed
+            && string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotConfigured, StringComparison.Ordinal);
         var messagingEndpointFailureRequired =
-            results.MessagingEndpointResult == Models.EndpointRegistrationResult.Failed;
+            results.MessagingEndpointResult == Models.EndpointRegistrationResult.Failed
+            && !messagingEndpointDeferred;
         var hasMissingSpActions = results.MissingSpActions.Count > 0;
         var hasActionRequired = pendingAdminAction || tenantConsentUnverified || results.ClientSecretManualActionRequired || pendingS2SAction || pendingDelegatedAction || messagingEndpointManualRequired || messagingEndpointFailureRequired || hasMissingSpActions;
         if (hasActionRequired)
@@ -900,11 +909,6 @@ internal static class SetupHelpers
                     logger.LogInformation("     the endpoint step:");
                     logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
                 }
-                else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotConfigured, StringComparison.Ordinal))
-                {
-                    logger.LogInformation("  {N}. Messaging endpoint — register manually in the Teams Developer Portal:", actionCount);
-                    logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
-                }
                 else
                 {
                     logger.LogInformation("  {N}. Messaging endpoint — registration failed; see the error above for details.", actionCount);
@@ -971,11 +975,25 @@ internal static class SetupHelpers
         var hasNextSteps = results.HasErrors
             || !string.IsNullOrEmpty(results.GraphInheritablePermissionsError)
             || !string.IsNullOrEmpty(results.FederatedCredentialError)
-            || results.AgentRegistrationFailed;
+            || results.AgentRegistrationFailed
+            || messagingEndpointDeferred;
 
         if (hasNextSteps)
         {
             var nextStepLines = new List<Action>();
+
+            // Deferred messaging endpoint (NotConfigured): single, de-duplicated pointer — the endpoint
+            // row above says "see Next steps" and the only detail lives here.
+            if (messagingEndpointDeferred)
+            {
+                nextStepLines.Add(() =>
+                {
+                    logger.LogInformation("  Messaging endpoint — set it once your agent is deployed:");
+                    logger.LogInformation("    a365 setup blueprint --endpoint-only --m365 --messaging-endpoint <https-url>");
+                    logger.LogInformation("  Or register it manually in the Teams Developer Portal:");
+                    logger.LogInformation("    {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
+                });
+            }
 
             if (results.BatchPermissionsPhase1Completed && (!results.BatchPermissionsPhase2Completed || (!tenantConsentGranted && !pendingAdminAction)) && results.HasErrors)
                 nextStepLines.Add(() => logger.LogInformation("  To retry permissions: a365 setup all"));
@@ -1378,7 +1396,8 @@ internal static class SetupHelpers
         bool skipRequirements,
         string[] rawArgs,
         Agent365Config? config = null,
-        bool isM365 = false)
+        bool isM365 = false,
+        string? messagingEndpointOverride = null)
     {
         var sub = new string(' ', DryRunValCol);
 
@@ -1424,9 +1443,11 @@ internal static class SetupHelpers
         // 6. Messaging endpoint (M365 opt-in)
         if (isM365)
         {
-            var endpointForDisplay = config?.MessagingEndpoint;
+            var endpointForDisplay = !string.IsNullOrWhiteSpace(messagingEndpointOverride)
+                ? messagingEndpointOverride
+                : config?.MessagingEndpoint;
             var endpointDetail = string.IsNullOrWhiteSpace(endpointForDisplay)
-                ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
+                ? "deferred — pass --messaging-endpoint <url> or configure after deploy"
                 : $"register via Teams Graph: {endpointForDisplay}";
             logger.LogInformation(DryRunRow(6, "Messaging endpoint") + endpointDetail);
         }
@@ -1757,7 +1778,6 @@ internal static class SetupHelpers
             }
 
             messagingEndpoint = overrideEndpointUrl;
-            logger.LogInformation("   - Using override endpoint URL");
         }
         else
         {
@@ -1778,9 +1798,9 @@ internal static class SetupHelpers
             messagingEndpoint = setupConfig.MessagingEndpoint;
         }
 
-        logger.LogInformation("   - Registering blueprint messaging endpoint");
-        logger.LogInformation("     * Messaging Endpoint: {Endpoint}", messagingEndpoint);
-        logger.LogInformation("     * Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
+        // Detail lines render under the caller's "Configuring messaging endpoint..." header + scope.
+        logger.LogInformation("Messaging Endpoint: {Endpoint}", messagingEndpoint);
+        logger.LogInformation("Agent Blueprint ID: {AgentBlueprintId}", setupConfig.AgentBlueprintId);
 
         var (result, failureReason) = await backendConfigurator.SetBackendConfigurationAsync(
             agentBlueprintId: setupConfig.AgentBlueprintId,

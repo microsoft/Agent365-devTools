@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Linq;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
@@ -691,6 +692,91 @@ public class SetupHelpersDisplaySetupSummaryTests
         BatchPermissionsPhase1Completed = true,
         BatchPermissionsPhase2Completed = true,
     };
+
+    // ── Messaging endpoint: deferred (NotConfigured) is not a failure ──────────
+
+    /// <summary>
+    /// A clean non-DW M365 run whose only outstanding item is an unset messaging endpoint.
+    /// The endpoint is a post-deploy artifact, so its absence must be rendered as deferred —
+    /// not a failure that raises Action Required or downgrades the overall status line.
+    /// </summary>
+    private static SetupResults BuildDeferredEndpointResults() => new()
+    {
+        IsNonDwBlueprintFlow = true,
+        BlueprintCreated = true,
+        BlueprintServicePrincipalCreated = true,
+        BlueprintId = BlueprintId,
+        AgentIdentityCreated = true,
+        AgentIdentityId = AgentSpId,
+        AgentInstanceRegistered = true,
+        TenantId = TenantId,
+        EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+        TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+        MessagingEndpointResult = Cli.Models.EndpointRegistrationResult.Failed,
+        MessagingEndpointFailureReason = MessagingEndpointFailureReasons.NotConfigured,
+    };
+
+    [Fact]
+    public void DisplaySetupSummary_M365EndpointNotConfigured_RowReadsDeferredNotWarning()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildDeferredEndpointResults(), logger);
+
+        var lines = logger.AllOutput.Split('\n');
+        var endpointRow = System.Array.Find(lines, l => l.Contains("Messaging endpoint"));
+        endpointRow.Should().NotBeNull(because: "the messaging endpoint row must still be emitted");
+        endpointRow!.Should().Contain("deferred",
+            because: "an unset endpoint is an expected pre-deploy state, not a failure");
+        endpointRow!.Should().NotContain("register manually",
+            because: "the old 'not configured — register manually' wording made a clean run look broken");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_M365EndpointNotConfigured_DoesNotRaiseActionRequired()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildDeferredEndpointResults(), logger);
+
+        logger.AllOutput.Should().NotContain("Action Required",
+            because: "a deferred endpoint is the only outstanding item and must not be framed as a required action");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_M365EndpointNotConfigured_StatusLineReportsSuccess()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildDeferredEndpointResults(), logger);
+
+        logger.AllOutput.Should().Contain("Setup completed successfully",
+            because: "everything the CLI can automate succeeded; a manual-only post-deploy step must not downgrade the status");
+        logger.AllOutput.Should().NotContain("action required before proceeding",
+            because: "the deferred endpoint must not trigger the action-required status line");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_M365EndpointNotConfigured_NextStepsHasSingleDeduplicatedPointer()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildDeferredEndpointResults(), logger);
+
+        logger.AllOutput.Should().Contain("Next steps:",
+            because: "the deferred endpoint guidance belongs under Next steps, where the row points");
+        logger.AllOutput.Should().Contain("--messaging-endpoint",
+            because: "the pointer must show how to supply the URL once the agent is deployed");
+        logger.AllOutput.Should().Contain(ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl,
+            because: "the manual Teams Developer Portal fallback must be offered exactly once");
+
+        var portalMentions = logger.AllOutput.Split('\n')
+            .Count(l => l.Contains(ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl));
+        portalMentions.Should().Be(1,
+            because: "the endpoint guidance must be stated once, not duplicated across the row, Action Required, and Next steps");
+    }
 
     /// <summary>
     /// Builds a results object that drives the delegated-consent "granted" path of the Blueprint

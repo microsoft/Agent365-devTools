@@ -1219,24 +1219,24 @@ public class CleanupCommand
     {
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
         {
-            logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for clearing the backend configuration.");
+            logger.LogError("Agent Blueprint ID not found. It is required to remove the messaging endpoint.");
             return false;
         }
 
-        logger.LogInformation("Clearing backend configuration...");
-
-        var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
-            config.AgentBlueprintId,
-            correlationId: correlationId);
-
-        if (cleared)
+        logger.LogInformation("Removing messaging endpoint...");
+        using (logger.Indent())
         {
-            logger.LogInformation("Backend configuration cleared successfully");
-            return true;
-        }
+            // The service logs the "Removed successfully." / "already removed" outcome under this header.
+            var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
+                config.AgentBlueprintId,
+                correlationId: correlationId);
 
-        logger.LogWarning("Failed to clear backend configuration");
-        return false;
+            if (cleared)
+                return true;
+
+            logger.LogWarning("Failed to remove the messaging endpoint.");
+            return false;
+        }
     }
 
     /// <summary>

@@ -1855,7 +1855,9 @@ public class GraphApiService
                     var json = await response.Content.ReadAsStringAsync(ct);
                     using var doc = JsonDocument.Parse(json);
                     var id = doc.RootElement.GetProperty("id").GetString();
-                    _logger.LogInformation("Agent identity created (ID: {Id})", id);
+                    // Debug only — callers (setup orchestrator, create-instance runner) emit the
+                    // user-facing "Agent identity created" line so it isn't logged twice.
+                    _logger.LogDebug("Agent identity created (ID: {Id})", id);
                     return id;
                 }
 

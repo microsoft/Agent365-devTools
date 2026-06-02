@@ -88,7 +88,7 @@ public static class AdminConsentHelper
         int lastProgressReportSeconds = 0;
 
         logger.LogInformation(
-            "   Sign in and Accept the permission(s). If the tab shows an error after Accept, consent likely succeeded — the CLI will still detect it (timeout: {TimeoutSeconds}s).",
+            "Sign in and Accept the permission(s). If the tab shows an error after Accept, consent likely succeeded — the CLI will still detect it (timeout: {TimeoutSeconds}s).",
             timeoutSeconds);
 
         try
@@ -206,7 +206,7 @@ public static class AdminConsentHelper
         }
 
         logger.LogInformation(
-            "   Sign in and Accept the permission(s). If the tab shows an error after Accept, consent likely succeeded — the CLI will still detect it (timeout: {TimeoutSeconds}s).",
+            "Sign in and Accept the permission(s). If the tab shows an error after Accept, consent likely succeeded — the CLI will still detect it (timeout: {TimeoutSeconds}s).",
             timeoutSeconds);
 
         var start = DateTime.UtcNow;

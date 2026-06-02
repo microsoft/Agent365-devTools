@@ -39,7 +39,9 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         string messagingEndpoint,
         string? correlationId = null)
     {
-        _logger.LogInformation("Setting backend configuration for Agent Blueprint...");
+        // Debug only — the caller's "Configuring messaging endpoint..." header already frames this,
+        // and "backend configuration" is internal MCP Platform terminology, not user-facing.
+        _logger.LogDebug("Setting backend configuration for Agent Blueprint...");
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
         _logger.LogDebug("   Callback URI: {Endpoint}", messagingEndpoint);
 
@@ -88,7 +90,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Backend configuration set successfully.");
+                    _logger.LogInformation("Registered successfully.");
                     return (EndpointRegistrationResult.Created, null);
                 }
 
@@ -96,7 +98,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 if (response.StatusCode == HttpStatusCode.Conflict)
                 {
-                    _logger.LogInformation("Backend configuration already exists.");
+                    _logger.LogInformation("Messaging endpoint already registered.");
                     return (EndpointRegistrationResult.AlreadyExists, null);
                 }
 
@@ -151,7 +153,8 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         string agentBlueprintId,
         string? correlationId = null)
     {
-        _logger.LogInformation("Clearing backend configuration for Agent Blueprint...");
+        // Debug only — the caller's "Removing messaging endpoint..." header already frames this.
+        _logger.LogDebug("Clearing backend configuration for Agent Blueprint...");
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
         try
@@ -201,7 +204,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Backend configuration cleared successfully.");
+                    _logger.LogInformation("Removed successfully.");
                     return true;
                 }
 
@@ -210,7 +213,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                 // Treat NotFound as idempotent success — nothing to clear.
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
-                    _logger.LogInformation("Backend configuration not found — already cleared.");
+                    _logger.LogInformation("Messaging endpoint already removed.");
                     return true;
                 }
 
@@ -218,7 +221,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                 if (response.StatusCode == HttpStatusCode.BadRequest &&
                     ResponseDetailsContains(errorContent, "not found"))
                 {
-                    _logger.LogInformation("Backend configuration not found — already cleared.");
+                    _logger.LogInformation("Messaging endpoint already removed.");
                     return true;
                 }
 
@@ -245,7 +248,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                     return true;
                 }
 
-                _logger.LogError("Failed to clear backend configuration. Status: {Status}", response.StatusCode);
+                _logger.LogError("Failed to remove messaging endpoint. Status: {Status}", response.StatusCode);
                 _logger.LogError("Response: {Error}", errorContent);
                 return false;
             }
