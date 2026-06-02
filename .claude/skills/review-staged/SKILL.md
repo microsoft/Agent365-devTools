@@ -134,7 +134,19 @@ Nine checks that static per-file analysis tends to miss — each requires tracin
 
   Implementation: at the start of the review, emit the list of branch-level files and treat them as the review surface. At the end, verify each file was read or explicitly justified as "no rule applies."
 
-Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through V.
+- **CLI option precondition enforcement (Rule W)**: **Added 2026-06-02 after PR #440's Copilot review.** When a new or modified `Option<...>` has a description that constrains its applicability — phrases like `(--X only)`, `use with --Y`, `Only meaningful with --Z`, `requires an existing ...` — the handler **must validate that precondition and fail fast** (`logger.LogError(...) + context.ExitCode = 1 + return`) when the option is supplied outside that context. A flag that is accepted and then silently ignored (because the code path it feeds is skipped) is a bug: the user gets exit 0 and assumes it took effect.
+
+  Detection: for every option whose description contains a constraint keyword, grep the handler for a guard that errors when the option is present but the precondition is false. Use `context.ParseResult.CommandResult.FindResultFor(<option>) != null` to detect "supplied" (not the value, which can't tell omitted from empty). If no such guard exists, flag it. **Severity: MEDIUM.** PR #440 example: `--messaging-endpoint` was documented `(--m365 only)` and `with --endpoint-only`, but both handlers accepted it unconditionally and dropped it when the messaging step / endpoint-only path was skipped.
+
+- **`Option<string?>` empty-vs-omitted conflation (Rule X)**: **Added 2026-06-02 after PR #440.** When a string option is read as `GetValueForOption(opt)?.Trim()` and then gated only with `string.IsNullOrWhiteSpace(...)`, an **explicitly-passed empty value** (`--opt ""` or `--opt "   "`) is indistinguishable from **omitted**. This is a defect whenever "omitted" triggers a *different* behavior than "empty should" — e.g. omitted falls back to config / prompts / defers, so `--opt ""` silently does the fallback instead of erroring.
+
+  Detection: for each `Option<string?>` whose omitted-path does something non-trivial (prompt, default, defer, config fallback), verify the handler distinguishes "specified" via `FindResultFor(opt) != null` and emits a targeted error + `ExitCode = 1` when specified-but-whitespace. This is the CLAUDE.md "Input Validation" rule applied to the explicit-empty case. **Severity: MEDIUM.** PR #440 example: `--messaging-endpoint ""` was `.Trim()`ed to `""`, read as omitted, and triggered prompting/deferral instead of a clear error.
+
+- **Ignored result-bearing call / missing exit code (Rule Y)**: **Added 2026-06-02 after PR #440.** Extends the exit-code-completeness check (CLAUDE.md item 8) to *discarded return values*. When a command handler `await`s an operation that returns a success/failure-bearing result (an enum like `*Result`, a `bool`, a tuple with an outcome) and **does not capture or branch on it**, any failure that result encodes will still exit 0 — breaking scripting/CI.
+
+  Detection: in every command handler, find `await SomeOp(...)` calls whose return type is non-`void`/non-`Task` and whose result is not assigned or checked. For each, confirm the failure values map to `context.ExitCode = 1`. **Severity: MEDIUM** (HIGH if the command is commonly scripted). PR #440 example: the `--endpoint-only` path called `RegisterEndpointAndSyncAsync(...)` (returns `EndpointRegistrationResult`) and discarded it, so `NotConfigured` / contract-mismatch / `Failed` all exited 0.
+
+Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through V (plus W–Y above).
 
 ### Context Awareness
 The skill differentiates between:

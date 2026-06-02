@@ -204,6 +204,9 @@ internal static class BlueprintSubcommand
             var skipEndpointRegistration = context.ParseResult.GetValueForOption(skipEndpointRegistrationOption);
             var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
             var updateEndpoint = context.ParseResult.GetValueForOption(updateEndpointOption);
+            // Distinguish "option omitted" from "explicitly passed empty" — the latter is a hard error,
+            // not silently treated as omitted (which would later no-op or fall back to config).
+            var messagingEndpointSpecified = context.ParseResult.CommandResult.FindResultFor(messagingEndpointOption) != null;
             var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
@@ -283,6 +286,22 @@ internal static class BlueprintSubcommand
                 skipEndpointRegistration: skipEndpointRegistration,
                 logger: logger))
             {
+                context.ExitCode = 1;
+                return;
+            }
+
+            if (messagingEndpointSpecified && string.IsNullOrWhiteSpace(messagingEndpointFlag))
+            {
+                logger.LogError("--messaging-endpoint requires an HTTPS URL value (e.g. https://my-agent.example.com/api/messages).");
+                context.ExitCode = 1;
+                return;
+            }
+
+            // --messaging-endpoint is consumed only by the --endpoint-only registration path. Fail fast
+            // rather than accepting a value that would be silently ignored on a normal blueprint run.
+            if (messagingEndpointSpecified && !endpointOnly)
+            {
+                logger.LogError("--messaging-endpoint applies only with --endpoint-only. To replace an existing endpoint, use --update-endpoint <url>.");
                 context.ExitCode = 1;
                 return;
             }
@@ -398,7 +417,7 @@ internal static class BlueprintSubcommand
                     return;
                 }
 
-                await RegisterEndpointAndSyncAsync(
+                var endpointResult = await RegisterEndpointAndSyncAsync(
                     config.FullName,
                     logger,
                     configService,
@@ -407,6 +426,14 @@ internal static class BlueprintSubcommand
                     overrideEndpointUrl: messagingEndpointFlag,
                     correlationId: correlationId,
                     cancellationToken: ct);
+
+                // Non-zero exit when the endpoint did not actually register (not configured, contract
+                // mismatch, or other failure) so scripts and CI can detect it.
+                if (endpointResult != Models.EndpointRegistrationResult.Created &&
+                    endpointResult != Models.EndpointRegistrationResult.AlreadyExists)
+                {
+                    context.ExitCode = 1;
+                }
                 return;
             }
 

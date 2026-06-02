@@ -198,8 +198,18 @@ internal static class AllSubcommand
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             bool isM365 = context.ParseResult.GetValueForOption(m365Option);
             var authMode = context.ParseResult.GetValueForOption(authModeOption)?.ToLowerInvariant();
+            // Distinguish "option omitted" from "option explicitly passed empty" — the latter must be a
+            // hard error, not silently treated as omitted (which would prompt/defer instead).
+            var messagingEndpointSpecified = context.ParseResult.CommandResult.FindResultFor(messagingEndpointOption) != null;
             var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
             var ct = context.GetCancellationToken();
+
+            if (messagingEndpointSpecified && string.IsNullOrWhiteSpace(messagingEndpointFlag))
+            {
+                logger.LogError("--messaging-endpoint requires an HTTPS URL value (e.g. https://my-agent.example.com/api/messages).");
+                context.ExitCode = 1;
+                return;
+            }
 
             // --messaging-endpoint validation: must be a well-formed HTTPS URL when supplied.
             if (!string.IsNullOrWhiteSpace(messagingEndpointFlag) &&
@@ -376,6 +386,15 @@ internal static class AllSubcommand
             // --m365 remains opt-in for blueprint agents (non-DW path).
             if (nonDwConfig is null)
                 isM365 = true;
+
+            // --messaging-endpoint only takes effect for M365 agents (the messaging endpoint step is
+            // skipped otherwise). Fail fast rather than silently ignoring the supplied value.
+            if (messagingEndpointSpecified && !isM365)
+            {
+                logger.LogError("--messaging-endpoint applies only to M365 agents. Add --m365 (or use --aiteammate).");
+                context.ExitCode = 1;
+                return;
+            }
 
             if (nonDwConfig is not null)
             {
