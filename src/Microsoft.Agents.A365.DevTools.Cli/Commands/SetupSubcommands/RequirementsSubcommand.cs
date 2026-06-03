@@ -196,7 +196,6 @@ internal static class RequirementsSubcommand
         // Group checks by category for organized output (categories not printed yet)
         var checksByCategory = requirementChecks.GroupBy(c => c.Category).ToList();
 
-        var totalChecks = requirementChecks.Count;
         var passedChecks = 0;
         var warningChecks = 0;
         var failedChecks = 0;

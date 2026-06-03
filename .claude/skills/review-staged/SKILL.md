@@ -146,7 +146,15 @@ Nine checks that static per-file analysis tends to miss — each requires tracin
 
   Detection: in every command handler, find `await SomeOp(...)` calls whose return type is non-`void`/non-`Task` and whose result is not assigned or checked. For each, confirm the failure values map to `context.ExitCode = 1`. **Severity: MEDIUM** (HIGH if the command is commonly scripted). PR #440 example: the `--endpoint-only` path called `RegisterEndpointAndSyncAsync(...)` (returns `EndpointRegistrationResult`) and discarded it, so `NotConfigured` / contract-mismatch / `Failed` all exited 0.
 
-Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through V (plus W–Y above).
+- **Dead local / unused assignment the compiler won't flag (Rule Z)**: **Added 2026-06-03 after PR #440's second review.** A local that is assigned but never read is dead code. The trap is that `TreatWarningsAsErrors` does **not** catch most of these: the C# unused-variable warning (CS0219) fires only for **constant** initializers. When the initializer is a property access, method call, LINQ expression, or `new`, the compiler stays silent (it can't assume the access is side-effect-free), so the build is green and the dead local survives. This means a green build/test run — the skill's one objective signal — gives **no** indication, so the sweep must be done by reading.
+
+  Detection: for every local declared in the diff (and the surrounding method), confirm it is read at least once after assignment. Pay special attention to locals whose initializer is `x.Count` / `x.ToList()` / `SomeMethod(...)` / `new T(...)` — these are exactly the ones the compiler won't warn about. A common shape is a "summary" or "counter" local that was meant to be used in an output/log line but the line ended up using the individual counters instead. **Severity: LOW** (dead code, not a runtime defect). Fix by deleting the local, unless the intent was to surface it (e.g. a total in a summary line) — in which case wire it in. PR #440 example: `var totalChecks = requirementChecks.Count;` in `RequirementsSubcommand` was never read (the summary used `passedChecks`/`warningChecks`/`failedChecks`); the build stayed green because `.Count` is a property access, and the skill walked past it.
+
+- **CHANGELOG entry crispness (Rule AA)**: `CHANGELOG.md` `[Unreleased]` feeds straight into the nuget.org release notes, so each entry must be one crisp sentence about the user-visible change — not an essay. Flag entries that explain internal mechanism, name classes/methods/internals, restate rationale, or run multiple sentences of background. Fix by cutting to what a package consumer needs to know. **Severity: LOW.**
+
+- **Code comment crispness (Rule BB)**: Comments added in the diff must be crisp and follow .NET conventions — `///` XML doc on public members, short `//` only on non-obvious logic. Flag multi-line rationale essays, comments that restate what the code already says, and commit-message-style narration in source. A comment states *why* in one line; it does not retell the change (that belongs in the commit/PR). **Severity: LOW.**
+
+Full detection rules and real examples are in `.claude/agents/pr-code-reviewer.md` Step 9, Rules N through V (plus W–BB above).
 
 ### Context Awareness
 The skill differentiates between:
