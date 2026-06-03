@@ -38,9 +38,9 @@ public interface IAgent365ToolingService
     /// </summary>
     /// <param name="environmentId">Dataverse environment ID</param>
     /// <param name="serverName">MCP server name to publish</param>
-    /// <param name="request">Publish request with alias, display name, optional Entra app credentials, and optional publisher name</param>
+    /// <param name="request">Publish request with alias, display name, the Public Clients Entra app id, and optional publisher name</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Response from the publish operation, including the underlying server's PPMI app id and redirect URI</returns>
+    /// <returns>Response from the publish operation, including the underlying server's app id and OAuth scope (for the post-publish required-resource-access grant) and the echoed Public Clients app id</returns>
     Task<PublishMcpServerResponse?> PublishServerAsync(
         string environmentId,
         string serverName,

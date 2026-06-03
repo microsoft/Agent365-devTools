@@ -192,6 +192,14 @@ internal class EntraAppProvisioner
         }
         catch (Exception ex)
         {
+            // Caller cancellation (Ctrl+C) should terminate the CLI promptly rather than be demoted
+            // to a warning and continue. Rethrow so cancellation propagates, matching the handling
+            // in the command executors and setup flows.
+            if (ex is OperationCanceledException && ct.IsCancellationRequested)
+            {
+                throw;
+            }
+
             var msg = $"Failed to set redirect URIs on Public Clients app: {ex.Message}";
             _logger.LogError(msg);
             warnings.Add(msg);

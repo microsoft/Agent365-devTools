@@ -141,6 +141,14 @@ internal class PublishCommandExecutor
         }
         catch (Exception ex)
         {
+            // Caller cancellation (Ctrl+C) should abort fast and predictably rather than be reported
+            // as a publish failure and trigger rollback work. Rethrow so the process exits quickly,
+            // matching the cancellation handling in the setup flows.
+            if (ex is OperationCanceledException && ct.IsCancellationRequested)
+            {
+                throw;
+            }
+
             _logger.LogError("Failed to publish MCP server '{ServerName}': {Error}", input.ServerName, ex.Message);
             _logger.LogDebug("Exception details: {Exception}", ex.ToString());
             await RollbackEntraAppsAsync(apps, tenantId, ct);
@@ -231,12 +239,14 @@ internal class PublishCommandExecutor
 
             // Publisher name: optional from the CLI's perspective. The platform's v2 validator
             // requires a non-empty value for custom (user-created) servers and ignores it for
-            // 1p app-based servers. Prompt the user when not supplied, but allow empty input —
-            // a Microsoft developer publishing msdyn_DataverseMCPServer shouldn't have to type
-            // anything. If they're publishing a custom server with no value, the platform's
-            // error message tells them what's missing. Dry-run also skips the prompt.
+            // 1p app-based servers. Prompt only when the option was omitted entirely (null) — a
+            // Microsoft developer publishing msdyn_DataverseMCPServer can just press Enter. An
+            // explicitly empty/whitespace value (e.g. --publisher-name "" from a script) is treated
+            // as "no publisher" without prompting, so non-interactive automation never hangs. If a
+            // custom server ends up with no value, the platform's error message says what's missing.
+            // Dry-run also skips the prompt.
             var publisherName = args.PublisherName;
-            if (string.IsNullOrWhiteSpace(publisherName))
+            if (publisherName is null)
             {
                 publisherName = args.DryRun
                     ? null
@@ -244,6 +254,10 @@ internal class PublishCommandExecutor
                         "Enter publisher name (optional for 1p Microsoft-owned servers, required otherwise): ",
                         "Publisher name",
                         maxLength: 100);
+            }
+            else if (string.IsNullOrWhiteSpace(publisherName))
+            {
+                publisherName = null;
             }
             else
             {

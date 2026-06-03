@@ -236,6 +236,83 @@ public class DevelopMcpCommandRegressionTests
     }
 
     /// <summary>
+    /// Regression test for the empty-publisher case: an explicit <c>--publisher-name ""</c> (empty /
+    /// whitespace) must be treated as "no publisher" without triggering the interactive prompt, so
+    /// non-interactive automation can't hang. Exercises the non-dry-run path with <c>--yes</c>; the
+    /// proof the prompt was skipped is that the executor reaches PublishServerAsync at all (a real
+    /// prompt would block on Console.ReadLine), and the forwarded request carries a null publisher.
+    /// </summary>
+    [Fact]
+    public async Task PublishCommand_ExplicitEmptyPublisherName_SkipsPromptAndForwardsNull()
+    {
+        // Arrange
+        const string TestTenantId = "test-tenant-99999";
+        const string TestEnvironmentId = "test-env-empty-pub";
+        const string TestServerName = "msdyn_TestServer";
+        const string TestAlias = "test-alias-empty-pub";
+        const string TestDisplayName = "Test Display Empty Pub";
+        const string TestPublicClientsObjectId = "public-clients-object-id";
+        const string TestPublicClientsClientId = "public-clients-client-id";
+
+        var logger = Substitute.For<ILogger>();
+        var toolingService = Substitute.For<IAgent365ToolingService>();
+        var graphApiService = Substitute.For<GraphApiService>();
+
+        graphApiService.CreateEntraAppAsync(
+                TestTenantId, Arg.Any<string>(), serviceTreeId: Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(string ObjectId, string ClientId)?>(
+                (TestPublicClientsObjectId, TestPublicClientsClientId)));
+        graphApiService.UpdateAppPublicClientRedirectUrisAsync(
+                TestTenantId, TestPublicClientsObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+        graphApiService.GetOAuth2PermissionScopeIdAsync(
+                TestTenantId, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<Guid?>(Guid.NewGuid()));
+        graphApiService.AddRequiredResourceAccessAsync(
+                TestTenantId, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        PublishMcpServerRequest? capturedRequest = null;
+        toolingService.PublishServerAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Do<PublishMcpServerRequest>(r => capturedRequest = r),
+                Arg.Any<CancellationToken>())
+            .Returns(new PublishMcpServerResponse
+            {
+                Status = "Success",
+                McpServerAppId = Guid.NewGuid().ToString(),
+                McpServerScope = "Tools.ListInvoke.All",
+            });
+
+        var executor = new TestablePublishCommandExecutor(
+            logger, toolingService, graphApiService, TestTenantId);
+
+        var args = new RawPublishArgs(
+            EnvironmentId: TestEnvironmentId,
+            ServerName: TestServerName,
+            Alias: TestAlias,
+            DisplayName: TestDisplayName,
+            PublisherName: string.Empty, // explicit empty, e.g. --publisher-name "" from a script
+            Yes: true,
+            DryRun: false);
+
+        // Act
+        var result = await executor.ExecuteAsync(args);
+
+        // Assert
+        result.Should().BeTrue(
+            because: "an explicit empty publisher is valid (treated as no publisher), so the happy " +
+                     "path with all dependencies mocked must return true.");
+        capturedRequest.Should().NotBeNull(
+            because: "the executor must proceed to PublishServerAsync without prompting; an explicit " +
+                     "empty --publisher-name must not be treated as 'missing' and block on the prompt.");
+        capturedRequest!.PublisherName.Should().BeNull(
+            because: "an explicit empty/whitespace --publisher-name is normalized to null ('no " +
+                     "publisher'); the platform decides whether that's acceptable for the server type.");
+    }
+
+    /// <summary>
     /// Test-only subclass of <see cref="PublishCommandExecutor"/> that stubs out
     /// <see cref="PublishCommandExecutor.DetectTenantIdAsync"/> with a known value, so the
     /// strengthened contract test doesn't need to shell out to <c>az account show</c> in CI.
