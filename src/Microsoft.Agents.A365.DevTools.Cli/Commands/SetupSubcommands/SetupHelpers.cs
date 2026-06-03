@@ -900,20 +900,20 @@ internal static class SetupHelpers
                     logger.LogInformation("");
                     logger.LogInformation("     B. Ask the blueprint owner to add you as a co-owner, then re-run just");
                     logger.LogInformation("        the endpoint step (no need to re-run the full setup):");
-                    logger.LogInformation("          a365 setup blueprint --endpoint-only --m365");
+                    logger.LogInformation("          a365 setup blueprint --endpoint-only");
                 }
                 else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.BlueprintMissing, StringComparison.Ordinal))
                 {
                     logger.LogInformation("  {N}. Messaging endpoint — not attempted because agent blueprint creation did not", actionCount);
                     logger.LogInformation("     complete. Resolve the blueprint step (see errors above), then re-run just");
                     logger.LogInformation("     the endpoint step:");
-                    logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
+                    logger.LogInformation("       a365 setup blueprint --endpoint-only");
                 }
                 else
                 {
                     logger.LogInformation("  {N}. Messaging endpoint — registration failed; see the error above for details.", actionCount);
                     logger.LogInformation("     To retry after addressing the issue, re-run just the endpoint step:");
-                    logger.LogInformation("       a365 setup blueprint --endpoint-only --m365");
+                    logger.LogInformation("       a365 setup blueprint --endpoint-only");
                     logger.LogInformation("");
                     logger.LogInformation("     Or configure the endpoint manually in the Teams Developer Portal:");
                     logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
@@ -989,7 +989,7 @@ internal static class SetupHelpers
                 nextStepLines.Add(() =>
                 {
                     logger.LogInformation("  Messaging endpoint — set it once your agent is deployed:");
-                    logger.LogInformation("    a365 setup blueprint --endpoint-only --m365 --messaging-endpoint <https-url>");
+                    logger.LogInformation("    a365 setup blueprint --endpoint-only --messaging-endpoint <https-url>");
                     logger.LogInformation("  Or register it manually in the Teams Developer Portal:");
                     logger.LogInformation("    {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
                 });

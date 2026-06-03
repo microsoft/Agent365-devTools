@@ -172,9 +172,9 @@ internal static class BlueprintSubcommand
 
         var m365Option = new Option<bool>(
             "--m365",
-            description: "Treat this agent as an M365 agent. Only affects --endpoint-only and --update-endpoint " +
-                        "on this command. To configure the messaging endpoint as part of full setup, use " +
-                        "'a365 setup all --m365'.");
+            description: "Treat this agent as an M365 agent. Optional on this command — --endpoint-only and " +
+                        "--update-endpoint already use the M365 (Teams Graph) path automatically. To configure " +
+                        "the messaging endpoint as part of full setup, use 'a365 setup all --m365'.");
 
         var showSecretOption = new Option<bool>(
             "--show-secret",
@@ -210,6 +210,11 @@ internal static class BlueprintSubcommand
             var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
+            // Endpoint operations always go through Teams Graph (the M365 path), so infer --m365 for
+            // --endpoint-only / --update-endpoint — users shouldn't have to pass it. ('setup all' keeps
+            // --m365 explicit because there it also affects the granted permission set.)
+            if (endpointOnly || !string.IsNullOrWhiteSpace(updateEndpoint))
+                isM365 = true;
             var showSecret = context.ParseResult.GetValueForOption(showSecretOption);
             var ct = context.GetCancellationToken();
 
@@ -357,15 +362,9 @@ internal static class BlueprintSubcommand
             // target the correct national cloud endpoint (commercial by default).
             graphApiService.GraphBaseUrl = setupConfig.GraphBaseUrl;
 
-            // Handle --update-endpoint flag
+            // Handle --update-endpoint flag (--m365 is inferred for endpoint operations).
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
             {
-                if (!isM365)
-                {
-                    LogNonM365EndpointGuidance(logger, "update");
-                    return;
-                }
-
                 await UpdateEndpointAsync(
                     config.FullName,
                     updateEndpoint,
@@ -405,18 +404,12 @@ internal static class BlueprintSubcommand
             {
                 logger.LogInformation(
                     "Note: --m365 has no effect on 'setup blueprint' by itself. Use 'a365 setup all --m365' to register the messaging endpoint, " +
-                    "or 'a365 setup blueprint --endpoint-only --m365' after the blueprint exists.");
+                    "or 'a365 setup blueprint --endpoint-only' after the blueprint exists.");
             }
 
-            // Handle --endpoint-only flag — only wired up for --m365 agents.
+            // Handle --endpoint-only flag (--m365 is inferred for endpoint operations).
             if (endpointOnly)
             {
-                if (!isM365)
-                {
-                    LogNonM365EndpointGuidance(logger, "register");
-                    return;
-                }
-
                 var endpointResult = await RegisterEndpointAndSyncAsync(
                     config.FullName,
                     logger,
@@ -460,22 +453,6 @@ internal static class BlueprintSubcommand
         });
 
         return command;
-    }
-
-    /// <summary>
-    /// Logs the standard "non-M365 agent" message directing the user to configure the messaging
-    /// endpoint in the Teams Developer Portal. Used when the user did not pass --m365 on commands
-    /// that would otherwise call into the Teams Graph backend configurator.
-    /// </summary>
-    /// <param name="logger">Logger instance.</param>
-    /// <param name="action">Either "register" or "update" — included in the skip message.</param>
-    internal static void LogNonM365EndpointGuidance(ILogger logger, string action)
-    {
-        logger.LogInformation(
-            "Skipping messaging endpoint {Action} — this command only applies to M365 agents. " +
-            "Pass --m365 to opt in, or configure the endpoint manually in the Teams Developer Portal:",
-            action);
-        logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
     }
 
     /// <summary>

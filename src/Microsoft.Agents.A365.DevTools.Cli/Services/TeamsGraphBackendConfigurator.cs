@@ -52,7 +52,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
             if (string.IsNullOrEmpty(tenantId))
             {
-                _logger.LogError("Could not determine tenant ID for backend configuration");
+                _logger.LogError("Could not determine tenant ID to register the messaging endpoint.");
                 return (EndpointRegistrationResult.Failed, "Other");
             }
 
@@ -124,7 +124,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                     return (EndpointRegistrationResult.SkippedContractMismatch, null);
                 }
 
-                _logger.LogError("Failed to set backend configuration. Status: {Status}", response.StatusCode);
+                _logger.LogError("Failed to register the messaging endpoint. Status: {Status}", response.StatusCode);
                 _logger.LogError("Response: {Error}", errorContent);
                 return (EndpointRegistrationResult.Failed, ClassifyFailureReason(errorContent));
             }
@@ -143,7 +143,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error setting backend configuration: {Message}", ex.Message);
+            _logger.LogError(ex, "Unexpected error registering the messaging endpoint: {Message}", ex.Message);
             return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
     }
@@ -164,7 +164,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
             if (string.IsNullOrEmpty(tenantId))
             {
-                _logger.LogError("Could not determine tenant ID for backend configuration");
+                _logger.LogError("Could not determine tenant ID to remove the messaging endpoint.");
                 return false;
             }
 
@@ -267,7 +267,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error clearing backend configuration: {Message}", ex.Message);
+            _logger.LogError(ex, "Unexpected error removing the messaging endpoint: {Message}", ex.Message);
             return false;
         }
     }

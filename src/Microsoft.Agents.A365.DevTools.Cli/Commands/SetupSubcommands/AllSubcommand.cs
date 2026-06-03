@@ -162,7 +162,7 @@ internal static class AllSubcommand
                         "When supplied, the endpoint is registered as part of setup. When omitted, an\n" +
                         "interactive run prompts for it and a non-interactive run defers it — the endpoint\n" +
                         "is a post-deploy artifact, so it can be set later with\n" +
-                        "'a365 setup blueprint --endpoint-only --m365 --messaging-endpoint <url>'.");
+                        "'a365 setup blueprint --endpoint-only --messaging-endpoint <url>'.");
 
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
@@ -887,7 +887,7 @@ internal static class AllSubcommand
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
             ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.BlueprintMissing;
             ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
-            ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only --m365'.");
+            ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only'.");
             return;
         }
 

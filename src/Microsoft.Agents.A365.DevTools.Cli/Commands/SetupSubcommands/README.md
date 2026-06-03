@@ -96,21 +96,20 @@ a365 setup all --authmode both
 
 ### Messaging endpoint (M365 agents)
 
-The `--m365` flag opts into registering the messaging endpoint with Teams Graph via MCP Platform. It is **off by default** — without it, `--endpoint-only`, `--update-endpoint`, and the messaging-endpoint step in `setup all` skip the API call and point you at the Teams Developer Portal for manual configuration.
+The `--m365` flag opts into registering the messaging endpoint with Teams Graph via MCP Platform. On `setup all` it is **off by default** — without it, the messaging-endpoint step is skipped and you're pointed at the Teams Developer Portal for manual configuration. The `--endpoint-only` and `--update-endpoint` operations always use the Teams Graph path, so `--m365` is inferred there and doesn't need to be passed.
 
 ```bash
 # Full setup including messaging endpoint registration
 a365 setup all --m365
 
-# Register the messaging endpoint only (existing blueprint)
-a365 setup blueprint --endpoint-only --m365
+# Register the messaging endpoint only (existing blueprint; --m365 is inferred)
+a365 setup blueprint --endpoint-only
 
 # Update the endpoint URL (clears and re-registers)
-a365 setup blueprint --update-endpoint https://your-host.example.com/api/messages --m365
-
-# Non-M365 agent: CLI prints the Teams Developer Portal link and skips the API call
-a365 setup blueprint --endpoint-only
+a365 setup blueprint --update-endpoint https://your-host.example.com/api/messages
 ```
+
+If the tenant's Teams Graph backend can't service the request, the CLI logs a contract-mismatch notice and points to the Teams Developer Portal for manual configuration.
 
 When the server rejects the request with a recognized contract-mismatch signature (today: the pre-migration Azure Bot Service validator), the CLI logs at INFO:
 
