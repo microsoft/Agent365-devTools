@@ -11,12 +11,12 @@ using Xunit;
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
 /// <summary>
-/// Tests for <see cref="EntraAppFactory"/>. The factory absorbed the per-app creation flows that
-/// previously lived inline in PublishCommandExecutor and RegisterCommandExecutor. These tests
-/// pin every branch (success + each failure mode) so the executors can compose the factory
+/// Tests for <see cref="EntraAppProvisioner"/>. The provisioner absorbed the per-app creation flows
+/// that previously lived inline in PublishCommandExecutor and RegisterCommandExecutor. These tests
+/// pin every branch (success + each failure mode) so the executors can compose the provisioner
 /// without needing their own per-step coverage.
 /// </summary>
-public class EntraAppFactoryTests
+public class EntraAppProvisionerTests
 {
     private const string ServerName = "mcp_TestServer";
     private const string TenantId = "00000000-0000-0000-0000-0000000000aa";
@@ -27,14 +27,14 @@ public class EntraAppFactoryTests
     private readonly ILogger _logger;
     private readonly GraphApiService _graph;
     private readonly RetryHelper _retryHelper;
-    private readonly EntraAppFactory _factory;
+    private readonly EntraAppProvisioner _provisioner;
 
-    public EntraAppFactoryTests()
+    public EntraAppProvisionerTests()
     {
         _logger = Substitute.For<ILogger>();
         _graph = Substitute.For<GraphApiService>();
         _retryHelper = new RetryHelper(_logger, maxRetries: 1, baseDelaySeconds: 0);
-        _factory = new EntraAppFactory(_logger, _graph, _retryHelper);
+        _provisioner = new EntraAppProvisioner(_logger, _graph, _retryHelper);
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public class EntraAppFactoryTests
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
         _graph.AddAppPasswordAsync(TenantId, AppObjectId).Returns(Task.FromResult<string?>(AppSecret));
 
-        var result = await _factory.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: "svc-tree-7");
+        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: "svc-tree-7");
 
         result.Should().NotBeNull();
         result!.ClientId.Should().Be(AppClientId);
@@ -63,7 +63,7 @@ public class EntraAppFactoryTests
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
         _graph.AddAppPasswordAsync(TenantId, AppObjectId).Returns(Task.FromResult<string?>(AppSecret));
 
-        var result = await _factory.CreateProxyAppAsync(ServerName, TenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy", serviceTreeId: null);
+        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy", serviceTreeId: null);
 
         result.Should().NotBeNull();
         result!.AppName.Should().Be($"{ServerName}-RemoteProxy");
@@ -75,7 +75,7 @@ public class EntraAppFactoryTests
         _graph.CreateEntraAppAsync(TenantId, Arg.Any<string>(), serviceTreeId: Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>(null));
 
-        var result = await _factory.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
+        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
 
         result.Should().BeNull();
         await _graph.DidNotReceive().AddAppPasswordAsync(Arg.Any<string>(), Arg.Any<string>());
@@ -94,7 +94,7 @@ public class EntraAppFactoryTests
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
         _graph.AddAppPasswordAsync(TenantId, AppObjectId).Returns(Task.FromResult<string?>(null));
 
-        var result = await _factory.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
+        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
 
         result.Should().BeNull();
         _logger.Received(1).Log(
@@ -112,7 +112,7 @@ public class EntraAppFactoryTests
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
         _graph.AddAppPasswordAsync(TenantId, AppObjectId).Returns(Task.FromResult<string?>("   "));
 
-        var result = await _factory.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
+        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
 
         result.Should().BeNull();
     }
@@ -124,7 +124,7 @@ public class EntraAppFactoryTests
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, string.Empty)));
         _graph.AddAppPasswordAsync(TenantId, AppObjectId).Returns(Task.FromResult<string?>(AppSecret));
 
-        var result = await _factory.CreateProxyAppAsync(ServerName, TenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy", serviceTreeId: null);
+        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy", serviceTreeId: null);
 
         result.Should().BeNull();
         _logger.Received(1).Log(
@@ -149,7 +149,7 @@ public class EntraAppFactoryTests
             .Returns(Task.FromResult(true));
 
         var warnings = new List<string>();
-        var result = await _factory.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: "svc-tree-9", warnings);
+        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: "svc-tree-9", warnings);
 
         result.Should().NotBeNull();
         result.ClientId.Should().Be(AppClientId);
@@ -182,7 +182,7 @@ public class EntraAppFactoryTests
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>(null));
 
         var warnings = new List<string>();
-        var result = await _factory.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
+        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
 
         result.ClientId.Should().BeNull();
         result.ObjectId.Should().BeNull();
@@ -203,7 +203,7 @@ public class EntraAppFactoryTests
             .Returns(Task.FromResult(false));
 
         var warnings = new List<string>();
-        var result = await _factory.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
+        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
 
         result.ClientId.Should().Be(AppClientId);
         result.ObjectId.Should().Be(AppObjectId);
@@ -221,7 +221,7 @@ public class EntraAppFactoryTests
             .Returns<Task<bool>>(_ => throw new InvalidOperationException("Graph blew up"));
 
         var warnings = new List<string>();
-        var result = await _factory.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
+        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
 
         result.ClientId.Should().Be(AppClientId);
         result.ObjectId.Should().Be(AppObjectId);

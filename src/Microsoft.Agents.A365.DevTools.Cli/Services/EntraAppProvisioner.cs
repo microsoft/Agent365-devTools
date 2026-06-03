@@ -10,10 +10,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// Creates the Entra app registrations needed by publish and register flows. Both flows produce
 /// the same two app shapes (a confidential proxy app with a secret, and a public-client app with
 /// canonical redirect URIs); register additionally produces a second proxy app for the remote
-/// MCP server. This factory centralizes the creation steps and their error-handling so the
+/// MCP server. This provisioner centralizes the creation steps and their error-handling so the
 /// command executors can compose them without duplicating the per-step null checks and logging.
 /// </summary>
-internal class EntraAppFactory
+internal class EntraAppProvisioner
 {
     private static readonly string[] PublicClientCanonicalRedirectUris =
     [
@@ -26,7 +26,7 @@ internal class EntraAppFactory
     private readonly GraphApiService _graphApiService;
     private readonly RetryHelper _retryHelper;
 
-    internal EntraAppFactory(ILogger logger, GraphApiService graphApiService, RetryHelper retryHelper)
+    internal EntraAppProvisioner(ILogger logger, GraphApiService graphApiService, RetryHelper retryHelper)
     {
         _logger = logger;
         _graphApiService = graphApiService;

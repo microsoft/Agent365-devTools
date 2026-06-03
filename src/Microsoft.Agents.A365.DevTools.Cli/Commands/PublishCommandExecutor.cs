@@ -26,10 +26,6 @@ internal record RawPublishArgs(
 /// <see cref="RegisterCommandExecutor"/> for BYO register: the CLI creates the Public Clients
 /// Entra app in the user's own tenant, calls the platform publish endpoint, and back-fills the
 /// PPMI scope grant on it after the platform resolves the underlying server's PPMI identity.
-/// NOTE: A365 Proxy Entra app creation + redirect-URI back-fill are TEMPORARILY DISABLED while
-/// the platform-side custom connector flow is commented out (see PublishMCPServerV2Async in
-/// MCPDataverseEnvironmentService). Reinstate the proxy-related blocks below together with the
-/// platform-side flow.
 /// </summary>
 internal class PublishCommandExecutor
 {
@@ -73,10 +69,6 @@ internal class PublishCommandExecutor
     }
 
     internal sealed record EntraAppSet(
-        string A365AppClientId,
-        string A365AppSecret,
-        string A365AppObjectId,
-        string A365AppName,
         string? PublicClientsClientId,
         string? PublicClientsObjectId,
         string PublicClientsAppName);
@@ -90,13 +82,6 @@ internal class PublishCommandExecutor
 
         if (input.DryRun)
         {
-            // TEMPORARILY DISABLED: A365 Proxy dry-run lines (proxy app creation + redirect URI
-            // back-fill). Reinstate together with the corresponding logic in CreateEntraAppsAsync
-            // and ConfigureEntraAppsAsync.
-            /*
-            _logger.LogInformation("[DRY RUN] Would create Entra apps '{A365}' and '{PublicClients}' in tenant", $"{input.ServerName}-A365Proxy", $"{input.ServerName}-PublicClients");
-            _logger.LogInformation("[DRY RUN] Would call publish endpoint and back-fill redirect URI + PPMI scope on the created apps");
-            */
             _logger.LogInformation("[DRY RUN] Would create Entra app '{PublicClients}' in tenant", $"{input.ServerName}-PublicClients");
             _logger.LogInformation("[DRY RUN] Would call publish endpoint and back-fill PPMI scope on the created app");
             return true;
@@ -138,26 +123,10 @@ internal class PublishCommandExecutor
 
         ct.ThrowIfCancellationRequested();
 
-        // TEMPORARILY DISABLED: A365 Proxy client-id parse + creds assignment to the publish request.
-        // The platform's v2 publish ignores these fields while the custom connector flow is
-        // disabled (see PublishMCPServerV2Async Step 3 comment block in MCPDataverseEnvironmentService).
-        // Reinstate the parse block, the apps == null short-circuit above, and the two request
-        // fields together when the proxy flow returns.
-        /*
-        if (!Guid.TryParse(apps.A365AppClientId, out var a365ProxyClientId))
-        {
-            _logger.LogError("A365 Proxy Entra app returned an invalid client ID '{ClientId}'. Expected a GUID. Cannot continue publish.", apps.A365AppClientId);
-            await RollbackEntraAppsAsync(apps, tenantId, ct);
-            return false;
-        }
-        */
-
         var request = new PublishMcpServerRequest
         {
             Alias = input.Alias,
             DisplayName = input.DisplayName,
-            // A365ProxyClientId = a365ProxyClientId,
-            // A365ProxyClientSecret = apps.A365AppSecret,
             PublicClientsAppId = apps.PublicClientsClientId,
             PublisherName = input.PublisherName,
         };
@@ -166,10 +135,8 @@ internal class PublishCommandExecutor
         try
         {
             // Hits the platform's v2 publish endpoint via the tooling service, which performs the
-            // full elevation orchestration (PPMI provisioning, MOS upload). A365 Proxy CMS
-            // connector creation is TEMPORARILY DISABLED on the platform side (see
-            // PublishMCPServerV2Async Step 3 comment block) while the custom connector flow is
-            // being re-evaluated. The platform's v1 endpoint remains for older CLI binaries.
+            // full elevation orchestration (PPMI provisioning, MOS upload). The platform's v1
+            // endpoint remains for older CLI binaries.
             publishResponse = await _toolingService.PublishServerAsync(input.EnvironmentId, input.ServerName, request, ct);
         }
         catch (Exception ex)
@@ -333,26 +300,12 @@ internal class PublishCommandExecutor
 
     private async Task<EntraAppSet?> CreateEntraAppsAsync(ResolvedInput input, string tenantId, List<string> warnings, CancellationToken ct = default)
     {
-        var factory = new EntraAppFactory(_logger, _graphApiService!, _retryHelper);
+        var provisioner = new EntraAppProvisioner(_logger, _graphApiService!, _retryHelper);
 
-        // TEMPORARILY DISABLED: A365 Proxy Entra app creation. The platform-side custom connector
-        // flow that consumed these credentials is commented out, so creating the app here would
-        // leak an unused Entra registration in the user's tenant. Reinstate together with the
-        // platform flow. A365App* fields on the returned EntraAppSet are placeholder empties.
-        /*
-        var a365 = await factory.CreateProxyAppAsync(
-            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null, ct);
-        if (a365 == null) return null;
-        */
-
-        var publicClients = await factory.CreatePublicClientsAppAsync(
+        var publicClients = await provisioner.CreatePublicClientsAppAsync(
             input.ServerName, tenantId, serviceTreeId: null, warnings, ct);
 
         return new EntraAppSet(
-            A365AppClientId: string.Empty,
-            A365AppSecret: string.Empty,
-            A365AppObjectId: string.Empty,
-            A365AppName: string.Empty,
             PublicClientsClientId: publicClients.ClientId,
             PublicClientsObjectId: publicClients.ObjectId,
             PublicClientsAppName: publicClients.AppName);
@@ -366,17 +319,11 @@ internal class PublishCommandExecutor
     {
         if (_graphApiService is null)
         {
-            _logger.LogWarning("Graph API service is unavailable; cannot roll back Entra apps '{A365}' / '{PublicClients}'. Delete them manually in the Azure portal.", apps.A365AppName, apps.PublicClientsAppName);
+            _logger.LogWarning("Graph API service is unavailable; cannot roll back Entra app '{PublicClients}'. Delete it manually in the Azure portal.", apps.PublicClientsAppName);
             return;
         }
 
         _logger.LogInformation("Rolling back Entra app registrations created for failed publish...");
-
-        // TEMPORARILY DISABLED: A365 Proxy delete. The proxy Entra app is no longer created
-        // (see CreateEntraAppsAsync). Reinstate together with the proxy app creation.
-        /*
-        await DeleteOneAsync(apps.A365AppObjectId, apps.A365AppClientId, apps.A365AppName, ct);
-        */
 
         if (!string.IsNullOrWhiteSpace(apps.PublicClientsObjectId))
         {
@@ -420,30 +367,11 @@ internal class PublishCommandExecutor
         var tasks = new List<Task>();
         var concurrentWarnings = new System.Collections.Concurrent.ConcurrentBag<string>();
 
-        // TEMPORARILY DISABLED: A365 Proxy redirect-URI back-fill. The platform's v2 publish no
-        // longer creates the proxy connector, so A365ProxyRedirectUri always comes back null and
-        // there is no A365 Proxy Entra app to write a redirect URI onto. Reinstate together with
-        // the proxy app creation in CreateEntraAppsAsync.
-        /*
-        var a365RedirectUri = response.A365ProxyRedirectUri;
-
-        if (!string.IsNullOrWhiteSpace(a365RedirectUri))
-        {
-            tasks.Add(UpdateA365RedirectUrisAsync(tenantId, apps, a365RedirectUri, concurrentWarnings, ct));
-        }
-        else
-        {
-            var msg = "A365 Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
-            _logger.LogWarning(msg);
-            concurrentWarnings.Add(msg);
-        }
-        */
-
-        // Grant required-resource-access on the just-created A365 Proxy + Public Clients Entra apps.
+        // Grant required-resource-access on the just-created Public Clients Entra app.
         // The platform resolves the right resource per server type (Custom: managedidentityid; app-based
         // / Dataverse MCP: 1p mappings; fallback: platform's own app id) and returns both the resource
         // app id and the scope name. We look up the scope guid on the resource app, then add it as
-        // requiredResourceAccess on each of the two Entra apps we created.
+        // requiredResourceAccess on the Entra app we created.
         var resourceAppId = response.McpServerAppId;
         var resourceScopeName = response.McpServerScope;
         Guid? resourceScopeId = null;
@@ -474,13 +402,6 @@ internal class PublishCommandExecutor
 
         if (resourceScopeId.HasValue)
         {
-            // TEMPORARILY DISABLED: required-resource-access grant on the A365 Proxy app. The proxy
-            // app is no longer created (see CreateEntraAppsAsync). Reinstate together with the
-            // proxy app creation.
-            /*
-            tasks.Add(AddRequiredResourceAccessAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, resourceAppId!, resourceScopeId.Value, concurrentWarnings, ct));
-            */
-
             if (apps.PublicClientsObjectId != null)
             {
                 tasks.Add(AddRequiredResourceAccessAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, resourceAppId!, resourceScopeId.Value, concurrentWarnings, ct));
@@ -498,46 +419,6 @@ internal class PublishCommandExecutor
         foreach (var w in concurrentWarnings)
             warnings.Add(w);
     }
-
-    // TEMPORARILY DISABLED: UpdateA365RedirectUrisAsync. Sole caller in ConfigureEntraAppsAsync is
-    // commented out. Reinstate together with the A365 Proxy app creation in CreateEntraAppsAsync.
-    /*
-    private async Task UpdateA365RedirectUrisAsync(
-        string tenantId,
-        EntraAppSet apps,
-        string a365RedirectUri,
-        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            var a365TcUri = DevelopMcpCommand.AddTcPrefix(a365RedirectUri);
-            var a365NonTcUri = DevelopMcpCommand.RemoveTcPrefix(a365RedirectUri);
-            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
-            _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
-            var success = await _retryHelper.ExecuteWithRetryAsync(
-                async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, retryCt),
-                result => !result,
-                cancellationToken: ct);
-            if (!success)
-            {
-                var msg = $"Failed to update redirect URIs on A365 Proxy app '{apps.A365AppName}' after retries.";
-                _logger.LogError(msg);
-                concurrentWarnings.Add(msg);
-            }
-            else
-            {
-                _logger.LogInformation("Updated redirect URIs on '{AppName}'", apps.A365AppName);
-            }
-        }
-        catch (Exception ex)
-        {
-            var msg = $"Failed to update redirect URIs on A365 Proxy app: {ex.Message}";
-            _logger.LogError(msg);
-            concurrentWarnings.Add(msg);
-        }
-    }
-    */
 
     private async Task AddRequiredResourceAccessAsync(
         string tenantId,

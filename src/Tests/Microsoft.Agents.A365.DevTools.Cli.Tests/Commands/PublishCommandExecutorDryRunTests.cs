@@ -13,13 +13,17 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// <summary>
 /// Tests for <see cref="PublishCommandExecutor"/> dry-run output. The dry-run log must mirror the
 /// real Entra app naming scheme (derived from <c>ServerName</c>) so users can predict what will be
-/// created. Earlier the log used <c>Alias</c>, which diverged from CreateEntraAppsAsync's
-/// <c>{ServerName}-A365Proxy</c> / <c>{ServerName}-PublicClients</c> naming.
+/// created — the <c>{ServerName}-PublicClients</c> app.
 /// </summary>
 public class PublishCommandExecutorDryRunTests
 {
-    [Fact(Skip = "A365 Proxy Entra app creation is TEMPORARILY DISABLED in PublishCommandExecutor while the platform custom connector flow is commented out. Dry-run log no longer mentions the A365Proxy app or the redirect-URI back-fill. Re-enable together with CreateEntraAppsAsync's proxy creation.")]
-    public async Task ExecuteAsync_DryRun_LogsEntraAppNamesDerivedFromServerName()
+    /// <summary>
+    /// The dry-run log must (a) name only the Public Clients app — derived from <c>ServerName</c>,
+    /// not <c>Alias</c> — (b) describe a PPMI-scope-only back-fill (no redirect-URI back-fill), and
+    /// (c) skip the platform publish call entirely.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DryRun_NamesPublicClientsApp_AndBackfillsPpmiScopeOnly()
     {
         var logger = Substitute.For<ILogger>();
         var toolingService = Substitute.For<IAgent365ToolingService>();
@@ -28,7 +32,6 @@ public class PublishCommandExecutorDryRunTests
         // would surface in the negative assertion below.
         const string serverName = "mcp_TestServer";
         const string alias = "myAlias";
-        const string expectedA365AppName = "mcp_TestServer-A365Proxy";
         const string expectedPublicClientsAppName = "mcp_TestServer-PublicClients";
 
         var args = new RawPublishArgs(
@@ -44,67 +47,14 @@ public class PublishCommandExecutorDryRunTests
 
         await executor.ExecuteAsync(args, CancellationToken.None);
 
-        logger.Received(1).Log(
-            LogLevel.Information,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o =>
-                o.ToString()!.Contains("[DRY RUN] Would create Entra apps") &&
-                o.ToString()!.Contains(expectedA365AppName) &&
-                o.ToString()!.Contains(expectedPublicClientsAppName) &&
-                !o.ToString()!.Contains($"{alias}-A365Proxy") &&
-                !o.ToString()!.Contains($"{alias}-PublicClients")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
-
-        logger.Received(1).Log(
-            LogLevel.Information,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Would call publish endpoint and back-fill")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
-
-        await toolingService.DidNotReceiveWithAnyArgs().PublishServerAsync(default!, default!, default!, default);
-    }
-
-    /// <summary>
-    /// While the A365 Proxy flow is disabled, the dry-run log must (a) mention only the Public
-    /// Clients app — not the A365 Proxy app — derived from <c>ServerName</c>, (b) replace the
-    /// redirect-URI back-fill line with a PPMI-scope-only back-fill line, and (c) still skip the
-    /// platform publish call. Acts as the canary: if the proxy line silently comes back without
-    /// the corresponding logic being re-enabled, this fails.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_DryRun_OmitsA365ProxyApp_WhileCustomConnectorFlowDisabled()
-    {
-        var logger = Substitute.For<ILogger>();
-        var toolingService = Substitute.For<IAgent365ToolingService>();
-
-        const string serverName = "mcp_TestServer";
-        const string alias = "myAlias";
-        const string disabledA365AppName = "mcp_TestServer-A365Proxy";
-        const string expectedPublicClientsAppName = "mcp_TestServer-PublicClients";
-
-        var args = new RawPublishArgs(
-            EnvironmentId: "00000000-0000-0000-0000-000000000000",
-            ServerName: serverName,
-            Alias: alias,
-            DisplayName: "Test Display",
-            PublisherName: null,
-            Yes: false,
-            DryRun: true);
-
-        var executor = new PublishCommandExecutor(logger, toolingService, graphApiService: null);
-
-        await executor.ExecuteAsync(args, CancellationToken.None);
-
-        // The active dry-run line names only Public Clients and does NOT name A365 Proxy.
+        // The dry-run line names the Public Clients app (derived from ServerName, not Alias).
         logger.Received(1).Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o =>
                 o.ToString()!.Contains("[DRY RUN] Would create Entra app") &&
                 o.ToString()!.Contains(expectedPublicClientsAppName) &&
-                !o.ToString()!.Contains(disabledA365AppName)),
+                !o.ToString()!.Contains($"{alias}-PublicClients")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
 

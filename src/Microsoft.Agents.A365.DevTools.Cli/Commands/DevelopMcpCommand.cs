@@ -288,6 +288,7 @@ public static class DevelopMcpCommand
         var envIdOption = new Option<string?>(
             ["--environment-id", "-e"],
             description: "Dataverse environment ID");
+        envIdOption.IsRequired = false; // Allow null so we can prompt
         command.AddOption(envIdOption);
 
         var serverNameOption = new Option<string?>(
@@ -308,12 +309,12 @@ public static class DevelopMcpCommand
 
         var publisherNameOption = new Option<string?>(
             ["--publisher-name", "-p"],
-            description: "Publisher name written into the MOS package manifest. Required for custom (user-created) MCP servers; ignored for 1p Microsoft-owned servers (e.g. msdyn_DataverseMCPServer) which always publish as 'Microsoft'.");
+            description: "Publisher name for the MCP Server. Required for custom (user-created) MCP servers; ignored for 1p Microsoft-owned servers (e.g. msdyn_DataverseMCPServer) which always publish as 'Microsoft'.");
         command.AddOption(publisherNameOption);
 
         var yesOption = new Option<bool>(
             ["--yes", "-y"],
-            description: "Skip the interactive 'Proceed with publish? (y/N)' confirmation. Useful for non-interactive contexts (CI/CD pipelines, scripts). Matches az CLI convention.");
+            description: "Skip the interactive 'Proceed with publish? (y/N)' confirmation.");
         command.AddOption(yesOption);
 
         var dryRunOption = new Option<bool>("--dry-run", "Show what would be done without executing");

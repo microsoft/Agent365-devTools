@@ -27,7 +27,7 @@ public class PublishMcpServerResponse
     /// server type — Custom servers from <c>managedidentityid</c> on the <c>mcpserver</c> row, app-based
     /// / Dataverse MCP servers from 1p server-to-app mappings, fallback to the platform's own app id.
     /// The CLI uses this together with <see cref="McpServerScope"/> to look up the scope id and grant
-    /// required-resource-access on the A365 Proxy + Public Clients Entra apps.
+    /// required-resource-access on the Public Clients Entra app.
     /// </summary>
     [JsonPropertyName("McpServerAppId")]
     public string? McpServerAppId { get; set; }
@@ -39,20 +39,6 @@ public class PublishMcpServerResponse
     /// </summary>
     [JsonPropertyName("McpServerScope")]
     public string? McpServerScope { get; set; }
-
-    /// <summary>
-    /// CMS connector id created at publish time for the A365 Proxy connector, or null when the CLI
-    /// didn't pass Entra app credentials (older CLI flow) and no connector was created.
-    /// </summary>
-    [JsonPropertyName("A365ProxyConnectorId")]
-    public string? A365ProxyConnectorId { get; set; }
-
-    /// <summary>
-    /// OAuth redirect URI for the A365 Proxy connector. The CLI writes this onto the just-created
-    /// A365 Proxy Entra app's redirect URI list (with tc / non-tc variants) so OAuth flows complete.
-    /// </summary>
-    [JsonPropertyName("A365ProxyRedirectUri")]
-    public string? A365ProxyRedirectUri { get; set; }
 
     /// <summary>
     /// Public Clients Entra app client id, echoed back from the request so post-response

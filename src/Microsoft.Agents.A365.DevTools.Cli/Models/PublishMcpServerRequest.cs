@@ -1,6 +1,5 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-using System;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -21,20 +20,6 @@ public class PublishMcpServerRequest
     /// </summary>
     [JsonPropertyName("DisplayName")]
     public required string DisplayName { get; set; }
-
-    /// <summary>
-    /// A365 Proxy Entra app client id created CLI-side at publish time. Paired with
-    /// <see cref="A365ProxyClientSecret"/>. When provided, the platform creates an A365 Proxy CMS
-    /// connector keyed by server name so the published server is reachable through Power Platform / Copilot.
-    /// </summary>
-    [JsonPropertyName("a365ProxyClientId")]
-    public Guid? A365ProxyClientId { get; set; }
-
-    /// <summary>
-    /// A365 Proxy Entra app client secret. Paired with <see cref="A365ProxyClientId"/>.
-    /// </summary>
-    [JsonPropertyName("a365ProxyClientSecret")]
-    public string? A365ProxyClientSecret { get; set; }
 
     /// <summary>
     /// Public Clients (VS Code / Copilot CLI) Entra app client id created CLI-side. Carried in the

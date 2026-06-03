@@ -582,12 +582,12 @@ internal class RegisterCommandExecutor
     private async Task<EntraAppSet?> CreateEntraAppsAsync(
         ResolvedInput input, string tenantId, List<string> warnings)
     {
-        var factory = new EntraAppFactory(_logger, _graphApiService!, _retryHelper);
+        var provisioner = new EntraAppProvisioner(_logger, _graphApiService!, _retryHelper);
 
-        var a365 = await factory.CreateProxyAppAsync(
+        var a365ProxyApp = await provisioner.CreateProxyAppAsync(
             input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy",
             serviceTreeId: input.ServiceTreeId, lifetimeMonths: input.SecretLifetimeMonths);
-        if (a365 == null) return null;
+        if (a365ProxyApp == null) return null;
 
         string? remoteProxyClientId = null;
         string? remoteProxySecret = null;
@@ -596,25 +596,25 @@ internal class RegisterCommandExecutor
 
         if (input.IsEntra)
         {
-            var remote = await factory.CreateProxyAppAsync(
+            var remoteProxyApp = await provisioner.CreateProxyAppAsync(
                 input.ServerName, tenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy",
                 serviceTreeId: input.ServiceTreeId, lifetimeMonths: input.SecretLifetimeMonths);
-            if (remote == null) return null;
+            if (remoteProxyApp == null) return null;
 
-            remoteProxyClientId = remote.ClientId;
-            remoteProxySecret = remote.Secret;
-            remoteProxyObjectId = remote.ObjectId;
-            remoteProxyAppName = remote.AppName;
+            remoteProxyClientId = remoteProxyApp.ClientId;
+            remoteProxySecret = remoteProxyApp.Secret;
+            remoteProxyObjectId = remoteProxyApp.ObjectId;
+            remoteProxyAppName = remoteProxyApp.AppName;
         }
 
-        var publicClients = await factory.CreatePublicClientsAppAsync(
+        var publicClients = await provisioner.CreatePublicClientsAppAsync(
             input.ServerName, tenantId, serviceTreeId: input.ServiceTreeId, warnings);
 
         return new EntraAppSet(
-            A365AppClientId: a365.ClientId,
-            A365AppSecret: a365.Secret,
-            A365AppObjectId: a365.ObjectId,
-            A365AppName: a365.AppName,
+            A365AppClientId: a365ProxyApp.ClientId,
+            A365AppSecret: a365ProxyApp.Secret,
+            A365AppObjectId: a365ProxyApp.ObjectId,
+            A365AppName: a365ProxyApp.AppName,
             RemoteProxyClientId: remoteProxyClientId,
             RemoteProxySecret: remoteProxySecret,
             RemoteProxyObjectId: remoteProxyObjectId,
