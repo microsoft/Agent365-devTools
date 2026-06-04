@@ -31,6 +31,13 @@ internal sealed class SchemaDiscoveryService : ISchemaDiscoveryService, IDisposa
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
         _httpClient = handler != null ? new HttpClient(handler) : HttpClientFactory.CreateAuthenticatedClient();
+
+        // The MCP server is untrusted input and tool schemas are typically < 1 MB. Cap the
+        // buffered response size so a hostile or malformed server cannot exhaust memory with a
+        // huge tools/list payload; exceeding it throws during ReadAsStringAsync and is caught as
+        // EvaluationException by DiscoverToolsAsync. Scoped to this client rather than
+        // HttpClientFactory, which is shared by Graph/ARM/tooling where large responses are valid.
+        _httpClient.MaxResponseContentBufferSize = 10 * 1024 * 1024; // 10 MB ceiling
     }
 
     /// <summary>
