@@ -530,42 +530,63 @@ public class MicrosoftGraphTokenProviderTests
             AuthenticationConstants.ApplicationName,
             AuthenticationConstants.MsalCacheFileName);
         Directory.CreateDirectory(Path.GetDirectoryName(msalCachePath)!);
-        await File.WriteAllTextAsync(msalCachePath, "stale-msal-cache");
 
-        var callCount = 0;
-        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        // Back up any pre-existing real MSAL cache so the test does not destroy it.
+        string? originalCache = File.Exists(msalCachePath)
+            ? await File.ReadAllTextAsync(msalCachePath)
+            : null;
+
+        try
         {
-            MsalTokenAcquirerOverride = (tid, _, _, _) =>
+            await File.WriteAllTextAsync(msalCachePath, "stale-msal-cache");
+
+            var callCount = 0;
+            var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
             {
-                callCount++;
-                // First call: wrong tenant (simulates WAM picking stale cached account)
-                // Second call: correct tenant (after cache clear WAM uses the right account)
-                var returnedTid = callCount == 1 ? wrongTenant : correctTenant;
-                return Task.FromResult<string?>(BuildJwt(new { tid = returnedTid }));
+                MsalTokenAcquirerOverride = (tid, _, _, _) =>
+                {
+                    callCount++;
+                    // First call: wrong tenant (simulates WAM picking stale cached account)
+                    // Second call: correct tenant (after cache clear WAM uses the right account)
+                    var returnedTid = callCount == 1 ? wrongTenant : correctTenant;
+                    return Task.FromResult<string?>(BuildJwt(new { tid = returnedTid }));
+                }
+            };
+
+            // Act
+            var token = await provider.GetMgGraphAccessTokenAsync(correctTenant, scopes, false, clientAppId);
+
+            // Assert — retry was triggered and correct-tenant token returned
+            callCount.Should().Be(2,
+                because: "a tid mismatch on the first MSAL call must trigger exactly one retry");
+            var returnedTid2 = JwtHelper.TryDecodeClaim(token, "tid");
+            returnedTid2.Should().Be(correctTenant,
+                because: "the token returned after self-heal must be for the configured tenant");
+
+            // MSAL cache file must have been deleted to give WAM a clean slate
+            File.Exists(msalCachePath).Should().BeFalse(
+                because: "the stale MSAL cache must be removed so WAM re-evaluates account selection on retry");
+
+            // Warning must have been logged
+            _logger.Received().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Clearing cached credentials")),
+                Arg.Any<Exception?>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
+        finally
+        {
+            // Restore the original MSAL cache (or remove the test file if none existed before).
+            if (originalCache is null)
+            {
+                if (File.Exists(msalCachePath)) File.Delete(msalCachePath);
             }
-        };
-
-        // Act
-        var token = await provider.GetMgGraphAccessTokenAsync(correctTenant, scopes, false, clientAppId);
-
-        // Assert — retry was triggered and correct-tenant token returned
-        callCount.Should().Be(2,
-            because: "a tid mismatch on the first MSAL call must trigger exactly one retry");
-        var returnedTid2 = JwtHelper.TryDecodeClaim(token, "tid");
-        returnedTid2.Should().Be(correctTenant,
-            because: "the token returned after self-heal must be for the configured tenant");
-
-        // MSAL cache file must have been deleted to give WAM a clean slate
-        File.Exists(msalCachePath).Should().BeFalse(
-            because: "the stale MSAL cache must be removed so WAM re-evaluates account selection on retry");
-
-        // Warning must have been logged
-        _logger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Clearing cached credentials")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
+            else
+            {
+                await File.WriteAllTextAsync(msalCachePath, originalCache);
+            }
+        }
     }
 
     [Fact]

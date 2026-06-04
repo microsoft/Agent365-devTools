@@ -205,7 +205,10 @@ public class AuthenticationService : IAuthenticationService
         // WAM may silently select a cached work account from a different tenant when multiple
         // Windows accounts are present (issue #430). On mismatch, clear both our JSON cache
         // and the MSAL persistent cache to reset WAM's account selection, then retry once.
-        if (!string.IsNullOrWhiteSpace(tenantId))
+        // Only compare tid when the requested tenantId is a GUID — JWT tid claims are always
+        // GUIDs, so comparison against a domain-form tenantId (e.g. contoso.onmicrosoft.com)
+        // would always appear as a mismatch, causing unnecessary cache clears and retry loops.
+        if (!string.IsNullOrWhiteSpace(tenantId) && Guid.TryParse(tenantId, out _))
         {
             var returnedTid = JwtHelper.TryDecodeClaim(token.AccessToken, "tid");
             if (!string.IsNullOrWhiteSpace(returnedTid) &&
@@ -380,10 +383,13 @@ public class AuthenticationService : IAuthenticationService
             {
                 AccessToken = tokenResult.Token,
                 ExpiresOn = tokenResult.ExpiresOn.UtcDateTime,
-                // Decode tid from the JWT rather than using the requested tenant — this ensures
-                // the cache-read tenant validation (which compares TokenInfo.TenantId to the
-                // requested tenantId) detects cross-tenant hits on future invocations.
-                TenantId = JwtHelper.TryDecodeClaim(tokenResult.Token, "tid") ?? effectiveTenantId
+                // Store the decoded JWT tid only when the requested tenantId is also a GUID.
+                // If callers pass a domain name (e.g. contoso.onmicrosoft.com), storing the
+                // GUID tid would cause the next cache-read comparison to always fail, forcing
+                // re-authentication on every run.
+                TenantId = Guid.TryParse(effectiveTenantId, out _)
+                    ? JwtHelper.TryDecodeClaim(tokenResult.Token, "tid") ?? effectiveTenantId
+                    : effectiveTenantId
             };
         }
         catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("code_expired") || ex.InnerException?.Message.Contains("code_expired") == true)

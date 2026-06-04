@@ -184,8 +184,12 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             // multiple accounts are present (issue #430). On mismatch, clear the in-memory cache
             // entry and the MSAL persistent disk cache, then retry once with forceRefresh so WAM
             // gets a clean slate and either picks the correct account or prompts the user.
+            // Only compare tid when tenantId is a GUID — JWT tid claims are always GUIDs,
+            // so a domain-form tenantId (e.g. contoso.onmicrosoft.com) would always appear
+            // as a mismatch and clear caches unnecessarily.
             var returnedTid = JwtHelper.TryDecodeClaim(token, "tid");
             if (!string.IsNullOrWhiteSpace(returnedTid) &&
+                Guid.TryParse(tenantId, out _) &&
                 !string.Equals(returnedTid, tenantId, StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning(
@@ -222,17 +226,15 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 if (!string.IsNullOrWhiteSpace(retryToken))
                     token = retryToken;
 
-                // Log a warning if the retry also returned the wrong tenant, so the operator
-                // can see two consecutive tid mismatches in the diagnostic log rather than
-                // only a downstream 403 with no context.
+                // Fail fast if the retry also returned the wrong tenant — caching and returning
+                // a known-bad token would produce the same misleading 403s the fix is meant to prevent.
                 var retryTid = JwtHelper.TryDecodeClaim(token, "tid");
                 if (!string.IsNullOrWhiteSpace(retryTid) &&
                     !string.Equals(retryTid, tenantId, StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogWarning(
-                        "Graph token retry also returned wrong tenant {RetryTenant}; expected {RequestedTenant}. " +
-                        "Proceeding — caller will surface the authentication error.",
-                        retryTid, tenantId);
+                    throw new InvalidOperationException(
+                        $"Graph token retry returned token for tenant {retryTid} but {tenantId} is required. " +
+                        $"Ensure 'az login' targets the correct tenant, or select the correct account when prompted.");
                 }
             }
 

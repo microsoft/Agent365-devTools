@@ -1085,6 +1085,12 @@ public class AuthenticationServiceTests : IDisposable
             => _credentials.Count > 0 ? _credentials.Dequeue() : base.CreateBrowserCredential(clientId, tenantId, loginHint);
     }
 
+    // Computes the MSAL cache path so tests can back it up and restore it.
+    private static string MsalCachePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        AuthenticationConstants.ApplicationName,
+        AuthenticationConstants.MsalCacheFileName);
+
     [Fact]
     public async Task GetAccessTokenAsync_WhenFirstTokenHasWrongTid_ClearsCachesAndRetries()
     {
@@ -1098,6 +1104,11 @@ public class AuthenticationServiceTests : IDisposable
             CredentialWithTid(wrongTenant),   // attempt 1 — WAM picked the wrong account
             CredentialWithTid(correctTenant)  // attempt 2 — after cache clear, correct account
         });
+
+        // Back up any pre-existing real MSAL cache so the test does not destroy it.
+        string? originalCache = File.Exists(MsalCachePath)
+            ? await File.ReadAllTextAsync(MsalCachePath)
+            : null;
 
         try
         {
@@ -1124,6 +1135,8 @@ public class AuthenticationServiceTests : IDisposable
         finally
         {
             sut.ClearCache();
+            if (originalCache is null) { if (File.Exists(MsalCachePath)) File.Delete(MsalCachePath); }
+            else { await File.WriteAllTextAsync(MsalCachePath, originalCache); }
         }
     }
 
@@ -1141,17 +1154,31 @@ public class AuthenticationServiceTests : IDisposable
             CredentialWithTid(wrongTenant)   // attempt 2 — still wrong after cache clear
         });
 
-        // Act
-        Func<Task> act = async () => await sut.GetAccessTokenAsync(
-            "https://graph.microsoft.com",
-            tenantId: correctTenant,
-            forceRefresh: true,
-            useInteractiveBrowser: true);
+        // Back up any pre-existing real MSAL cache so the test does not destroy it.
+        string? originalCache = File.Exists(MsalCachePath)
+            ? await File.ReadAllTextAsync(MsalCachePath)
+            : null;
 
-        // Assert
-        await act.Should().ThrowAsync<AzureAuthenticationException>(
-            because: "when both attempts return the wrong tenant the CLI must fail with a clear error " +
-                     "rather than silently proceeding with a token that will cause 403 on every Graph call");
+        try
+        {
+            // Act
+            Func<Task> act = async () => await sut.GetAccessTokenAsync(
+                "https://graph.microsoft.com",
+                tenantId: correctTenant,
+                forceRefresh: true,
+                useInteractiveBrowser: true);
+
+            // Assert
+            await act.Should().ThrowAsync<AzureAuthenticationException>(
+                because: "when both attempts return the wrong tenant the CLI must fail with a clear error " +
+                         "rather than silently proceeding with a token that will cause 403 on every Graph call");
+        }
+        finally
+        {
+            sut.ClearCache();
+            if (originalCache is null) { if (File.Exists(MsalCachePath)) File.Delete(MsalCachePath); }
+            else { await File.WriteAllTextAsync(MsalCachePath, originalCache); }
+        }
     }
 
     [Fact]
