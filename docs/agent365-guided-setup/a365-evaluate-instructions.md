@@ -40,7 +40,7 @@ Wait for the answer. Store as `evalEngine`:
 - If **3 (Claude Code)**: `evalEngine = "claude-code"`
 - If **4 (None)**: `evalEngine = "none"`
 
-> **Note:** Auto and the named engines require the corresponding CLI to be installed on the workstation (`gh copilot` or `claude`). If neither is installed and `evalEngine` is `auto` or a named engine, the pipeline will stop after writing the checklist and print BYO-LLM instructions — that is expected, not an error.
+> **Note:** Auto and the named engines require the corresponding CLI to be installed on the workstation (`copilot` or `claude`). If neither is installed and `evalEngine` is `auto` or a named engine, the pipeline will stop after writing the checklist and print BYO-LLM instructions — that is expected, not an error.
 
 After all three questions are answered, create all todos for the path and mark Todo 1 in-progress:
 
@@ -106,14 +106,14 @@ The evaluation pipeline scores semantic checks (tool-name clarity, description q
 
 ### If `evalEngine = "github-copilot"` or `"auto"`
 
-Verify GitHub Copilot CLI is installed:
+Verify the GitHub Copilot CLI is installed:
 
 ```bash
-gh copilot --version
+copilot --version
 ```
 
 - If installed: continue.
-- If not installed: install with `gh extension install github/gh-copilot` (requires `gh` CLI). If `gh` itself is missing, see [GitHub CLI install](https://cli.github.com/).
+- If not installed: install with `npm install -g @github/copilot` (requires Node.js 18 or later). This is the standalone GitHub Copilot CLI (binary `copilot`) that the pipeline invokes — it is a different tool from the `gh copilot` GitHub CLI extension, which does not accept the flags the pipeline uses.
 
 ### If `evalEngine = "claude-code"` or `"auto"` (and Copilot was not found)
 
@@ -224,15 +224,15 @@ The CLI logs progress in numbered steps `[1/5]` through `[5/5]`:
 The report has:
 
 - **Overall score** (0–100). Higher is better.
-- **Maturity level** (1–5): Level 1 (Initial) → Level 5 (Optimized).
+- **Maturity level** (0–4): Level 0 (Functional) → Level 4 (Exemplary).
 - **Per-tool scores** with category breakdowns: schema quality, semantic clarity, parameter quality, return-shape quality.
 - **Action item list**, ordered by impact.
 
 ### Triage with the user
 
-1. **If overall score is below 60 or maturity is Level 1–2**, walk through the top 3 action items with the user. These usually cluster around: tool names that don't describe the action, descriptions that are stubs, parameter names that are abbreviations.
-2. **If overall score is 60–80 or maturity is Level 3**, the schema is shippable but has room. Pick 1–2 high-impact action items to address.
-3. **If overall score is above 80 or maturity is Level 4–5**, summarize the strengths and surface any low-hanging fixes.
+1. **If overall score is below 60 or maturity is Level 0–1 (Functional/Described)**, walk through the top 3 action items with the user. These usually cluster around: tool names that don't describe the action, descriptions that are stubs, parameter names that are abbreviations.
+2. **If overall score is 60–74 or maturity is Level 2 (Consistent)**, the schema is shippable but has room. Pick 1–2 high-impact action items to address.
+3. **If overall score is 75 or above or maturity is Level 3–4 (Optimized for AI/Exemplary)**, summarize the strengths and surface any low-hanging fixes.
 
 ### Re-running after fixes
 
@@ -267,7 +267,7 @@ If any step results in an error, stop and analyze the error message carefully.
 |---|---|---|
 | `Unauthorized` from `tools/list` | Wrong or expired bearer token | Re-acquire the token (Question 2). |
 | `Could not parse server URL` | URL doesn't include the protocol | Add `http://` or `https://` to the URL. |
-| `No coding agent detected` after `[2/5]` | Neither `gh copilot` nor `claude` is on PATH | Install one (Step 2) or pass `--eval-engine none`. |
+| `No coding agent detected` after `[2/5]` | Neither `copilot` nor `claude` is on PATH | Install one (Step 2) or pass `--eval-engine none`. |
 | `Failed to write report to <path>` | Output dir not writable | Choose a different `--output-dir` or fix permissions. |
 | Telemetry warning at debug level | Non-blocking — the marker call failed | Ignore. The evaluation runs regardless. |
 
