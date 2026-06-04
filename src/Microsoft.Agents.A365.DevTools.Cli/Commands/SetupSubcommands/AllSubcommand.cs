@@ -960,10 +960,10 @@ internal static class AllSubcommand
     /// Prompts for the messaging endpoint URL. Returns the entered HTTPS URL, or null to defer
     /// (blank entry). The caller prints the section header and opens the indent scope.
     /// </summary>
-    private static async Task<string?> PromptForMessagingEndpointAsync(SetupContext ctx)
+    private static Task<string?> PromptForMessagingEndpointAsync(SetupContext ctx)
     {
         if (ctx.NonInteractive)
-            return null;
+            return Task.FromResult<string?>(null);
 
         ctx.Logger.LogInformation("The HTTPS URL where your deployed agent receives messages.");
         ctx.Logger.LogInformation("Leave blank to configure it later, after you deploy the agent.");
@@ -975,15 +975,15 @@ internal static class AllSubcommand
             var entered = ConsoleHelper.ReadLineCancellable(ctx.CancellationToken)?.Trim();
 
             if (string.IsNullOrWhiteSpace(entered))
-                return null;
+                return Task.FromResult<string?>(null);
 
             if (Uri.TryCreate(entered, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
-                return entered;
+                return Task.FromResult<string?>(entered);
 
             ctx.Logger.LogWarning("Enter a valid HTTPS URL (e.g. https://my-agent.example.com/api/messages), or leave blank to skip.");
         }
 
-        return null;
+        return Task.FromResult<string?>(null);
     }
 
     /// <summary>
