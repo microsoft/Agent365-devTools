@@ -54,6 +54,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `--yes` / `-y` option on `develop-mcp publish` — skips the interactive "Proceed with publish? (y/N)" confirmation.
 
 ### Fixed
+- Commands requiring authentication no longer return misleading Graph 403 errors when Windows has multiple cached work accounts. The CLI detects a wrong-tenant token (`tid` claim mismatch), clears the MSAL token cache, and retries automatically (#430).
 - `setup all` now exits silently on Ctrl+C instead of printing `ERROR: Setup failed: A task was canceled.` followed by a misleading partial summary.
 - `setup all --m365` no longer fails with `AADSTS650053` because the Messaging Bot scope was hard-coded to scopes the resource SP does not publish (issue #429).
 - `setup all` no longer fails with `AADSTS650053` for any drift between requested scopes and what a resource SP actually publishes (issue #429). Unpublished scopes are filtered out before building the consent URL; per-resource warnings surface what was dropped.

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using NSubstitute;
 using System.Text.Json;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
@@ -1055,6 +1056,137 @@ public class AuthenticationServiceTests : IDisposable
         var result = await _authService.ResolveLoginHintFromCacheAsync();
 
         result.Should().BeNull(because: "a malformed JWT should be swallowed and null returned");
+    }
+
+    #endregion
+
+    #region WAM wrong-tenant self-heal (issue #430)
+
+    // Builds a minimal JWT whose payload contains only the supplied tid claim.
+    // Re-uses the existing BuildJwt helper (same Base64Url encoding).
+    private static StubTokenCredential CredentialWithTid(string tid)
+        => new(BuildJwt(new { tid }), DateTimeOffset.UtcNow.AddHours(1));
+
+    /// <summary>
+    /// TestableAuthenticationService variant that uses a call-indexed credential list.
+    /// Each call to CreateBrowserCredential pops the next credential from the queue.
+    /// </summary>
+    private sealed class SequencedAuthenticationService : AuthenticationService
+    {
+        private readonly Queue<TokenCredential> _credentials;
+
+        public SequencedAuthenticationService(
+            ILogger<AuthenticationService> logger,
+            IEnumerable<TokenCredential> credentials)
+            : base(logger)
+            => _credentials = new Queue<TokenCredential>(credentials);
+
+        protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null)
+            => _credentials.Count > 0 ? _credentials.Dequeue() : base.CreateBrowserCredential(clientId, tenantId, loginHint);
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenFirstTokenHasWrongTid_ClearsCachesAndRetries()
+    {
+        // Arrange — first call returns wrong-tenant token; second returns correct tenant.
+        var correctTenant = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa";
+        var wrongTenant   = "bbbbbbbb-0000-0000-0000-bbbbbbbbbbbb";
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new SequencedAuthenticationService(logger, new[]
+        {
+            CredentialWithTid(wrongTenant),   // attempt 1 — WAM picked the wrong account
+            CredentialWithTid(correctTenant)  // attempt 2 — after cache clear, correct account
+        });
+
+        try
+        {
+            // Act
+            var result = await sut.GetAccessTokenAsync(
+                "https://graph.microsoft.com",
+                tenantId: correctTenant,
+                forceRefresh: true,
+                useInteractiveBrowser: true);
+
+            // Assert — the token returned contains the correct tid
+            var tid = JwtHelper.TryDecodeClaim(result, "tid");
+            tid.Should().Be(correctTenant,
+                because: "after the self-heal retry the correct-tenant token must be returned");
+
+            // A warning must have been logged to indicate that the wrong account was detected
+            logger.Received().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Clearing cached credentials")),
+                Arg.Any<Exception?>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
+        finally
+        {
+            sut.ClearCache();
+        }
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenBothAttemptsReturnWrongTid_ThrowsAzureAuthenticationException()
+    {
+        // Arrange — both calls return a token for the wrong tenant (worst-case: retry also wrong).
+        var correctTenant = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa";
+        var wrongTenant   = "bbbbbbbb-0000-0000-0000-bbbbbbbbbbbb";
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new SequencedAuthenticationService(logger, new[]
+        {
+            CredentialWithTid(wrongTenant),  // attempt 1
+            CredentialWithTid(wrongTenant)   // attempt 2 — still wrong after cache clear
+        });
+
+        // Act
+        Func<Task> act = async () => await sut.GetAccessTokenAsync(
+            "https://graph.microsoft.com",
+            tenantId: correctTenant,
+            forceRefresh: true,
+            useInteractiveBrowser: true);
+
+        // Assert
+        await act.Should().ThrowAsync<AzureAuthenticationException>(
+            because: "when both attempts return the wrong tenant the CLI must fail with a clear error " +
+                     "rather than silently proceeding with a token that will cause 403 on every Graph call");
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_WhenTokenTidMatchesConfiguredTenant_NoRetryOccurs()
+    {
+        // Arrange — token tid matches configured tenant; self-heal path must NOT fire.
+        var correctTenant = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa";
+
+        var logger = Substitute.For<ILogger<AuthenticationService>>();
+        var sut = new SequencedAuthenticationService(logger, new[]
+        {
+            CredentialWithTid(correctTenant)  // only one credential queued — a retry would throw
+        });
+
+        try
+        {
+            // Act — should succeed without touching the second (non-existent) credential
+            var result = await sut.GetAccessTokenAsync(
+                "https://graph.microsoft.com",
+                tenantId: correctTenant,
+                forceRefresh: true,
+                useInteractiveBrowser: true);
+
+            // Assert — no warning about clearing caches
+            logger.DidNotReceive().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Clearing cached credentials")),
+                Arg.Any<Exception?>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
+        finally
+        {
+            sut.ClearCache();
+        }
     }
 
     #endregion

@@ -2,13 +2,16 @@
 // Licensed under the MIT License.
 
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+[Collection("AuthTests")]
 public class MicrosoftGraphTokenProviderTests
 {
     private readonly ILogger<MicrosoftGraphTokenProvider> _logger;
@@ -500,5 +503,102 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
             Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    // ── WAM wrong-tenant self-heal (issue #430) ───────────────────────────────
+
+    private static string BuildJwt(object payload)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(payload);
+        var payloadB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        return $"header.{payloadB64}.signature";
+    }
+
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WhenMsalTokenHasWrongTid_ClearsFileAndRetries()
+    {
+        // Arrange
+        var correctTenant = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa";
+        var wrongTenant   = "bbbbbbbb-0000-0000-0000-bbbbbbbbbbbb";
+        var clientAppId   = "87654321-4321-4321-4321-cba987654321";
+        var scopes        = new[] { "User.Read" };
+
+        // Write a dummy MSAL cache file to verify it gets deleted on mismatch.
+        var msalCachePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            AuthenticationConstants.ApplicationName,
+            AuthenticationConstants.MsalCacheFileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(msalCachePath)!);
+        await File.WriteAllTextAsync(msalCachePath, "stale-msal-cache");
+
+        var callCount = 0;
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (tid, _, _, _) =>
+            {
+                callCount++;
+                // First call: wrong tenant (simulates WAM picking stale cached account)
+                // Second call: correct tenant (after cache clear WAM uses the right account)
+                var returnedTid = callCount == 1 ? wrongTenant : correctTenant;
+                return Task.FromResult<string?>(BuildJwt(new { tid = returnedTid }));
+            }
+        };
+
+        // Act
+        var token = await provider.GetMgGraphAccessTokenAsync(correctTenant, scopes, false, clientAppId);
+
+        // Assert — retry was triggered and correct-tenant token returned
+        callCount.Should().Be(2,
+            because: "a tid mismatch on the first MSAL call must trigger exactly one retry");
+        var returnedTid2 = JwtHelper.TryDecodeClaim(token, "tid");
+        returnedTid2.Should().Be(correctTenant,
+            because: "the token returned after self-heal must be for the configured tenant");
+
+        // MSAL cache file must have been deleted to give WAM a clean slate
+        File.Exists(msalCachePath).Should().BeFalse(
+            because: "the stale MSAL cache must be removed so WAM re-evaluates account selection on retry");
+
+        // Warning must have been logged
+        _logger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Clearing cached credentials")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task GetMgGraphAccessTokenAsync_WhenTokenTidMatchesConfiguredTenant_NoRetryOccurs()
+    {
+        // Arrange — token already has the correct tid; self-heal must not fire.
+        var correctTenant = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa";
+        var clientAppId   = "87654321-4321-4321-4321-cba987654321";
+        var scopes        = new[] { "User.Read" };
+
+        var callCount = 0;
+        var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) =>
+            {
+                callCount++;
+                return Task.FromResult<string?>(BuildJwt(new { tid = correctTenant }));
+            }
+        };
+
+        // Act
+        var token = await provider.GetMgGraphAccessTokenAsync(correctTenant, scopes, false, clientAppId);
+
+        // Assert — exactly one MSAL call; no retry
+        callCount.Should().Be(1,
+            because: "when the returned tid matches the configured tenant no retry should occur");
+        token.Should().NotBeNullOrEmpty();
+
+        _logger.DidNotReceive().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Clearing cached credentials")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
     }
 }

@@ -89,6 +89,13 @@ public static class AuthenticationConstants
     public const string TokenCacheFileName = "auth-token.json";
 
     /// <summary>
+    /// MSAL persistent token cache file name.
+    /// Used by MsalBrowserCredential (WAM/browser auth) and referenced by
+    /// AuthenticationService when clearing stale cross-tenant cached tokens.
+    /// </summary>
+    public const string MsalCacheFileName = "msal-token-cache";
+
+    /// <summary>
     /// Token expiration buffer in minutes
     /// Tokens are considered expired this many minutes before actual expiration
     /// to prevent using tokens that expire during a request

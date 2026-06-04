@@ -50,7 +50,7 @@ public sealed class MsalBrowserCredential : TokenCredential
     private static MsalCacheHelper? _cacheHelper;
     private static readonly object _cacheHelperLock = new();
 
-    private static readonly string CacheFileName = "msal-token-cache";
+    private static readonly string CacheFileName = AuthenticationConstants.MsalCacheFileName;
     private static readonly string CacheDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         AuthenticationConstants.ApplicationName);
