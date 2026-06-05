@@ -40,7 +40,8 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     public async Task<(EndpointRegistrationResult Result, string? FailureReason)> SetBackendConfigurationAsync(
         string agentBlueprintId,
         string messagingEndpoint,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         // Debug only — the caller's "Configuring messaging endpoint..." header already frames this,
         // and "backend configuration" is internal MCP Platform terminology, not user-facing.
@@ -78,7 +79,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             {
                 bool forceRefresh = attempt > 0;
 
-                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser, ct: ct);
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
@@ -89,10 +90,11 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 // Retry transient transport errors; content is rebuilt per attempt (HttpContent is single-use).
                 using var response = await _retryHelper.ExecuteWithRetryAsync(
-                    ct => httpClient.PostAsync(
+                    sendCt => httpClient.PostAsync(
                         createEndpointUrl,
                         new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                        ct));
+                        sendCt),
+                    cancellationToken: ct);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -100,7 +102,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                     return (EndpointRegistrationResult.Created, null);
                 }
 
-                var errorContent = await response.Content.ReadAsStringAsync();
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
 
                 if (response.StatusCode == HttpStatusCode.Conflict)
                 {
@@ -147,6 +149,11 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
             return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
+        catch (OperationCanceledException)
+        {
+            // Ctrl+C — propagate so setup aborts silently instead of logging a misleading "unexpected error".
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error registering the messaging endpoint: {Message}", ex.Message);
@@ -157,7 +164,8 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     /// <inheritdoc />
     public async Task<bool> ClearBackendConfigurationAsync(
         string agentBlueprintId,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         // Debug only — the caller's "Removing messaging endpoint..." header already frames this.
         _logger.LogDebug("Clearing backend configuration for Agent Blueprint...");
@@ -192,7 +200,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             {
                 bool forceRefresh = attempt > 0;
 
-                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser, ct: ct);
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
@@ -203,14 +211,15 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 // Retry transient transport errors; the request is rebuilt per attempt (HttpRequestMessage is single-use).
                 using var response = await _retryHelper.ExecuteWithRetryAsync(
-                    async ct =>
+                    async sendCt =>
                     {
                         using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl)
                         {
                             Content = new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
                         };
-                        return await httpClient.SendAsync(request, ct);
-                    });
+                        return await httpClient.SendAsync(request, sendCt);
+                    },
+                    cancellationToken: ct);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -218,7 +227,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                     return true;
                 }
 
-                var errorContent = await response.Content.ReadAsStringAsync();
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
 
                 // Treat NotFound as idempotent success — nothing to clear.
                 if (response.StatusCode == HttpStatusCode.NotFound)
@@ -274,6 +283,11 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         {
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
             return false;
+        }
+        catch (OperationCanceledException)
+        {
+            // Ctrl+C — propagate so cleanup aborts silently instead of logging a misleading "unexpected error".
+            throw;
         }
         catch (Exception ex)
         {

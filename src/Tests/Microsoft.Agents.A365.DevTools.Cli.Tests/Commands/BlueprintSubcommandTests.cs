@@ -613,7 +613,7 @@ public class BlueprintSubcommandTests
     {
         var config = new Agent365Config { TenantId = "test-tenant", AgentBlueprintId = "blueprint-123" };
         _mockConfigService.LoadAsync(Arg.Any<string>()).Returns(Task.FromResult(config));
-        _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns((EndpointRegistrationResult.Created, (string?)null));
 
         var command = BlueprintSubcommand.CreateCommand(
@@ -628,7 +628,7 @@ public class BlueprintSubcommandTests
         result.Should().Be(0,
             because: "--endpoint-only infers --m365, so the endpoint registers without the flag");
         await _mockBackendConfigurator.Received().SetBackendConfigurationAsync(
-            Arg.Any<string>(), "https://agent.contoso.com/api/messages", Arg.Any<string?>());
+            Arg.Any<string>(), "https://agent.contoso.com/api/messages", Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

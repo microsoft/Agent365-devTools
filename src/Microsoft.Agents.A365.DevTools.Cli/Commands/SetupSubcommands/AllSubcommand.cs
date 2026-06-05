@@ -928,7 +928,8 @@ internal static class AllSubcommand
                     ctx.Logger,
                     ctx.BackendConfigurator,
                     overrideEndpointUrl: endpoint,
-                    correlationId: ctx.CorrelationId);
+                    correlationId: ctx.CorrelationId,
+                    ct: ctx.CancellationToken);
 
                 ctx.Results.MessagingEndpointResult = result;
                 ctx.Results.MessagingEndpoint = ctx.Config.BotMessagingEndpoint ?? endpoint;

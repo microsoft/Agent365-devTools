@@ -372,7 +372,8 @@ internal static class BlueprintSubcommand
                     configService,
                     backendConfigurator,
                     platformDetector,
-                    correlationId: correlationId);
+                    correlationId: correlationId,
+                    ct: ct);
                 return;
             }
 
@@ -2438,7 +2439,7 @@ internal static class BlueprintSubcommand
         // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
         // overrideEndpointUrl (from --messaging-endpoint) wins over the config value when supplied.
         var (result, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, backendConfigurator, overrideEndpointUrl, correlationId: correlationId);
+            setupConfig, logger, backendConfigurator, overrideEndpointUrl, correlationId: correlationId, ct: cancellationToken);
 
         setupConfig.Completed = true;
         setupConfig.CompletedAt = DateTime.UtcNow;
@@ -2500,6 +2501,7 @@ internal static class BlueprintSubcommand
     /// <param name="backendConfigurator">Blueprint backend configurator service</param>
     /// <param name="platformDetector">Platform detector service</param>
     /// <param name="correlationId">Optional correlation ID for tracing</param>
+    /// <param name="ct">Cancellation token so Ctrl+C aborts the remove/register calls promptly.</param>
     public static async Task UpdateEndpointAsync(
         string configPath,
         string newEndpointUrl,
@@ -2507,7 +2509,8 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         ITeamsGraphBackendConfigurator backendConfigurator,
         PlatformDetector platformDetector,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         var setupConfig = await configService.LoadAsync(configPath);
 
@@ -2532,7 +2535,7 @@ internal static class BlueprintSubcommand
         // Step 1: Remove any existing messaging endpoint (idempotent no-op if none is registered).
         logger.LogInformation("Removing existing messaging endpoint...");
         var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
-            setupConfig.AgentBlueprintId, correlationId: correlationId);
+            setupConfig.AgentBlueprintId, correlationId: correlationId, ct: ct);
 
         if (!cleared)
         {
@@ -2546,7 +2549,7 @@ internal static class BlueprintSubcommand
         // Only the Status value is relevant here — inline CLI output for --update-endpoint doesn't
         // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
         var (registerResult, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, backendConfigurator, newEndpointUrl, correlationId: correlationId);
+            setupConfig, logger, backendConfigurator, newEndpointUrl, correlationId: correlationId, ct: ct);
 
         if (registerResult == Models.EndpointRegistrationResult.Failed)
         {

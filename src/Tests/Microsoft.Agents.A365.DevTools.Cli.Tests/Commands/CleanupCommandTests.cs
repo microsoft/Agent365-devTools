@@ -116,7 +116,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(true));
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
         var args = new[] { "cleanup", "instance" };
@@ -194,7 +194,7 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(Task.FromException<Agent365Config>(new FileNotFoundException("Config not found")));
 
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(false));
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
@@ -221,7 +221,7 @@ public class CleanupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(Task.FromException<Agent365Config>(new ConfigFileNotFoundException()));
 
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(false));
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
@@ -285,7 +285,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
         _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
 
@@ -336,7 +336,7 @@ public class CleanupCommandTests
         // Capture blueprint ID before the command clears it during config save
         var expectedBlueprintId = config.AgentBlueprintId!;
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         var instances = new List<AgentInstanceInfo>
@@ -381,7 +381,7 @@ public class CleanupCommandTests
         var expectedBlueprintId = config.AgentBlueprintId!;
         var expectedIdentityId = config.AgenticAppId!;
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         var spyService = CreateStubbedBlueprintService(instances: Array.Empty<AgentInstanceInfo>());
@@ -426,7 +426,7 @@ public class CleanupCommandTests
         // Capture blueprint ID before the command clears it during config save
         var expectedBlueprintId = config.AgentBlueprintId!;
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         var instances = new List<AgentInstanceInfo>
@@ -484,7 +484,7 @@ public class CleanupCommandTests
         var config = CreateValidConfig();
         var expectedBlueprintId = config.AgentBlueprintId!;
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         var instances = new List<AgentInstanceInfo>
@@ -567,7 +567,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
         
         // User declines the initial "Are you sure?" confirmation
@@ -583,7 +583,7 @@ public class CleanupCommandTests
         result.Should().Be(0); // Command completes successfully (just doesn't delete anything)
         
         // Verify NO delete operations were called - check bot configurator wasn't invoked
-        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>());
+        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>
@@ -611,7 +611,7 @@ public class CleanupCommandTests
         result.Should().Be(0);
         
         // Verify NO delete operations were called - check bot configurator wasn't invoked
-        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>());
+        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>
@@ -642,7 +642,7 @@ public class CleanupCommandTests
         await _mockConfirmationProvider.Received(1).ConfirmWithTypedResponseAsync(Arg.Is<string>(s => s.Contains("Type 'DELETE'")), "DELETE");
 
         // Assert — abort path taken: no deletion should have started after the typed confirmation failed
-        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>());
+        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>
@@ -692,7 +692,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
@@ -713,7 +713,7 @@ public class CleanupCommandTests
             Assert.Equal(0, result);
 
             // Verify endpoint deletion was called
-            await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId!, Arg.Any<string?>());
+            await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId!, Arg.Any<string?>(), Arg.Any<CancellationToken>());
 
             // Verify blueprint deletion was NOT called (no az ad app delete command)
             await _mockExecutor.DidNotReceive().ExecuteAsync(
@@ -756,7 +756,7 @@ public class CleanupCommandTests
         Assert.Equal(0, result); // Command completes but doesn't delete anything
 
         // Verify no deletion operations were called (because blueprint ID is missing)
-        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>());
+        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     // Note: two previously existing tests were deleted as part of the ABS-to-TeamsGraph
@@ -776,7 +776,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromException<bool>(new InvalidOperationException("API connection failed")));
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
@@ -798,7 +798,7 @@ public class CleanupCommandTests
             Assert.Equal(1, result);
 
             // Verify deletion was attempted
-            await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId!, Arg.Any<string?>());
+            await _mockBackendConfigurator.Received(1).ClearBackendConfigurationAsync(config.AgentBlueprintId!, Arg.Any<string?>(), Arg.Any<CancellationToken>());
         }
         finally
         {
@@ -836,7 +836,7 @@ public class CleanupCommandTests
         Assert.Equal(0, result);
 
         // Verify no deletion operations were called since blueprint ID is invalid
-        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>());
+        await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>
@@ -849,7 +849,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
@@ -869,7 +869,7 @@ public class CleanupCommandTests
             Assert.Equal(0, result);
 
             // Verify NO deletion was called because invalid input should cancel
-            await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>());
+            await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
         }
         finally
         {
@@ -887,7 +887,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
@@ -907,7 +907,7 @@ public class CleanupCommandTests
             Assert.Equal(0, result);
             
             // Verify NO deletion was called because user declined
-            await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>());
+            await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
         }
         finally
         {
@@ -1054,7 +1054,7 @@ public class CleanupCommandTests
         // Arrange
         var config = CreateValidConfig();
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
-        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>())
+        _mockBackendConfigurator.ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(true);
 
         var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
@@ -1074,7 +1074,7 @@ public class CleanupCommandTests
             Assert.Equal(0, result);
             
             // Verify NO deletion was called because empty input defaults to cancel
-            await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>());
+            await _mockBackendConfigurator.DidNotReceive().ClearBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
         }
         finally
         {

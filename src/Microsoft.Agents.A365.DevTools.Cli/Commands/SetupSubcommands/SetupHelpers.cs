@@ -1744,7 +1744,8 @@ internal static class SetupHelpers
         ILogger logger,
         ITeamsGraphBackendConfigurator backendConfigurator,
         string? overrideEndpointUrl = null,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(setupConfig.AgentBlueprintId))
         {
@@ -1805,7 +1806,8 @@ internal static class SetupHelpers
         var (result, failureReason) = await backendConfigurator.SetBackendConfigurationAsync(
             agentBlueprintId: setupConfig.AgentBlueprintId,
             messagingEndpoint: messagingEndpoint,
-            correlationId: correlationId);
+            correlationId: correlationId,
+            ct: ct);
 
         if (result == Models.EndpointRegistrationResult.Created ||
             result == Models.EndpointRegistrationResult.AlreadyExists)

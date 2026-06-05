@@ -283,7 +283,7 @@ public class CleanupCommand
                 // Endpoint-only: clear just the messaging endpoint (--m365 is inferred above).
                 if (endpointOnly)
                 {
-                    await ExecuteEndpointOnlyCleanupAsync(logger, config, backendConfigurator, correlationId: correlationId);
+                    await ExecuteEndpointOnlyCleanupAsync(logger, config, backendConfigurator, correlationId: correlationId, ct: ct);
                     return;
                 }
 
@@ -1213,7 +1213,8 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger,
         Agent365Config config,
         ITeamsGraphBackendConfigurator backendConfigurator,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
         {
@@ -1227,7 +1228,8 @@ public class CleanupCommand
             // The service logs the "Removed successfully." / "already removed" outcome under this header.
             var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
                 config.AgentBlueprintId,
-                correlationId: correlationId);
+                correlationId: correlationId,
+                ct: ct);
 
             if (cleared)
                 return true;
@@ -1245,7 +1247,8 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger,
         Agent365Config config,
         ITeamsGraphBackendConfigurator backendConfigurator,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         logger.LogInformation("Starting endpoint-only cleanup...");
 
@@ -1270,7 +1273,7 @@ public class CleanupCommand
             return;
         }
 
-        var deleted = await DeleteMessagingEndpointAsync(logger, config, backendConfigurator, correlationId: correlationId);
+        var deleted = await DeleteMessagingEndpointAsync(logger, config, backendConfigurator, correlationId: correlationId, ct: ct);
 
         if (!deleted)
         {
