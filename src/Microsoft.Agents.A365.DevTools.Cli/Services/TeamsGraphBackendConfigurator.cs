@@ -22,6 +22,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     private readonly ILogger<ITeamsGraphBackendConfigurator> _logger;
     private readonly IConfigService _configService;
     private readonly AuthenticationService _authService;
+    private readonly RetryHelper _retryHelper;
 
     public TeamsGraphBackendConfigurator(
         ILogger<ITeamsGraphBackendConfigurator> logger,
@@ -31,6 +32,8 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         _logger = logger;
         _configService = configService ?? throw new ArgumentNullException(nameof(configService));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
+        // Retries transient transport failures (DNS/socket) the per-attempt auth loop does not catch.
+        _retryHelper = new RetryHelper(logger);
     }
 
     /// <inheritdoc />
@@ -84,9 +87,12 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                using var response = await httpClient.PostAsync(
-                    createEndpointUrl,
-                    new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"));
+                // Retry transient transport errors; content is rebuilt per attempt (HttpContent is single-use).
+                using var response = await _retryHelper.ExecuteWithRetryAsync(
+                    ct => httpClient.PostAsync(
+                        createEndpointUrl,
+                        new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                        ct));
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -195,12 +201,16 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl)
-                {
-                    Content = new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                };
-
-                using var response = await httpClient.SendAsync(request);
+                // Retry transient transport errors; the request is rebuilt per attempt (HttpRequestMessage is single-use).
+                using var response = await _retryHelper.ExecuteWithRetryAsync(
+                    async ct =>
+                    {
+                        using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl)
+                        {
+                            Content = new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                        };
+                        return await httpClient.SendAsync(request, ct);
+                    });
 
                 if (response.IsSuccessStatusCode)
                 {
