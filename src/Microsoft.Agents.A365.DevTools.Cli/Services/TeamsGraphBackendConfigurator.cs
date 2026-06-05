@@ -149,9 +149,10 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
             return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Ctrl+C — propagate so setup aborts silently instead of logging a misleading "unexpected error".
+            // User Ctrl+C — propagate for a silent abort. A non-user cancellation (e.g. HttpClient
+            // timeout after retries) falls through to the general handler and surfaces as a failure.
             throw;
         }
         catch (Exception ex)
@@ -284,9 +285,10 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
             return false;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Ctrl+C — propagate so cleanup aborts silently instead of logging a misleading "unexpected error".
+            // User Ctrl+C — propagate for a silent abort. A non-user cancellation (e.g. HttpClient
+            // timeout after retries) falls through to the general handler and surfaces as a failure.
             throw;
         }
         catch (Exception ex)
