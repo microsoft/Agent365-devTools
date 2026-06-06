@@ -186,7 +186,9 @@ public class EntraAppProvisionerTests
             {
                 "https://admin.cloud.microsoft/?ref=tools/consent",
             },
-            opt => opt.WithStrictOrdering());
+            opt => opt.WithStrictOrdering(),
+            because: "Prod consent redirect URIs are required by the admin.cloud.microsoft " +
+                     "consent portal. Changing these URIs breaks the admin consent flow.");
     }
 
     [Theory]
@@ -237,7 +239,10 @@ public class EntraAppProvisionerTests
                 "https://sdf.admin.cloud.microsoft/?ref=tools/consent",
                 "https://ignite.admin.cloud.microsoft/?ref=tools/consent",
             },
-            opt => opt.WithStrictOrdering());
+            opt => opt.WithStrictOrdering(),
+            because: "Test/PreProd consent redirect URIs target the sdf and ignite admin " +
+                     "consent portals. Changing these URIs breaks the admin consent flow " +
+                     "in non-production environments.");
     }
 
     [Fact]
@@ -295,7 +300,7 @@ public class EntraAppProvisionerTests
         var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
 
         result.ClientId.Should().Be(AppClientId);
-        warnings.Should().ContainSingle().Which.Should().Be($"Failed to set web redirect URIs on Public Clients app '{ServerName}-PublicClients'.");
+        warnings.Should().ContainSingle().Which.Should().Be($"Failed to set web redirect URIs on Public Clients app '{ServerName}-PublicClients' after retries.");
     }
 
     [Fact]
@@ -314,5 +319,25 @@ public class EntraAppProvisionerTests
         result.ObjectId.Should().Be(AppObjectId);
         result.AppName.Should().Be($"{ServerName}-PublicClients");
         warnings.Should().ContainSingle().Which.Should().Be("Failed to set redirect URIs on Public Clients app: Graph blew up");
+    }
+
+    [Fact]
+    public async Task CreatePublicClientsAppAsync_WhenWebRedirectUriUpdateThrows_ReturnsIdsAndAppendsExceptionWarning()
+    {
+        _graph.CreateEntraAppAsync(TenantId, Arg.Any<string>(), serviceTreeId: Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
+        _graph.UpdateAppPublicClientRedirectUrisAsync(
+                TenantId, AppObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+        _graph.UpdateAppRedirectUrisAsync(
+                TenantId, AppObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns<Task<bool>>(_ => throw new InvalidOperationException("Graph consent update failed"));
+
+        var warnings = new List<string>();
+        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
+
+        result.ClientId.Should().Be(AppClientId);
+        result.ObjectId.Should().Be(AppObjectId);
+        warnings.Should().ContainSingle().Which.Should().Be("Failed to set redirect URIs on Public Clients app: Graph consent update failed");
     }
 }

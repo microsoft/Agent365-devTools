@@ -37,8 +37,8 @@ internal class EntraAppProvisioner
     {
         return environment?.ToLowerInvariant() switch
         {
-            "test" or "preprod" or "ppe" => TestPreProdConsentRedirectUris,
-            _ => ProdConsentRedirectUris,
+            "test" or "preprod" or "ppe" => [.. TestPreProdConsentRedirectUris],
+            _ => [.. ProdConsentRedirectUris],
         };
     }
 
@@ -122,7 +122,10 @@ internal class EntraAppProvisioner
         var resolvedEnvironment = environment ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
         var consentUris = GetConsentRedirectUris(resolvedEnvironment);
 
-        var success = await _graphApiService.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, ct);
+        var success = await _retryHelper.ExecuteWithRetryAsync(
+            async retryCt => await _graphApiService.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
+            result => !result,
+            cancellationToken: ct);
         if (success)
         {
             _logger.LogDebug(
@@ -131,7 +134,7 @@ internal class EntraAppProvisioner
         }
         else
         {
-            var msg = $"Failed to set web redirect URIs on {roleDisplay} app '{appName}'.";
+            var msg = $"Failed to set web redirect URIs on {roleDisplay} app '{appName}' after retries.";
             _logger.LogWarning(msg);
             warnings?.Add(msg);
         }
