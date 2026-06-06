@@ -703,20 +703,25 @@ internal class RegisterCommandExecutor
         }
         else
         {
-            var msg = "A365 Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
+            var msg = "A365 Proxy redirect URI was not returned by the server. Setting consent redirect URIs only.";
             _logger.LogWarning(msg);
             concurrentWarnings.Add(msg);
+            tasks.Add(SetConsentOnlyRedirectUrisAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, concurrentWarnings, ct));
         }
 
         if (input.IsEntra && !string.IsNullOrWhiteSpace(remoteRedirectUri) && apps.RemoteProxyObjectId != null)
         {
             tasks.Add(UpdateRemoteProxyRedirectUrisAsync(tenantId, apps, remoteRedirectUri, concurrentWarnings, ct));
         }
-        else if (input.IsEntra && string.IsNullOrWhiteSpace(remoteRedirectUri))
+        else if (input.IsEntra && apps.RemoteProxyObjectId != null)
         {
-            var msg = "Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
-            _logger.LogWarning(msg);
-            concurrentWarnings.Add(msg);
+            if (string.IsNullOrWhiteSpace(remoteRedirectUri))
+            {
+                var msg = "Remote MCP Proxy redirect URI was not returned by the server. Setting consent redirect URIs only.";
+                _logger.LogWarning(msg);
+                concurrentWarnings.Add(msg);
+            }
+            tasks.Add(SetConsentOnlyRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId, apps.RemoteProxyAppName, concurrentWarnings, ct));
         }
         else if (input.IsEntra && apps.RemoteProxyObjectId == null)
         {
@@ -843,6 +848,38 @@ internal class RegisterCommandExecutor
         catch (Exception ex)
         {
             var msg = $"Failed to update redirect URIs on Remote Proxy app: {ex.Message}";
+            _logger.LogError(msg);
+            concurrentWarnings.Add(msg);
+        }
+    }
+
+    private async Task SetConsentOnlyRedirectUrisAsync(
+        string tenantId, string objectId, string appName,
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+            var consentUris = EntraAppProvisioner.GetConsentRedirectUris(environment);
+            var success = await _retryHelper.ExecuteWithRetryAsync(
+                async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
+                result => !result,
+                cancellationToken: ct);
+            if (!success)
+            {
+                var msg = $"Failed to set web redirect URIs on '{appName}' after retries.";
+                _logger.LogError(msg);
+                concurrentWarnings.Add(msg);
+            }
+            else
+            {
+                _logger.LogDebug("Set {Count} web redirect URIs on '{AppName}'", consentUris.Length, appName);
+            }
+        }
+        catch (Exception ex)
+        {
+            var msg = $"Failed to set web redirect URIs on '{appName}': {ex.Message}";
             _logger.LogError(msg);
             concurrentWarnings.Add(msg);
         }
