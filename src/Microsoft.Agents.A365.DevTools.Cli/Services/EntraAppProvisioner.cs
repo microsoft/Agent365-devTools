@@ -22,6 +22,26 @@ internal class EntraAppProvisioner
         "http://localhost",
     ];
 
+    private static readonly string[] TestPreProdConsentRedirectUris =
+    [
+        "https://sdf.admin.cloud.microsoft/?ref=tools/consent",
+        "https://ignite.admin.cloud.microsoft/?ref=tools/consent",
+    ];
+
+    private static readonly string[] ProdConsentRedirectUris =
+    [
+        "https://admin.cloud.microsoft/?ref=tools/consent",
+    ];
+
+    internal static string[] GetConsentRedirectUris(string environment)
+    {
+        return environment?.ToLowerInvariant() switch
+        {
+            "test" or "preprod" or "ppe" => TestPreProdConsentRedirectUris,
+            _ => ProdConsentRedirectUris,
+        };
+    }
+
     private readonly ILogger _logger;
     private readonly GraphApiService _graphApiService;
     private readonly RetryHelper _retryHelper;
@@ -147,6 +167,7 @@ internal class EntraAppProvisioner
         string tenantId,
         string? serviceTreeId,
         List<string> warnings,
+        string? environment = null,
         CancellationToken ct = default)
     {
         var appName = $"{serverName}-PublicClients";
@@ -168,6 +189,9 @@ internal class EntraAppProvisioner
         var brokerRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{clientId}";
         var publicClientUris = new[] { brokerRedirectUri }.Concat(PublicClientCanonicalRedirectUris).ToArray();
 
+        var resolvedEnvironment = environment ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+        var consentUris = GetConsentRedirectUris(resolvedEnvironment);
+
         try
         {
             var success = await _retryHelper.ExecuteWithRetryAsync(
@@ -176,18 +200,38 @@ internal class EntraAppProvisioner
                 cancellationToken: ct);
             if (!success)
             {
-                var msg = $"Failed to set redirect URIs on Public Clients app '{appName}' after retries.";
+                var msg = $"Failed to set publicClient redirect URIs on Public Clients app '{appName}' after retries.";
                 _logger.LogError(msg);
                 warnings.Add(msg);
             }
             else
             {
                 _logger.LogDebug(
-                    "Set {RedirectUriCount} redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
+                    "Set {RedirectUriCount} publicClient redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
                     publicClientUris.Length,
                     appName,
                     objectId,
                     string.Join(", ", publicClientUris));
+            }
+
+            var webSuccess = await _retryHelper.ExecuteWithRetryAsync(
+                async retryCt => await _graphApiService.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
+                result => !result,
+                cancellationToken: ct);
+            if (!webSuccess)
+            {
+                var msg = $"Failed to set web redirect URIs on Public Clients app '{appName}' after retries.";
+                _logger.LogError(msg);
+                warnings.Add(msg);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Set {RedirectUriCount} web redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
+                    consentUris.Length,
+                    appName,
+                    objectId,
+                    string.Join(", ", consentUris));
             }
         }
         catch (Exception ex)

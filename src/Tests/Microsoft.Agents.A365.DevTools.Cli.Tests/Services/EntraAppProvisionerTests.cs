@@ -136,20 +136,27 @@ public class EntraAppProvisionerTests
     }
 
     [Fact]
-    public async Task CreatePublicClientsAppAsync_HappyPath_ReturnsIdsAndSetsBrokerAndCanonicalRedirectUris()
+    public async Task CreatePublicClientsAppAsync_ProdEnvironment_SetsPublicClientAndWebConsentRedirectUris()
     {
-        var capturedUris = new List<string[]>();
+        var capturedPublicClientUris = new List<string[]>();
+        var capturedWebUris = new List<string[]>();
         _graph.CreateEntraAppAsync(TenantId, $"{ServerName}-PublicClients", serviceTreeId: "svc-tree-9", Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
         _graph.UpdateAppPublicClientRedirectUrisAsync(
                 TenantId,
                 AppObjectId,
-                Arg.Do<string[]>(uris => capturedUris.Add(uris)),
+                Arg.Do<string[]>(uris => capturedPublicClientUris.Add(uris)),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+        _graph.UpdateAppRedirectUrisAsync(
+                TenantId,
+                AppObjectId,
+                Arg.Do<string[]>(uris => capturedWebUris.Add(uris)),
                 Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(true));
 
         var warnings = new List<string>();
-        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: "svc-tree-9", warnings);
+        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: "svc-tree-9", warnings, environment: "prod");
 
         result.Should().NotBeNull();
         result.ClientId.Should().Be(AppClientId);
@@ -157,9 +164,8 @@ public class EntraAppProvisionerTests
         result.AppName.Should().Be($"{ServerName}-PublicClients");
         warnings.Should().BeEmpty();
 
-        capturedUris.Should().ContainSingle();
-        var uris = capturedUris[0];
-        uris.Should().BeEquivalentTo(
+        capturedPublicClientUris.Should().ContainSingle();
+        capturedPublicClientUris[0].Should().BeEquivalentTo(
             new[]
             {
                 $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{AppClientId}",
@@ -173,6 +179,65 @@ public class EntraAppProvisionerTests
                      "on Windows, the localhost callbacks support MSAL.NET and Copilot CLI flows, " +
                      "and vscode.dev/redirect supports the VS Code web client. Silently " +
                      "adding/removing/reordering entries breaks one of those flows.");
+
+        capturedWebUris.Should().ContainSingle();
+        capturedWebUris[0].Should().BeEquivalentTo(
+            new[]
+            {
+                "https://admin.cloud.microsoft/?ref=tools/consent",
+            },
+            opt => opt.WithStrictOrdering());
+    }
+
+    [Theory]
+    [InlineData("test")]
+    [InlineData("preprod")]
+    [InlineData("ppe")]
+    public async Task CreatePublicClientsAppAsync_TestPreProdEnvironment_SetsTestPreProdWebConsentRedirectUris(string environment)
+    {
+        var capturedPublicClientUris = new List<string[]>();
+        var capturedWebUris = new List<string[]>();
+        _graph.CreateEntraAppAsync(TenantId, $"{ServerName}-PublicClients", serviceTreeId: null, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
+        _graph.UpdateAppPublicClientRedirectUrisAsync(
+                TenantId,
+                AppObjectId,
+                Arg.Do<string[]>(uris => capturedPublicClientUris.Add(uris)),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+        _graph.UpdateAppRedirectUrisAsync(
+                TenantId,
+                AppObjectId,
+                Arg.Do<string[]>(uris => capturedWebUris.Add(uris)),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        var warnings = new List<string>();
+        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings, environment: environment);
+
+        result.Should().NotBeNull();
+        result.ClientId.Should().Be(AppClientId);
+        warnings.Should().BeEmpty();
+
+        capturedPublicClientUris.Should().ContainSingle();
+        capturedPublicClientUris[0].Should().BeEquivalentTo(
+            new[]
+            {
+                $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{AppClientId}",
+                "http://localhost:8080/callback",
+                "https://vscode.dev/redirect",
+                "http://localhost",
+            },
+            opt => opt.WithStrictOrdering());
+
+        capturedWebUris.Should().ContainSingle();
+        capturedWebUris[0].Should().BeEquivalentTo(
+            new[]
+            {
+                "https://sdf.admin.cloud.microsoft/?ref=tools/consent",
+                "https://ignite.admin.cloud.microsoft/?ref=tools/consent",
+            },
+            opt => opt.WithStrictOrdering());
     }
 
     [Fact]
@@ -194,13 +259,16 @@ public class EntraAppProvisionerTests
     }
 
     [Fact]
-    public async Task CreatePublicClientsAppAsync_WhenRedirectUriUpdateReturnsFalse_ReturnsIdsAndAppendsRetryWarning()
+    public async Task CreatePublicClientsAppAsync_WhenPublicClientRedirectUriUpdateReturnsFalse_AppendsWarning()
     {
         _graph.CreateEntraAppAsync(TenantId, Arg.Any<string>(), serviceTreeId: Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
         _graph.UpdateAppPublicClientRedirectUrisAsync(
                 TenantId, AppObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(false));
+        _graph.UpdateAppRedirectUrisAsync(
+                TenantId, AppObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
 
         var warnings = new List<string>();
         var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
@@ -208,7 +276,26 @@ public class EntraAppProvisionerTests
         result.ClientId.Should().Be(AppClientId);
         result.ObjectId.Should().Be(AppObjectId);
         result.AppName.Should().Be($"{ServerName}-PublicClients");
-        warnings.Should().ContainSingle().Which.Should().Be($"Failed to set redirect URIs on Public Clients app '{ServerName}-PublicClients' after retries.");
+        warnings.Should().ContainSingle().Which.Should().Be($"Failed to set publicClient redirect URIs on Public Clients app '{ServerName}-PublicClients' after retries.");
+    }
+
+    [Fact]
+    public async Task CreatePublicClientsAppAsync_WhenWebRedirectUriUpdateReturnsFalse_AppendsWarning()
+    {
+        _graph.CreateEntraAppAsync(TenantId, Arg.Any<string>(), serviceTreeId: Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
+        _graph.UpdateAppPublicClientRedirectUrisAsync(
+                TenantId, AppObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+        _graph.UpdateAppRedirectUrisAsync(
+                TenantId, AppObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(false));
+
+        var warnings = new List<string>();
+        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
+
+        result.ClientId.Should().Be(AppClientId);
+        warnings.Should().ContainSingle().Which.Should().Be($"Failed to set web redirect URIs on Public Clients app '{ServerName}-PublicClients' after retries.");
     }
 
     [Fact]

@@ -317,7 +317,7 @@ internal class PublishCommandExecutor
         var provisioner = new EntraAppProvisioner(_logger, _graphApiService!, _retryHelper);
 
         var publicClients = await provisioner.CreatePublicClientsAppAsync(
-            input.ServerName, tenantId, serviceTreeId: null, warnings, ct);
+            input.ServerName, tenantId, serviceTreeId: null, warnings, ct: ct);
 
         return new EntraAppSet(
             PublicClientsClientId: publicClients.ClientId,
