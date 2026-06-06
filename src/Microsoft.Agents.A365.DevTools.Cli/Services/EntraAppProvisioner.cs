@@ -83,7 +83,6 @@ internal class EntraAppProvisioner
         string roleDisplay,
         string? serviceTreeId,
         int? lifetimeMonths = null,
-        string? environment = null,
         CancellationToken ct = default)
     {
         var appName = $"{serverName}-{suffix}";
@@ -111,8 +110,6 @@ internal class EntraAppProvisioner
             await TryDeleteOrphanedAppAsync(tenantId, app.Value.ObjectId, appName, "empty client ID returned", ct);
             return null;
         }
-
-        await SetWebConsentRedirectUrisAsync(tenantId, app.Value.ObjectId, appName, roleDisplay, environment, ct);
 
         _logger.LogDebug("Created {Role} app: {ClientId}", roleDisplay, app.Value.ClientId);
         return new ProxyAppResult(app.Value.ClientId, secret, app.Value.ObjectId, appName);

@@ -783,7 +783,10 @@ internal class RegisterCommandExecutor
         {
             var a365TcUri = DevelopMcpCommand.AddTcPrefix(a365RedirectUri);
             var a365NonTcUri = DevelopMcpCommand.RemoveTcPrefix(a365RedirectUri);
-            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
+            var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri)
+                .Concat(EntraAppProvisioner.GetConsentRedirectUris(environment))
+                .ToArray();
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, retryCt),
@@ -817,7 +820,10 @@ internal class RegisterCommandExecutor
         {
             var remoteTcUri = DevelopMcpCommand.AddTcPrefix(remoteRedirectUri);
             var remoteNonTcUri = DevelopMcpCommand.RemoveTcPrefix(remoteRedirectUri);
-            var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri);
+            var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+            var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri)
+                .Concat(EntraAppProvisioner.GetConsentRedirectUris(environment))
+                .ToArray();
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId!, remoteUris, retryCt),
