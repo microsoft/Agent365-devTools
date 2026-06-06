@@ -38,13 +38,17 @@ public class EntraAppProvisionerTests
     }
 
     [Fact]
-    public async Task CreateProxyAppAsync_HappyPath_ReturnsAllFieldsPopulated()
+    public async Task CreateProxyAppAsync_HappyPath_ReturnsAllFieldsPopulatedAndSetsWebConsentUris()
     {
+        var capturedWebUris = new List<string[]>();
         _graph.CreateEntraAppAsync(TenantId, $"{ServerName}-A365Proxy", serviceTreeId: "svc-tree-7", Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
         _graph.AddAppPasswordAsync(TenantId, AppObjectId).Returns(Task.FromResult<string?>(AppSecret));
+        _graph.UpdateAppRedirectUrisAsync(
+                TenantId, AppObjectId, Arg.Do<string[]>(uris => capturedWebUris.Add(uris)), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
 
-        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: "svc-tree-7");
+        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: "svc-tree-7", environment: "prod");
 
         result.Should().NotBeNull();
         result!.ClientId.Should().Be(AppClientId);
@@ -54,19 +58,37 @@ public class EntraAppProvisionerTests
 
         await _graph.Received(1).CreateEntraAppAsync(TenantId, $"{ServerName}-A365Proxy", serviceTreeId: "svc-tree-7", Arg.Any<CancellationToken>());
         await _graph.Received(1).AddAppPasswordAsync(TenantId, AppObjectId);
+
+        capturedWebUris.Should().ContainSingle();
+        capturedWebUris[0].Should().BeEquivalentTo(
+            new[] { "https://admin.cloud.microsoft/?ref=tools/consent" },
+            opt => opt.WithStrictOrdering());
     }
 
     [Fact]
-    public async Task CreateProxyAppAsync_UsesSuffixInAppName()
+    public async Task CreateProxyAppAsync_PreProdEnvironment_SetsPreProdWebConsentUris()
     {
+        var capturedWebUris = new List<string[]>();
         _graph.CreateEntraAppAsync(TenantId, $"{ServerName}-RemoteProxy", serviceTreeId: null, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
         _graph.AddAppPasswordAsync(TenantId, AppObjectId).Returns(Task.FromResult<string?>(AppSecret));
+        _graph.UpdateAppRedirectUrisAsync(
+                TenantId, AppObjectId, Arg.Do<string[]>(uris => capturedWebUris.Add(uris)), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
 
-        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy", serviceTreeId: null);
+        var result = await _provisioner.CreateProxyAppAsync(ServerName, TenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy", serviceTreeId: null, environment: "preprod");
 
         result.Should().NotBeNull();
         result!.AppName.Should().Be($"{ServerName}-RemoteProxy");
+
+        capturedWebUris.Should().ContainSingle();
+        capturedWebUris[0].Should().BeEquivalentTo(
+            new[]
+            {
+                "https://sdf.admin.cloud.microsoft/?ref=tools/consent",
+                "https://ignite.admin.cloud.microsoft/?ref=tools/consent",
+            },
+            opt => opt.WithStrictOrdering());
     }
 
     [Fact]
@@ -295,7 +317,7 @@ public class EntraAppProvisionerTests
         var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings);
 
         result.ClientId.Should().Be(AppClientId);
-        warnings.Should().ContainSingle().Which.Should().Be($"Failed to set web redirect URIs on Public Clients app '{ServerName}-PublicClients' after retries.");
+        warnings.Should().ContainSingle().Which.Should().Be($"Failed to set web redirect URIs on Public Clients app '{ServerName}-PublicClients'.");
     }
 
     [Fact]

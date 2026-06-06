@@ -83,6 +83,7 @@ internal class EntraAppProvisioner
         string roleDisplay,
         string? serviceTreeId,
         int? lifetimeMonths = null,
+        string? environment = null,
         CancellationToken ct = default)
     {
         var appName = $"{serverName}-{suffix}";
@@ -111,8 +112,32 @@ internal class EntraAppProvisioner
             return null;
         }
 
+        await SetWebConsentRedirectUrisAsync(tenantId, app.Value.ObjectId, appName, roleDisplay, environment, ct);
+
         _logger.LogDebug("Created {Role} app: {ClientId}", roleDisplay, app.Value.ClientId);
         return new ProxyAppResult(app.Value.ClientId, secret, app.Value.ObjectId, appName);
+    }
+
+    private async Task SetWebConsentRedirectUrisAsync(
+        string tenantId, string objectId, string appName, string roleDisplay,
+        string? environment, CancellationToken ct, List<string>? warnings = null)
+    {
+        var resolvedEnvironment = environment ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+        var consentUris = GetConsentRedirectUris(resolvedEnvironment);
+
+        var success = await _graphApiService.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, ct);
+        if (success)
+        {
+            _logger.LogDebug(
+                "Set {RedirectUriCount} web redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
+                consentUris.Length, appName, objectId, string.Join(", ", consentUris));
+        }
+        else
+        {
+            var msg = $"Failed to set web redirect URIs on {roleDisplay} app '{appName}'.";
+            _logger.LogWarning(msg);
+            warnings?.Add(msg);
+        }
     }
 
     /// <summary>
@@ -189,9 +214,6 @@ internal class EntraAppProvisioner
         var brokerRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{clientId}";
         var publicClientUris = new[] { brokerRedirectUri }.Concat(PublicClientCanonicalRedirectUris).ToArray();
 
-        var resolvedEnvironment = environment ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
-        var consentUris = GetConsentRedirectUris(resolvedEnvironment);
-
         try
         {
             var success = await _retryHelper.ExecuteWithRetryAsync(
@@ -214,25 +236,7 @@ internal class EntraAppProvisioner
                     string.Join(", ", publicClientUris));
             }
 
-            var webSuccess = await _retryHelper.ExecuteWithRetryAsync(
-                async retryCt => await _graphApiService.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
-                result => !result,
-                cancellationToken: ct);
-            if (!webSuccess)
-            {
-                var msg = $"Failed to set web redirect URIs on Public Clients app '{appName}' after retries.";
-                _logger.LogError(msg);
-                warnings.Add(msg);
-            }
-            else
-            {
-                _logger.LogDebug(
-                    "Set {RedirectUriCount} web redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
-                    consentUris.Length,
-                    appName,
-                    objectId,
-                    string.Join(", ", consentUris));
-            }
+            await SetWebConsentRedirectUrisAsync(tenantId, objectId, appName, "Public Clients", environment, ct, warnings);
         }
         catch (Exception ex)
         {
