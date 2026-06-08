@@ -788,9 +788,8 @@ internal class RegisterCommandExecutor
         {
             var a365TcUri = DevelopMcpCommand.AddTcPrefix(a365RedirectUri);
             var a365NonTcUri = DevelopMcpCommand.RemoveTcPrefix(a365RedirectUri);
-            var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
             var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri)
-                .Concat(EntraAppProvisioner.GetConsentRedirectUris(environment))
+                .Concat(EntraAppProvisioner.GetConsentRedirectUris())
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
@@ -826,9 +825,8 @@ internal class RegisterCommandExecutor
         {
             var remoteTcUri = DevelopMcpCommand.AddTcPrefix(remoteRedirectUri);
             var remoteNonTcUri = DevelopMcpCommand.RemoveTcPrefix(remoteRedirectUri);
-            var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
             var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri)
-                .Concat(EntraAppProvisioner.GetConsentRedirectUris(environment))
+                .Concat(EntraAppProvisioner.GetConsentRedirectUris())
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
@@ -862,8 +860,7 @@ internal class RegisterCommandExecutor
     {
         try
         {
-            var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
-            var consentUris = EntraAppProvisioner.GetConsentRedirectUris(environment);
+            var consentUris = EntraAppProvisioner.GetConsentRedirectUris();
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
                 result => !result,

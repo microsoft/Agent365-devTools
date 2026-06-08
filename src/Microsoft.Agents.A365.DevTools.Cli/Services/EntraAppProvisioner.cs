@@ -27,9 +27,10 @@ internal class EntraAppProvisioner
         "https://admin.cloud.microsoft/?ref=tools/consent",
     ];
 
-    internal static string[] GetConsentRedirectUris(string environment)
+    internal static string[] GetConsentRedirectUris(string? environment = null)
     {
-        var envKey = environment?.Trim().ToUpperInvariant() ?? "PROD";
+        var resolved = environment?.Trim() ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+        var envKey = resolved.ToUpperInvariant();
         var customUris = Environment.GetEnvironmentVariable($"A365_CONSENT_REDIRECT_URIS_{envKey}");
         if (!string.IsNullOrWhiteSpace(customUris))
         {
@@ -116,8 +117,7 @@ internal class EntraAppProvisioner
         string tenantId, string objectId, string appName, string roleDisplay,
         string? environment, CancellationToken ct, List<string>? warnings = null)
     {
-        var resolvedEnvironment = environment ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
-        var consentUris = GetConsentRedirectUris(resolvedEnvironment);
+        var consentUris = GetConsentRedirectUris(environment);
 
         var success = await _retryHelper.ExecuteWithRetryAsync(
             async retryCt => await _graphApiService.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
