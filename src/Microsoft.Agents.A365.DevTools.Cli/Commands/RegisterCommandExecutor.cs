@@ -791,6 +791,7 @@ internal class RegisterCommandExecutor
             var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
             var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri)
                 .Concat(EntraAppProvisioner.GetConsentRedirectUris(environment))
+                .Distinct(StringComparer.Ordinal)
                 .ToArray();
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
@@ -828,6 +829,7 @@ internal class RegisterCommandExecutor
             var environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
             var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri)
                 .Concat(EntraAppProvisioner.GetConsentRedirectUris(environment))
+                .Distinct(StringComparer.Ordinal)
                 .ToArray();
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(

@@ -10,12 +10,16 @@ using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
+[CollectionDefinition("EntraAppProvisionerTests", DisableParallelization = true)]
+public class EntraAppProvisionerTestsCollection { }
+
 /// <summary>
 /// Tests for <see cref="EntraAppProvisioner"/>. The provisioner absorbed the per-app creation flows
 /// that previously lived inline in PublishCommandExecutor and RegisterCommandExecutor. These tests
 /// pin every branch (success + each failure mode) so the executors can compose the provisioner
 /// without needing their own per-step coverage.
 /// </summary>
+[Collection("EntraAppProvisionerTests")]
 public class EntraAppProvisionerTests
 {
     private const string ServerName = "mcp_TestServer";
