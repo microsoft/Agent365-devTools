@@ -29,7 +29,10 @@ internal class EntraAppProvisioner
 
     internal static string[] GetConsentRedirectUris(string? environment = null)
     {
-        var resolved = environment?.Trim() ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+        var trimmed = environment?.Trim();
+        var resolved = string.IsNullOrEmpty(trimmed)
+            ? Environment.GetEnvironmentVariable("A365_ENVIRONMENT")?.Trim() ?? "prod"
+            : trimmed;
         var envKey = resolved.ToUpperInvariant();
         var customUris = Environment.GetEnvironmentVariable($"A365_CONSENT_REDIRECT_URIS_{envKey}");
         if (!string.IsNullOrWhiteSpace(customUris))
