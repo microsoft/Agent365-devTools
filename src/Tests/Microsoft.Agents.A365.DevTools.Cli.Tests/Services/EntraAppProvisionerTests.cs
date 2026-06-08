@@ -213,6 +213,26 @@ public class EntraAppProvisionerTests
     }
 
     [Fact]
+    public void GetConsentRedirectUris_TrimsWhitespaceFromEnvironment()
+    {
+        const string envKey = "A365_CONSENT_REDIRECT_URIS_TEST";
+        var prev = Environment.GetEnvironmentVariable(envKey);
+        try
+        {
+            Environment.SetEnvironmentVariable(envKey, "https://trimmed.example.com/consent");
+            var uris = EntraAppProvisioner.GetConsentRedirectUris("  test  ");
+            uris.Should().BeEquivalentTo(
+                new[] { "https://trimmed.example.com/consent" },
+                because: "Environment values with leading/trailing whitespace (common in " +
+                         "shell/env var setups) must resolve to the correct env var key.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envKey, prev);
+        }
+    }
+
+    [Fact]
     public void GetConsentRedirectUris_FallsToProdWhenNoEnvVar()
     {
         const string envKey = "A365_CONSENT_REDIRECT_URIS_PREPROD";
