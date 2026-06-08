@@ -191,58 +191,46 @@ public class EntraAppProvisionerTests
                      "consent portal. Changing these URIs breaks the admin consent flow.");
     }
 
-    [Theory]
-    [InlineData("test")]
-    [InlineData("preprod")]
-    [InlineData("ppe")]
-    public async Task CreatePublicClientsAppAsync_TestPreProdEnvironment_SetsTestPreProdWebConsentRedirectUris(string environment)
+    [Fact]
+    public void GetConsentRedirectUris_UsesEnvVarOverride()
     {
-        var capturedPublicClientUris = new List<string[]>();
-        var capturedWebUris = new List<string[]>();
-        _graph.CreateEntraAppAsync(TenantId, $"{ServerName}-PublicClients", serviceTreeId: null, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
-        _graph.UpdateAppPublicClientRedirectUrisAsync(
-                TenantId,
-                AppObjectId,
-                Arg.Do<string[]>(uris => capturedPublicClientUris.Add(uris)),
-                Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(true));
-        _graph.UpdateAppRedirectUrisAsync(
-                TenantId,
-                AppObjectId,
-                Arg.Do<string[]>(uris => capturedWebUris.Add(uris)),
-                Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(true));
+        const string envKey = "A365_CONSENT_REDIRECT_URIS_PREPROD";
+        var prev = Environment.GetEnvironmentVariable(envKey);
+        try
+        {
+            Environment.SetEnvironmentVariable(envKey, "https://custom1.example.com/consent, https://custom2.example.com/consent");
+            var uris = EntraAppProvisioner.GetConsentRedirectUris("preprod");
+            uris.Should().BeEquivalentTo(
+                new[] { "https://custom1.example.com/consent", "https://custom2.example.com/consent" },
+                opt => opt.WithStrictOrdering(),
+                because: "Non-prod consent redirect URIs are read from A365_CONSENT_REDIRECT_URIS_{ENV} " +
+                         "to avoid leaking internal URLs in source code.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envKey, prev);
+        }
+    }
 
-        var warnings = new List<string>();
-        var result = await _provisioner.CreatePublicClientsAppAsync(ServerName, TenantId, serviceTreeId: null, warnings, environment: environment);
-
-        result.Should().NotBeNull();
-        result.ClientId.Should().Be(AppClientId);
-        warnings.Should().BeEmpty();
-
-        capturedPublicClientUris.Should().ContainSingle();
-        capturedPublicClientUris[0].Should().BeEquivalentTo(
-            new[]
-            {
-                $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{AppClientId}",
-                "http://localhost:8080/callback",
-                "https://vscode.dev/redirect",
-                "http://localhost",
-            },
-            opt => opt.WithStrictOrdering());
-
-        capturedWebUris.Should().ContainSingle();
-        capturedWebUris[0].Should().BeEquivalentTo(
-            new[]
-            {
-                "https://sdf.admin.cloud.microsoft/?ref=tools/consent",
-                "https://ignite.admin.cloud.microsoft/?ref=tools/consent",
-            },
-            opt => opt.WithStrictOrdering(),
-            because: "Test/PreProd consent redirect URIs target the sdf and ignite admin " +
-                     "consent portals. Changing these URIs breaks the admin consent flow " +
-                     "in non-production environments.");
+    [Fact]
+    public void GetConsentRedirectUris_FallsToProdWhenNoEnvVar()
+    {
+        const string envKey = "A365_CONSENT_REDIRECT_URIS_PREPROD";
+        var prev = Environment.GetEnvironmentVariable(envKey);
+        try
+        {
+            Environment.SetEnvironmentVariable(envKey, null);
+            var uris = EntraAppProvisioner.GetConsentRedirectUris("preprod");
+            uris.Should().BeEquivalentTo(
+                new[] { "https://admin.cloud.microsoft/?ref=tools/consent" },
+                opt => opt.WithStrictOrdering(),
+                because: "When no env var override is set, all environments fall back to the " +
+                         "prod consent redirect URI.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envKey, prev);
+        }
     }
 
     [Fact]

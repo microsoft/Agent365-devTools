@@ -22,12 +22,6 @@ internal class EntraAppProvisioner
         "http://localhost",
     ];
 
-    private static readonly string[] TestPreProdConsentRedirectUris =
-    [
-        "https://sdf.admin.cloud.microsoft/?ref=tools/consent",
-        "https://ignite.admin.cloud.microsoft/?ref=tools/consent",
-    ];
-
     private static readonly string[] ProdConsentRedirectUris =
     [
         "https://admin.cloud.microsoft/?ref=tools/consent",
@@ -35,11 +29,14 @@ internal class EntraAppProvisioner
 
     internal static string[] GetConsentRedirectUris(string environment)
     {
-        return environment?.ToLowerInvariant() switch
+        var envKey = environment?.ToUpperInvariant() ?? "PROD";
+        var customUris = Environment.GetEnvironmentVariable($"A365_CONSENT_REDIRECT_URIS_{envKey}");
+        if (!string.IsNullOrWhiteSpace(customUris))
         {
-            "test" or "preprod" or "ppe" => [.. TestPreProdConsentRedirectUris],
-            _ => [.. ProdConsentRedirectUris],
-        };
+            return customUris.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        return [.. ProdConsentRedirectUris];
     }
 
     private readonly ILogger _logger;
