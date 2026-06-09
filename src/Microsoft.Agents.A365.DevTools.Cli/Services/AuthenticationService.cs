@@ -80,6 +80,11 @@ public class AuthenticationService : IAuthenticationService
         var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _cacheDir = Path.Combine(appDataPath, AuthenticationConstants.ApplicationName);
         Directory.CreateDirectory(_cacheDir);
+
+        // One-time migration cleanup: delete any plaintext auth-token.json written by an older CLI
+        // version. Runs once per process. TEMPORARY — this call and DeleteLegacyTokenCache can be
+        // removed a couple of releases after this ships, once upgraded installs have all run once.
+        DeleteLegacyTokenCache();
     }
 
     /// <summary>
@@ -89,7 +94,7 @@ public class AuthenticationService : IAuthenticationService
     /// to be re-issued. Silent re-acquisition on the next call (via WAM on Windows or refresh-token
     /// flow elsewhere) typically completes without re-prompting the user.
     /// </summary>
-    public Task ClearTokenCacheAsync() => ClearStaleTokenCachesAsync();
+    public Task ClearTokenCacheAsync() => ClearMsalCacheAsync();
 
     /// <summary>
     /// Gets an access token for Agent 365, using cached token if valid or prompting for authentication
@@ -133,7 +138,7 @@ public class AuthenticationService : IAuthenticationService
                     "Authentication returned token for tenant {ReturnedTenant} but {RequestedTenant} is required. " +
                     "Clearing cached credentials and retrying...",
                     returnedTid, tenantId);
-                await ClearStaleTokenCachesAsync();
+                await ClearMsalCacheAsync();
                 // Retry once with the same parameters — MSAL disk cache is now empty so WAM
                 // gets a clean slate and will either pick the correct account or prompt.
                 token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, forceRefresh: forceRefresh, ct: ct);
@@ -584,13 +589,13 @@ public class AuthenticationService : IAuthenticationService
     }
 
     /// <summary>
-    /// Deletes the OS-protected MSAL persistent cache and best-effort removes any legacy
-    /// plaintext token cache (<c>auth-token.json</c>) left behind by older CLI versions.
-    /// Each deletion is independently non-fatal; errors are logged at Debug level.
+    /// Deletes the OS-protected MSAL persistent cache so the next acquisition starts from a clean
+    /// account list. Non-fatal; errors are logged at Debug level. (Legacy plaintext-cache cleanup
+    /// runs once at construction and is not repeated here.)
     /// </summary>
-    private Task ClearStaleTokenCachesAsync()
+    private Task ClearMsalCacheAsync()
     {
-        // 1. MSAL persistent cache (WAM/browser) — the active token store.
+        // MSAL persistent cache (WAM/browser) — the active token store.
         var msalCachePath = Path.Combine(_cacheDir, AuthenticationConstants.MsalCacheFileName);
         try
         {
@@ -607,9 +612,6 @@ public class AuthenticationService : IAuthenticationService
             _logger.LogDebug(ex, "Failed to clear MSAL token cache at {Path}: {Message}", msalCachePath, ex.Message);
         }
 
-        // 2. Legacy plaintext access-token cache (migration cleanup for upgraded users).
-        // Newer CLI versions no longer write this file; delete it if an older version did.
-        DeleteLegacyTokenCache();
 
         return Task.CompletedTask;
     }
@@ -641,6 +643,7 @@ public class AuthenticationService : IAuthenticationService
     /// writes a plaintext token file — token persistence is owned by the MSAL persistent cache.
     /// </summary>
     public void ClearCache() => DeleteLegacyTokenCache();
+
 
     private class TokenInfo
     {

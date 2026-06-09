@@ -255,9 +255,7 @@ internal static class GetTokenSubcommand
         // Report the OS-protected MSAL persistent cache as the token cache location. The CLI no
         // longer writes a plaintext app-level token file; MSAL owns token persistence (DPAPI on
         // Windows, Keychain on macOS, 0600 file on Linux).
-        var tokenCachePath = Path.Combine(
-            ConfigService.GetGlobalConfigDirectory(),
-            AuthenticationConstants.MsalCacheFileName);
+        var tokenCachePath = MsalBrowserCredential.MsalCacheFilePath;
 
         try
         {

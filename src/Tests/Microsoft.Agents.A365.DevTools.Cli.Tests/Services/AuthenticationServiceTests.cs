@@ -32,36 +32,36 @@ public class AuthenticationServiceTests : IDisposable
         _mockLogger = Substitute.For<ILogger<AuthenticationService>>();
         _authService = new AuthenticationService(_mockLogger);
         
-        // ClearCache() best-effort deletes the legacy plaintext token file. These tests pin that
-        // cleanup behavior against the same legacy path the service computes internally.
+        // The constructor best-effort deletes any legacy plaintext auth-token.json (migration cleanup).
+        // These tests pin that behavior against the same legacy path the service computes internally.
         var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _testCachePath = Path.Combine(appDataPath, "Microsoft.Agents.A365.DevTools.Cli", "auth-token.json");
     }
 
     public void Dispose()
     {
-        // Clean up test cache
-        _authService.ClearCache();
+        // Best-effort cleanup of any legacy file a test created (service no longer exposes ClearCache).
+        try { if (File.Exists(_testCachePath)) File.Delete(_testCachePath); } catch (Exception) { /* best-effort */ }
         GC.SuppressFinalize(this);
     }
 
     [Fact]
-    public void ClearCache_WhenCacheExists_RemovesFile()
+    public void Constructor_WhenLegacyPlaintextCacheExists_RemovesIt()
     {
-        // Arrange
+        // Arrange — simulate a plaintext auth-token.json left by an older CLI version
         var cacheDir = Path.GetDirectoryName(_testCachePath)!;
         Directory.CreateDirectory(cacheDir);
         File.WriteAllText(_testCachePath, "test content");
 
-        // Act
-        _authService.ClearCache();
+        // Act — constructing the service runs the one-time migration cleanup
+        _ = new AuthenticationService(_mockLogger);
 
         // Assert
         File.Exists(_testCachePath).Should().BeFalse();
     }
 
     [Fact]
-    public void ClearCache_WhenCacheDoesNotExist_DoesNotThrow()
+    public void Constructor_WhenNoLegacyCache_DoesNotThrow()
     {
         // Arrange
         if (File.Exists(_testCachePath))
@@ -70,7 +70,7 @@ public class AuthenticationServiceTests : IDisposable
         }
 
         // Act
-        Action act = () => _authService.ClearCache();
+        Action act = () => new AuthenticationService(_mockLogger);
 
         // Assert
         act.Should().NotThrow();

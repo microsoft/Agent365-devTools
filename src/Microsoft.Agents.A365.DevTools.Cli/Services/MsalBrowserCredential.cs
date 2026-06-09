@@ -56,6 +56,16 @@ public sealed class MsalBrowserCredential : TokenCredential
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         AuthenticationConstants.ApplicationName);
 
+    /// <summary>
+    /// Full path to the OS-protected MSAL persistent token cache file — the single source of
+    /// truth for callers that report or clear the cache location. The cache lives under
+    /// LocalApplicationData (%LocalAppData% on Windows, ~/.local/share on Linux,
+    /// ~/Library/Application Support on macOS) + the application name. This is deliberately NOT
+    /// ConfigService.GetGlobalConfigDirectory(), which resolves to the XDG config dir
+    /// (~/.config/a365) on Linux/macOS and would report the wrong location.
+    /// </summary>
+    public static string MsalCacheFilePath => Path.Combine(CacheDirectory, CacheFileName);
+
     // P/Invoke is required for WAM window handle in console applications.
     // There is no managed .NET API for console/desktop window handles - these are Windows-specific.
     // This is the standard approach documented by Microsoft for WAM integration:
