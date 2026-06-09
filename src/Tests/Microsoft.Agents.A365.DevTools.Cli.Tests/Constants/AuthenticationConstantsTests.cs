@@ -37,9 +37,9 @@ public class AuthenticationConstantsTests
     }
 
     [Fact]
-    public void TokenCacheFileName_ShouldBeCorrect()
+    public void MsalCacheFileName_ShouldBeCorrect()
     {
-        AuthenticationConstants.TokenCacheFileName.Should().Be("auth-token.json");
+        AuthenticationConstants.MsalCacheFileName.Should().Be("msal-token-cache");
     }
 
     [Fact]

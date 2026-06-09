@@ -182,12 +182,12 @@ All callers (GraphApiService, ArmApiService, TeamsGraphBackendConfigurator, ...)
         v
 AuthenticationService.GetAccessTokenAsync(resource, tenantId)
         |
-        +-- Check persistent disk cache (%LocalAppData%\Agent365\token-cache.json)
-        |       Cache key: {resource}[:tenant:{tenantId}][:user:{userId}]
+        +-- MsalBrowserCredential.GetTokenAsync(scopes) - silent-first against the
+        |       OS-protected MSAL cache (msal-token-cache: DPAPI/Keychain/owner-only file)
         |
-        +-- Cache hit + not expiring: return token immediately (0 prompts)
+        +-- Valid token in MSAL cache: returned silently (0 prompts)
         |
-        +-- Cache miss / expired: MsalBrowserCredential.GetTokenAsync(scopes)
+        +-- Miss / expired: interactive acquisition
                 |
                 +-- Windows:  WAM broker (no browser, SSO, CAP-compliant)
                 +-- macOS:    System browser → device code fallback if restricted
@@ -205,7 +205,7 @@ AuthenticationService.GetAccessTokenAsync(resource, tenantId)
 
 To prevent WAM from selecting a stale or wrong account, a login hint (UPN) is resolved before interactive auth:
 1. `AzCliHelper.ResolveLoginHintAsync()` — reads `az account show` if az CLI is present
-2. `AuthenticationService.ResolveLoginHintFromCacheAsync()` — decodes `upn`/`preferred_username` from a cached JWT if az CLI is unavailable
+2. `AuthenticationService.ResolveLoginHintFromCacheAsync()` — reads the first account's UPN from the OS-protected MSAL persistent cache if az CLI is unavailable
 
 ### IAuthenticationService Interface
 
@@ -215,7 +215,7 @@ Only `GetAccessTokenAsync` and `ResolveLoginHintFromCacheAsync` are on the inter
 
 ### Token Caching
 
-- **Persistent cache** (`AuthenticationService`): survives across CLI invocations, keyed by resource + tenant + user
+- **MSAL persistent cache** (`MsalBrowserCredential`): the sole token store - survives across CLI invocations, OS-protected at rest (DPAPI on Windows, Keychain on macOS, owner-only file on Linux). `AuthenticationService` no longer writes a separate cache.
 - **Process-level login hint cache** (`AzCliHelper`): caches the result of `az account show` for the process lifetime — invalidated after `az login` operations
 
 ### Platform Notes

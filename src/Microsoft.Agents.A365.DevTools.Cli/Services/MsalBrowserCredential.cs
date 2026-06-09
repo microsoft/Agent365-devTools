@@ -24,12 +24,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// Uses Microsoft.Identity.Client.Extensions.Msal to persist tokens across all CLI instances.
 /// This dramatically reduces authentication prompts during multi-step operations like 'a365 setup all'.
 ///
-/// Cache Location: [LocalApplicationData]/Agent365/msal-token-cache (Windows/macOS)
+/// Cache Location: [LocalApplicationData]/Microsoft.Agents.A365.DevTools.Cli/msal-token-cache (all platforms)
 /// Security: Tokens are stored using platform-appropriate mechanisms:
 ///   - Windows: DPAPI (Data Protection API) - tokens encrypted with user credentials, persisted to disk
 ///   - macOS: Keychain - tokens stored in secure keychain, persisted to disk
-///   - Linux: Shared in-memory cache (static, in-process) - tokens never written to disk, shared
-///            across all MsalBrowserCredential instances in the same CLI process to avoid repeated prompts
+///   - Linux: Unprotected plaintext file (0600 permissions, owner-only), persisted to disk.
+///            Same approach used by Azure CLI (~/.azure/msal_token_cache.json); tokens are protected
+///            by filesystem permissions rather than at-rest encryption.
 ///
 /// See: https://learn.microsoft.com/en-us/entra/msal/dotnet/acquiring-tokens/desktop-mobile/wam
 /// Enhancement: Improves the WAM authentication experience by reducing repeated login prompts.
@@ -264,6 +265,46 @@ public sealed class MsalBrowserCredential : TokenCredential
             // the user can do nothing to remediate (no D-Bus/Keychain on headless Linux is
             // the common cause), so this stays at Debug rather than surfacing as a warning.
             logger?.LogDebug(ex, "Failed to register persistent token cache; auth prompts may be repeated within this session.");
+        }
+    }
+
+    /// <summary>
+    /// Reads the username (UPN) of the first account in the MSAL persistent token cache without
+    /// triggering any interactive authentication. Used to resolve a login hint for pre-selecting
+    /// the correct account when the Azure CLI is not available.
+    /// </summary>
+    /// <param name="clientId">The application (client) ID whose cache to inspect — must match the
+    /// client used for interactive acquisition so the same persisted accounts are visible.</param>
+    /// <param name="logger">Optional logger for diagnostic output.</param>
+    /// <returns>The UPN of the first cached account, or <c>null</c> if the cache is empty,
+    /// unreadable, or any error occurs. This is a best-effort fallback and never throws.</returns>
+    public static async Task<string?> TryGetCachedAccountUsernameAsync(string clientId, ILogger? logger)
+    {
+        if (string.IsNullOrWhiteSpace(clientId))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Build a minimal PublicClientApplication on the common authority. We never call any
+            // Acquire* method here — only GetAccountsAsync, which reads the persisted cache and
+            // cannot prompt. The authority/tenant does not affect which accounts are enumerated.
+            var app = PublicClientApplicationBuilder
+                .Create(clientId)
+                .WithAuthority(AzureCloudInstance.AzurePublic, AuthenticationConstants.CommonTenantId)
+                .Build();
+
+            RegisterPersistentCache(app, logger);
+
+            var accounts = await app.GetAccountsAsync();
+            return accounts.FirstOrDefault()?.Username;
+        }
+        catch (Exception ex)
+        {
+            // Best-effort only — login-hint resolution falls back to no hint (account picker).
+            logger?.LogDebug(ex, "Failed to read cached account username from MSAL cache");
+            return null;
         }
     }
 

@@ -95,6 +95,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 ### Changed
 
+- Token-cache hardening: the CLI no longer writes a plaintext `auth-token.json` access-token cache. Token persistence and silent refresh now rely solely on the OS-protected MSAL persistent cache (`msal-token-cache` - DPAPI on Windows, Keychain on macOS, owner-only file on Linux). Any pre-existing plaintext `auth-token.json` is deleted on the next token-cache clear; sign-in prompt behavior is unchanged.
 - `develop-mcp register-external-mcp-server` now sets `exit code 1` on failure paths (validation errors, tenant detection failure, Graph unavailable, Entra app creation failure, MCP-Platform AddMcpServer failure). Previously these paths logged an error and exited `0`, which made the command's success/failure status undetectable from scripts and CI. Successful dry-run and user-initiated cancellation at the y/N prompt continue to exit `0`.
 - Admin consent canary path (when the caller lacks `DelegatedPermissionGrant.Read.All`) no longer prompts for Enter immediately. The CLI now polls every 5 seconds, prints a friendly progress message at 30 seconds, and responds promptly to Enter or Ctrl+C. The previous jargon-heavy message about `oauth2PermissionGrants` was rewritten in plain English; technical details are demoted to `Debug`.
 - CLI log file now writes a run-start separator line (`====...====`) with the full command and timestamp before each invocation, making it easier to identify individual runs in a shared log file.
