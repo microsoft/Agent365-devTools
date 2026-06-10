@@ -157,20 +157,30 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             {
                 _logger.LogDebug("MSAL token acquisition failed, falling back to PowerShell Connect-MgGraph...");
                 var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
-                var result = await ExecuteWithFallbackAsync(script, ct);
-                token = ProcessResult(result);
 
-                // If PowerShell browser auth was blocked (Conditional Access Policy or interactive
-                // browser unavailable in embedded terminal), retry with device code.
-                if (string.IsNullOrWhiteSpace(token) && !useDeviceCode &&
-                    (IsConditionalAccessError(result) || IsInteractiveBrowserFailure(result)))
+                // The first attempt is recoverable via a device-code retry, so suppress its error logging;
+                // re-log below only if the failure turns out to be terminal.
+                var canRetryWithDeviceCode = !useDeviceCode;
+                var result = await ExecuteWithFallbackAsync(script, ct, suppressErrorLogging: canRetryWithDeviceCode);
+                token = ProcessResult(result, logErrors: !canRetryWithDeviceCode);
+
+                if (string.IsNullOrWhiteSpace(token) && canRetryWithDeviceCode)
                 {
-                    _logger.LogWarning(
-                        "PowerShell interactive browser authentication failed (Conditional Access Policy or embedded terminal). " +
-                        "Retrying with device code authentication...");
-                    var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
-                    var deviceCodeResult = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
-                    token = ProcessResult(deviceCodeResult);
+                    if (IsConditionalAccessError(result) || IsInteractiveBrowserFailure(result))
+                    {
+                        _logger.LogWarning(
+                            "PowerShell interactive browser authentication failed (Conditional Access Policy or embedded terminal). " +
+                            "Retrying with device code authentication...");
+                        var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
+                        var deviceCodeResult = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
+                        token = ProcessResult(deviceCodeResult);
+                    }
+                    else
+                    {
+                        // Not a recoverable interactive-browser/CAP failure — its error was suppressed
+                        // above on the assumption a retry would apply. Surface the real cause now.
+                        LogResultFailure(result);
+                    }
                 }
             }
 
@@ -336,18 +346,19 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
     private async Task<CommandResult> ExecuteWithFallbackAsync(
         string script,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool suppressErrorLogging = false)
     {
         // Try PowerShell Core first (cross-platform)
         var shell = "pwsh";
-        var result = await ExecutePowerShellAsync(shell, script, ct);
+        var result = await ExecutePowerShellAsync(shell, script, ct, suppressErrorLogging);
 
         // Fallback to Windows PowerShell if pwsh is not available
         if (!result.Success && IsPowerShellNotFoundError(result))
         {
             _logger.LogDebug("PowerShell Core not found, falling back to Windows PowerShell");
             shell = "powershell";
-            result = await ExecutePowerShellAsync(shell, script, ct);
+            result = await ExecutePowerShellAsync(shell, script, ct, suppressErrorLogging);
         }
 
         // If the failure is due to a missing or broken module, attempt auto-install and retry once.
@@ -358,7 +369,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             if (await TryAutoInstallRequiredModulesAsync(shell, ct))
             {
                 _logger.LogInformation("Auto-installed missing PowerShell module(s). Retrying...");
-                result = await ExecutePowerShellAsync(shell, script, ct);
+                result = await ExecutePowerShellAsync(shell, script, ct, suppressErrorLogging);
             }
         }
 
@@ -459,7 +470,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     private async Task<CommandResult> ExecutePowerShellAsync(
         string shell,
         string script,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool suppressErrorLogging = false)
     {
         var arguments = BuildPowerShellArguments(shell, script);
 
@@ -470,6 +482,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             outputPrefix: "",
             interactive: true,
             outputTransform: FormatDeviceCodeLine,
+            suppressErrorLogging: suppressErrorLogging,
             cancellationToken: ct);
     }
 
@@ -520,20 +533,14 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         return $"{baseArgs} -Command \"{wrappedScript}\"";
     }
 
-    private string? ProcessResult(CommandResult result)
+    private string? ProcessResult(CommandResult result, bool logErrors = true)
     {
         if (!result.Success)
         {
-            _logger.LogError(
-                "Failed to acquire Microsoft Graph access token. Error: {Error}",
-                result.StandardError);
-
-            if (IsPowerShellModuleMissingError(result))
-            {
-                _logger.LogError(
-                    "Required PowerShell module could not be loaded (auto-install was attempted but failed). " +
-                    "Run 'a365 setup requirements' to manually install missing modules.");
-            }
+            // logErrors is false for a recoverable first attempt (retried with device code); the caller
+            // re-logs via LogResultFailure if the failure turns out to be terminal.
+            if (logErrors)
+                LogResultFailure(result);
 
             return null;
         }
@@ -560,6 +567,20 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
         _logger.LogDebug("Microsoft Graph access token acquired successfully");
         return token;
+    }
+
+    private void LogResultFailure(CommandResult result)
+    {
+        _logger.LogError(
+            "Failed to acquire Microsoft Graph access token. Error: {Error}",
+            result.StandardError);
+
+        if (IsPowerShellModuleMissingError(result))
+        {
+            _logger.LogError(
+                "Required PowerShell module could not be loaded (auto-install was attempted but failed). " +
+                "Run 'a365 setup requirements' to manually install missing modules.");
+        }
     }
 
     private static bool IsConditionalAccessError(CommandResult result)

@@ -40,12 +40,14 @@ internal class PublishCommandExecutor
     internal PublishCommandExecutor(
         ILogger logger,
         IAgent365ToolingService toolingService,
-        GraphApiService? graphApiService)
+        GraphApiService? graphApiService,
+        RetryHelper? retryHelper = null)
     {
         _logger = logger;
         _toolingService = toolingService;
         _graphApiService = graphApiService;
-        _retryHelper = new RetryHelper(logger, maxRetries: 5, baseDelaySeconds: 3);
+        // Injectable so tests can supply a zero-delay RetryHelper (mirrors GraphApiService / ArmApiService).
+        _retryHelper = retryHelper ?? new RetryHelper(logger, maxRetries: 5, baseDelaySeconds: 3);
     }
 
     private sealed record ResolvedInput

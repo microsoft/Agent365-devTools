@@ -4,6 +4,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using NSubstitute;
 using FluentAssertions;
@@ -316,7 +317,9 @@ public class DevelopMcpCommandRegressionTests
             IAgent365ToolingService toolingService,
             GraphApiService? graphApiService,
             string? tenantId)
-            : base(logger, toolingService, graphApiService)
+            // Zero-delay retry so the non-dry-run path doesn't spend ~45s in exponential backoff when a
+            // best-effort Graph step is left unmocked (mirrors GraphApiService/ArmApiService test injection).
+            : base(logger, toolingService, graphApiService, new RetryHelper(logger, maxRetries: 1, baseDelaySeconds: 0))
         {
             _tenantId = tenantId;
         }

@@ -1195,9 +1195,16 @@ internal static class BatchPermissionsOrchestrator
     /// Default <strong>false</strong> so the helper actually runs in production. Tests
     /// for <see cref="ConfigureAllPermissionsAsync"/> that do not want the helper firing
     /// must set this to true in their setup. Tests that exercise the helper directly
-    /// leave it false. Pattern mirrors <see cref="AdminConsentHelper.BypassConsentChecksForTests"/>.
+    /// leave it false. Backed by <see cref="AsyncLocal{T}"/> (mirrors
+    /// <see cref="AdminConsentHelper.BypassConsentChecksForTests"/>) so the flag is scoped to the
+    /// setting test's async flow and cannot leak across parallel test classes.
     /// </summary>
-    internal static bool BypassSpProvisioningForTests { get; set; } = false;
+    internal static bool BypassSpProvisioningForTests
+    {
+        get => _bypassSpProvisioning.Value;
+        set => _bypassSpProvisioning.Value = value;
+    }
+    private static readonly AsyncLocal<bool> _bypassSpProvisioning = new();
 
     /// <summary>
     /// Builds the <c>az ad sp create</c> command that provisions a missing resource SP in

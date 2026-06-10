@@ -1863,20 +1863,16 @@ public class BlueprintSubcommandTests
     #region Ownership Check Tests
 
     [Fact]
-    public async Task CreateBlueprintClientSecret_WhenUserIsNotOwner_LogsOwnershipWarning()
+    public async Task CreateBlueprintClientSecret_DoesNotPerformPreflightOwnerCheck()
     {
-        // Arrange
-        _mockGraphApiService.IsApplicationOwnerAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<bool?>(false));
-
+        // The pre-flight ownership probe was removed (it false-negatived on the not-yet-replicated owner
+        // edge and printed a "will fail" warning addPassword then contradicted). It must no longer run.
         var config = new Agent365Config
         {
             TenantId = "00000000-0000-0000-0000-000000000001",
-            ClientAppId = "" // empty → AcquireMsalGraphTokenAsync guard returns null immediately
+            ClientAppId = "" // token acquisition fails fast; we only assert that no owner pre-check ran
         };
 
-        // Act — method returns false after token acquisition fails; that is expected in this test
         await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
             blueprintObjectId: "object-id",
             blueprintAppId: "app-id",
@@ -1887,80 +1883,45 @@ public class BlueprintSubcommandTests
             generatedConfigPath: "a365.generated.config.json",
             loginHintResolver: () => Task.FromResult<string?>(null));
 
-        // Assert
+        await _mockGraphApiService.DidNotReceive().IsApplicationOwnerAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+    }
+
+    [Fact]
+    public async Task CreateBlueprintClientSecret_WhenNonPermissionFailure_DoesNotClaimOwnership()
+    {
+        // Ownership guidance must show only for a real permission denial, not unrelated failures. An empty
+        // ClientAppId fails at token acquisition, so "not an owner" must NOT appear (only the generic
+        // manual-creation guidance). The genuine-403 positive case has no unit seam (integration-only).
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000001",
+            ClientAppId = "" // token acquisition fails — NOT a permission denial
+        };
+
+        var created = await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
+            blueprintObjectId: "object-id",
+            blueprintAppId: "app-id",
+            graphService: _mockGraphApiService,
+            setupConfig: config,
+            configService: _mockConfigService,
+            logger: _mockLogger,
+            generatedConfigPath: "a365.generated.config.json",
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        created.Should().BeFalse(because: "token acquisition failed, so the secret could not be created");
+
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("not an owner")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
         _mockLogger.Received().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("not an owner")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
-    }
-
-    [Fact]
-    public async Task CreateBlueprintClientSecret_WhenUserIsOwner_DoesNotLogOwnershipWarning()
-    {
-        // Arrange
-        _mockGraphApiService.IsApplicationOwnerAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<bool?>(true));
-
-        var config = new Agent365Config
-        {
-            TenantId = "00000000-0000-0000-0000-000000000001",
-            ClientAppId = ""
-        };
-
-        // Act
-        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
-            blueprintObjectId: "object-id",
-            blueprintAppId: "app-id",
-            graphService: _mockGraphApiService,
-            setupConfig: config,
-            configService: _mockConfigService,
-            logger: _mockLogger,
-            generatedConfigPath: "a365.generated.config.json",
-            loginHintResolver: () => Task.FromResult<string?>(null));
-
-        // Assert — ownership warning must not fire when current user is an owner
-        _mockLogger.DidNotReceive().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("not an owner")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
-    }
-
-    [Fact]
-    public async Task CreateBlueprintClientSecret_WhenOwnershipIsIndeterminate_DoesNotLogOwnershipWarning()
-    {
-        // Arrange — null means Graph returned an error; ownership cannot be determined.
-        // The caller uses `if (isOwner == false)` so null must not trigger the warning.
-        _mockGraphApiService.IsApplicationOwnerAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult<bool?>(null));
-
-        var config = new Agent365Config
-        {
-            TenantId = "00000000-0000-0000-0000-000000000001",
-            ClientAppId = ""
-        };
-
-        // Act
-        await BlueprintSubcommand.CreateBlueprintClientSecretAsync(
-            blueprintObjectId: "object-id",
-            blueprintAppId: "app-id",
-            graphService: _mockGraphApiService,
-            setupConfig: config,
-            configService: _mockConfigService,
-            logger: _mockLogger,
-            generatedConfigPath: "a365.generated.config.json",
-            loginHintResolver: () => Task.FromResult<string?>(null));
-
-        // Assert — indeterminate ownership must not log a "not an owner" warning
-        _mockLogger.DidNotReceive().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("not an owner")),
+            Arg.Is<object>(o => o.ToString()!.Contains("create it manually")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }

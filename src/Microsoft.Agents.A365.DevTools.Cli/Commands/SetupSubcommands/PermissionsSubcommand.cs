@@ -998,10 +998,6 @@ internal static class PermissionsSubcommand
         CancellationToken cancellationToken = default,
         IConfirmationProvider? confirmationProvider = null)
     {
-        logger.LogInformation("");
-        logger.LogInformation("Configuring custom blueprint permissions...");
-        logger.LogInformation("");
-
         try
         {
             // Build the set of resource app IDs desired by the current config
@@ -1010,16 +1006,22 @@ internal static class PermissionsSubcommand
                     .Select(p => p.ResourceAppId),
                 StringComparer.OrdinalIgnoreCase);
 
-            // Reconcile: remove permissions that are no longer in the config
+            // Reconcile: remove permissions that are no longer present (RemoveStale logs any removals).
             await RemoveStaleCustomPermissionsAsync(
                 logger, graphApiService, blueprintService, setupConfig, desiredCustomIds, cancellationToken);
 
+            // Custom blueprint permissions are an opt-in feature; most agents define none. When there
+            // is nothing to configure, stay silent rather than printing a header and a skip notice.
             if (setupConfig.CustomBlueprintPermissions == null || setupConfig.CustomBlueprintPermissions.Count == 0)
             {
-                logger.LogInformation("No custom blueprint permissions specified in config. Skipping.");
+                logger.LogDebug("No custom blueprint permissions to configure.");
                 await configService.SaveStateAsync(setupConfig);
                 return true;
             }
+
+            logger.LogInformation("");
+            logger.LogInformation("Configuring custom blueprint permissions...");
+            logger.LogInformation("");
 
             var hasValidationFailures = false;
             var specList = new List<ResourcePermissionSpec>();
