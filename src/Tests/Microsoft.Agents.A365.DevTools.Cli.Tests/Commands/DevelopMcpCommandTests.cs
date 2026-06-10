@@ -4,6 +4,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using NSubstitute;
 using FluentAssertions;
@@ -41,7 +42,7 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(8);
+        command.Subcommands.Should().HaveCount(5);
 
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
         subcommandNames.Should().Contain(new[]
@@ -50,9 +51,6 @@ public class DevelopMcpCommandTests
             "list-servers",
             "publish",
             "unpublish",
-            "approve",
-            "block",
-            "package-mcp-server",
             "register-external-mcp-server"
         });
     }
@@ -115,29 +113,44 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
         var subcommand = command.Subcommands.First(sc => sc.Name == "publish");
 
-        // Assert
-        subcommand.Description.Should().Be("Publish an MCP server to a Dataverse environment");
-        
+        // Assert — exact match. The description is intentionally terse (no internal-implementation
+        // details exposed to end users); a regression that re-adds back-fill / orchestration prose
+        // should fail this test until the user-facing copy is reviewed.
+        subcommand.Description.Should().Be(
+            "Publish an MCP server to a Dataverse environment.",
+            because: "publish description is user-facing and must stay terse; do not leak internal " +
+                     "orchestration details (Entra apps, back-fill, etc.) into the help output.");
+
         var options = subcommand.Options.ToList();
-        
-        // Verify all expected options exist
+
+        // Verify all expected options exist. Tenant ID is auto-detected from the current az login
+        // session, so publish does not expose --tenant-id; ServiceTree tagging is not required for
+        // publish since it targets Dataverse environments rather than Microsoft corp tenants.
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("environment-id");
         optionNames.Should().Contain("server-name");
         optionNames.Should().Contain("alias");
         optionNames.Should().Contain("display-name");
+        optionNames.Should().NotContain(
+            "tenant-id",
+            because: "tenant id is auto-detected from the current 'az login' session; exposing " +
+                     "--tenant-id would imply per-publish tenant targeting that the executor does not support.");
+        optionNames.Should().NotContain(
+            "service-tree-id",
+            because: "publish targets a customer's Dataverse env, not a Microsoft corp tenant — " +
+                     "the ServiceTree tagging that --service-tree-id provides is not applicable here.");
         optionNames.Should().Contain("dry-run");
 
         // Verify critical aliases for Azure CLI compliance
         var envOption = options.FirstOrDefault(o => o.Name == "environment-id");
         envOption!.Aliases.Should().Contain("-e");
-        
+
         var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
         serverOption!.Aliases.Should().Contain("-s");
-        
+
         var aliasOption = options.FirstOrDefault(o => o.Name == "alias");
         aliasOption!.Aliases.Should().Contain("-a");
-        
+
         var displayNameOption = options.FirstOrDefault(o => o.Name == "display-name");
         displayNameOption!.Aliases.Should().Contain("-d");
     }
@@ -164,73 +177,6 @@ public class DevelopMcpCommandTests
         var envOption = options.FirstOrDefault(o => o.Name == "environment-id");
         envOption!.Aliases.Should().Contain("-e");
         
-        var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
-        serverOption!.Aliases.Should().Contain("-s");
-    }
-
-    [Fact]
-    public void PackageMcpServerSubcommand_HasCorrectOptions()
-    {
-        // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "package-mcp-server");
-
-        // Assert
-        subcommand.Description.Should().Be("Generate MCP server package for submission on Microsoft admin center");
-
-        var options = subcommand.Options.ToList();
-        options.Should().HaveCount(6); // serverName, developerName, iconUrl, outputPath, dry-run, verbose
-
-        var optionNames = options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("developer-name");
-        optionNames.Should().Contain("icon-url");
-        optionNames.Should().Contain("output-path");
-        optionNames.Should().Contain("dry-run");
-        optionNames.Should().Contain("verbose");
-
-        options.First(o => o.Name == "server-name").IsRequired.Should().BeTrue();
-        options.First(o => o.Name == "developer-name").IsRequired.Should().BeTrue();
-        options.First(o => o.Name == "icon-url").IsRequired.Should().BeTrue();
-        options.First(o => o.Name == "output-path").IsRequired.Should().BeTrue();
-    }
-
-    [Fact]
-    public void ApproveSubcommand_IsImplementedWithCorrectOptions()
-    {
-        // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "approve");
-
-        // Assert
-        subcommand.Description.Should().Be("Approve an MCP server");
-
-        var options = subcommand.Options.ToList();
-        var optionNames = options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("dry-run");
-
-        // Verify server-name has short alias
-        var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
-        serverOption!.Aliases.Should().Contain("-s");
-    }
-
-    [Fact]
-    public void BlockSubcommand_IsImplementedWithCorrectOptions()
-    {
-        // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
-        var subcommand = command.Subcommands.First(sc => sc.Name == "block");
-
-        // Assert
-        subcommand.Description.Should().Be("Block an MCP server");
-
-        var options = subcommand.Options.ToList();
-        var optionNames = options.Select(o => o.Name).ToList();
-        optionNames.Should().Contain("server-name");
-        optionNames.Should().Contain("dry-run");
-
-        // Verify server-name has short alias
         var serverOption = options.FirstOrDefault(o => o.Name == "server-name");
         serverOption!.Aliases.Should().Contain("-s");
     }
@@ -275,7 +221,7 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("tools");
         optionNames.Should().Contain("input-file");
         optionNames.Should().Contain("remote-scopes");
-        optionNames.Should().Contain("tenant-id");
+        optionNames.Should().NotContain("tenant-id", because: "tenant ID is auto-detected by RegisterCommandExecutor via TenantDetectionHelper");
         optionNames.Should().Contain("service-tree-id");
         optionNames.Should().Contain("secret-lifetime-months");
         optionNames.Should().Contain("publisher");
@@ -298,9 +244,6 @@ public class DevelopMcpCommandTests
         var inputFileOption = options.First(o => o.Name == "input-file");
         inputFileOption.Aliases.Should().Contain("-f");
 
-        var tenantIdOption = options.First(o => o.Name == "tenant-id");
-        tenantIdOption.Aliases.Should().Contain("-t");
-
         var verboseOption = options.First(o => o.Name == "verbose");
         verboseOption.Aliases.Should().Contain("-v");
     }
@@ -312,13 +255,10 @@ public class DevelopMcpCommandTests
     [InlineData("unpublish", "environment-id", "-e")]
     [InlineData("publish", "server-name", "-s")]
     [InlineData("unpublish", "server-name", "-s")]
-    [InlineData("approve", "server-name", "-s")]
-    [InlineData("block", "server-name", "-s")]
     [InlineData("register-external-mcp-server", "server-name", "-s")]
     [InlineData("register-external-mcp-server", "server-url", "-u")]
     [InlineData("register-external-mcp-server", "auth-type", "-a")]
     [InlineData("register-external-mcp-server", "input-file", "-f")]
-    [InlineData("register-external-mcp-server", "tenant-id", "-t")]
     [InlineData("register-external-mcp-server", "secret-lifetime-months", "-l")]
     public void CriticalOptions_HaveConsistentAliases(string subcommandName, string optionName, string expectedAlias)
     {
@@ -333,7 +273,7 @@ public class DevelopMcpCommandTests
             $"Option '{optionName}' in '{subcommandName}' should have alias '{expectedAlias}'");
     }
 
-    [Fact] 
+    [Fact]
     public void NoSubcommands_UsePositionalArguments_OnlyOptions()
     {
         // This is a regression test to ensure we don't accidentally revert to positional arguments
@@ -346,5 +286,32 @@ public class DevelopMcpCommandTests
             subcommand.Arguments.Should().BeEmpty(
                 $"Subcommand '{subcommand.Name}' should not have positional arguments - use named options for Azure CLI compliance");
         }
+    }
+
+    [Fact]
+    public void CreateCommand_WithPipelineService_IncludesEvaluateSubcommand()
+    {
+        // Arrange
+        var pipelineService = Substitute.For<IEvaluationPipelineService>();
+
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService, pipelineService);
+
+        // Assert - assert presence, not total count (total may change as other subcommands are added)
+        command.Subcommands.Select(sc => sc.Name).Should().Contain(
+            "evaluate",
+            because: "providing the pipeline service should register the evaluate subcommand");
+    }
+
+    [Fact]
+    public void CreateCommand_WithNullPipelineService_DoesNotIncludeEvaluate()
+    {
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService, null);
+
+        // Assert - assert absence, not total count
+        command.Subcommands.Select(sc => sc.Name).Should().NotContain(
+            "evaluate",
+            because: "evaluate must not be registered when no pipeline service is supplied");
     }
 }

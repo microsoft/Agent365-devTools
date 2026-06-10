@@ -84,9 +84,11 @@ public static class AuthenticationConstants
     public const string ApplicationName = "Microsoft.Agents.A365.DevTools.Cli";
 
     /// <summary>
-    /// Token cache file name
+    /// MSAL persistent token cache file name.
+    /// Used by MsalBrowserCredential (WAM/browser auth) and referenced by
+    /// AuthenticationService when clearing stale cross-tenant cached tokens.
     /// </summary>
-    public const string TokenCacheFileName = "auth-token.json";
+    public const string MsalCacheFileName = "msal-token-cache";
 
     /// <summary>
     /// Token expiration buffer in minutes

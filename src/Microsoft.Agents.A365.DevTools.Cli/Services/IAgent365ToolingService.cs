@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Models;
-using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -33,13 +32,14 @@ public interface IAgent365ToolingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Publishes an MCP server to a Dataverse environment
+    /// Publishes an MCP server to a Dataverse environment via the platform's v2 publish endpoint,
+    /// which performs the full elevation orchestration (PPMI provisioning and MOS upload).
     /// </summary>
     /// <param name="environmentId">Dataverse environment ID</param>
     /// <param name="serverName">MCP server name to publish</param>
-    /// <param name="request">Publish request with alias, display name, and description</param>
+    /// <param name="request">Publish request with alias, display name, the Public Clients Entra app id, and optional publisher name</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Response from the publish operation</returns>
+    /// <returns>Response from the publish operation, including the underlying server's app id and OAuth scope (for the post-publish required-resource-access grant) and the echoed Public Clients app id</returns>
     Task<PublishMcpServerResponse?> PublishServerAsync(
         string environmentId,
         string serverName,
@@ -59,36 +59,6 @@ public interface IAgent365ToolingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Approves an MCP server
-    /// </summary>
-    /// <param name="serverName">MCP server name to approve</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>True if successful, false otherwise</returns>
-    Task<bool> ApproveServerAsync(
-        string serverName,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Blocks an MCP server
-    /// </summary>
-    /// <param name="serverName">MCP server name to block</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>True if successful, false otherwise</returns>
-    Task<bool> BlockServerAsync(
-        string serverName,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets MCP server information
-    /// </summary>
-    /// <param name="serverName">MCP server name</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>ServerInfo</returns>
-    public Task<ServerInfo> GetServerInfoAsync(
-        string serverName,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Logs telemetry for register-external-mcp-server usage before processing begins.
     /// </summary>
     Task LogRegisterUsageAsync(
@@ -96,6 +66,14 @@ public interface IAgent365ToolingService
         string authType,
         int toolCount,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Logs telemetry for evaluate-mcp-server usage at the start of the evaluation workflow.
+    /// Body is intentionally empty: server identifies the caller from the bearer token and may
+    /// pull additional operation context from ServiceContext if upstream activities populated it.
+    /// The CLI does not send customer-private content (e.g. evaluated server URL) in the payload.
+    /// </summary>
+    Task LogEvaluateUsageAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Adds a BYO (Bring Your Own) MCP server

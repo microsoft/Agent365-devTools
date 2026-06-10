@@ -591,6 +591,81 @@ public class BlueprintSubcommandTests
 
     #endregion
 
+    #region --messaging-endpoint option validation
+
+    [Fact]
+    public async Task SetupBlueprint_MessagingEndpointWithoutEndpointOnly_ExitsOne()
+    {
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockExecutor, _mockAuthValidator, _mockPlatformDetector,
+            _mockBackendConfigurator, _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+        var parser = new CommandLineBuilder(command).Build();
+
+        var result = await parser.InvokeAsync(
+            new[] { "--messaging-endpoint", "https://agent.contoso.com/api/messages" }, new TestConsole());
+
+        result.Should().Be(1,
+            because: "--messaging-endpoint only applies with --endpoint-only; supplying it alone must fail fast, not be silently ignored");
+    }
+
+    [Fact]
+    public async Task SetupBlueprint_EndpointOnlyMessagingEndpoint_InfersM365_AndRegisters()
+    {
+        var config = new Agent365Config { TenantId = "test-tenant", AgentBlueprintId = "blueprint-123" };
+        _mockConfigService.LoadAsync(Arg.Any<string>()).Returns(Task.FromResult(config));
+        _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns((EndpointRegistrationResult.Created, (string?)null));
+
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockExecutor, _mockAuthValidator, _mockPlatformDetector,
+            _mockBackendConfigurator, _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+        var parser = new CommandLineBuilder(command).Build();
+
+        // No --m365 — it's inferred from --endpoint-only, so the endpoint registers instead of erroring.
+        var result = await parser.InvokeAsync(
+            new[] { "--endpoint-only", "--messaging-endpoint", "https://agent.contoso.com/api/messages", "--skip-requirements" }, new TestConsole());
+
+        result.Should().Be(0,
+            because: "--endpoint-only infers --m365, so the endpoint registers without the flag");
+        await _mockBackendConfigurator.Received().SetBackendConfigurationAsync(
+            Arg.Any<string>(), "https://agent.contoso.com/api/messages", Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetupBlueprint_EndpointOnlyWithEmptyMessagingEndpoint_ExitsOne()
+    {
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockExecutor, _mockAuthValidator, _mockPlatformDetector,
+            _mockBackendConfigurator, _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+        var parser = new CommandLineBuilder(command).Build();
+
+        var result = await parser.InvokeAsync(
+            new[] { "--endpoint-only", "--m365", "--messaging-endpoint", "" }, new TestConsole());
+
+        result.Should().Be(1,
+            because: "an explicitly-empty --messaging-endpoint must error, not be treated as omitted");
+    }
+
+    [Fact]
+    public async Task SetupBlueprint_EndpointOnlyWhenEndpointNotConfigured_ExitsOne()
+    {
+        // Blueprint exists but no messaging endpoint is configured → registration returns Failed.
+        var config = new Agent365Config { TenantId = "test-tenant", AgentBlueprintId = "blueprint-123" };
+        _mockConfigService.LoadAsync(Arg.Any<string>()).Returns(Task.FromResult(config));
+
+        var command = BlueprintSubcommand.CreateCommand(
+            _mockLogger, _mockConfigService, _mockExecutor, _mockAuthValidator, _mockPlatformDetector,
+            _mockBackendConfigurator, _mockGraphApiService, _mockBlueprintService, _mockClientAppValidator, _mockBlueprintLookupService, _mockFederatedCredentialService);
+        var parser = new CommandLineBuilder(command).Build();
+
+        var result = await parser.InvokeAsync(new[] { "--endpoint-only", "--m365", "--skip-requirements" }, new TestConsole());
+
+        result.Should().Be(1,
+            because: "endpoint registration that doesn't complete must surface a non-zero exit code for scripting");
+    }
+
+    #endregion
+
     #region RegisterEndpointAndSyncAsync Tests
 
     [Fact]

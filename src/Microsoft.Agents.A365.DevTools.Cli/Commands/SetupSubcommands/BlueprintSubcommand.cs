@@ -160,6 +160,11 @@ internal static class BlueprintSubcommand
             "--update-endpoint",
             description: "Delete the existing messaging endpoint and register a new one with the specified URL");
 
+        var messagingEndpointOption = new Option<string?>(
+            "--messaging-endpoint",
+            description: "HTTPS URL to register with --endpoint-only. Overrides the messagingEndpoint value\n" +
+                        "in config. Typically used after deploy, once the agent's callback URL is known.");
+
         var skipRequirementsOption = new Option<bool>(
             "--skip-requirements",
             description: "Skip requirements validation check\n" +
@@ -167,9 +172,9 @@ internal static class BlueprintSubcommand
 
         var m365Option = new Option<bool>(
             "--m365",
-            description: "Treat this agent as an M365 agent. Only affects --endpoint-only and --update-endpoint " +
-                        "on this command. To configure the messaging endpoint as part of full setup, use " +
-                        "'a365 setup all --m365'.");
+            description: "Treat this agent as an M365 agent. Optional on this command — --endpoint-only and " +
+                        "--update-endpoint already use the M365 (Teams Graph) path automatically. To configure " +
+                        "the messaging endpoint as part of full setup, use 'a365 setup all --m365'.");
 
         var showSecretOption = new Option<bool>(
             "--show-secret",
@@ -184,6 +189,7 @@ internal static class BlueprintSubcommand
         command.AddOption(skipEndpointRegistrationOption);
         command.AddOption(endpointOnlyOption);
         command.AddOption(updateEndpointOption);
+        command.AddOption(messagingEndpointOption);
         command.AddOption(skipRequirementsOption);
         command.AddOption(m365Option);
         command.AddOption(showSecretOption);
@@ -198,8 +204,17 @@ internal static class BlueprintSubcommand
             var skipEndpointRegistration = context.ParseResult.GetValueForOption(skipEndpointRegistrationOption);
             var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
             var updateEndpoint = context.ParseResult.GetValueForOption(updateEndpointOption);
+            // Distinguish "option omitted" from "explicitly passed empty" — the latter is a hard error,
+            // not silently treated as omitted (which would later no-op or fall back to config).
+            var messagingEndpointSpecified = context.ParseResult.CommandResult.FindResultFor(messagingEndpointOption) != null;
+            var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
+            // Endpoint operations always go through Teams Graph (the M365 path), so infer --m365 for
+            // --endpoint-only / --update-endpoint — users shouldn't have to pass it. ('setup all' keeps
+            // --m365 explicit because there it also affects the granted permission set.)
+            if (endpointOnly || !string.IsNullOrWhiteSpace(updateEndpoint))
+                isM365 = true;
             var showSecret = context.ParseResult.GetValueForOption(showSecretOption);
             var ct = context.GetCancellationToken();
 
@@ -280,6 +295,32 @@ internal static class BlueprintSubcommand
                 return;
             }
 
+            if (messagingEndpointSpecified && string.IsNullOrWhiteSpace(messagingEndpointFlag))
+            {
+                logger.LogError("--messaging-endpoint requires an HTTPS URL value (e.g. https://my-agent.example.com/api/messages).");
+                context.ExitCode = 1;
+                return;
+            }
+
+            // --messaging-endpoint is consumed only by the --endpoint-only registration path. Fail fast
+            // rather than accepting a value that would be silently ignored on a normal blueprint run.
+            if (messagingEndpointSpecified && !endpointOnly)
+            {
+                logger.LogError("--messaging-endpoint applies only with --endpoint-only. To replace an existing endpoint, use --update-endpoint <url>.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            // --messaging-endpoint validation: must be a well-formed HTTPS URL when supplied.
+            if (!string.IsNullOrWhiteSpace(messagingEndpointFlag) &&
+                (!Uri.TryCreate(messagingEndpointFlag, UriKind.Absolute, out var msgEndpointUri) ||
+                 msgEndpointUri.Scheme != Uri.UriSchemeHttps))
+            {
+                logger.LogError("Invalid --messaging-endpoint value '{Value}'. Provide a valid HTTPS URL (e.g. https://my-agent.example.com/api/messages).", messagingEndpointFlag);
+                context.ExitCode = 1;
+                return;
+            }
+
             // Dry-run: attempt config resolution gracefully so the flag works without a config file.
             if (dryRun)
             {
@@ -321,15 +362,9 @@ internal static class BlueprintSubcommand
             // target the correct national cloud endpoint (commercial by default).
             graphApiService.GraphBaseUrl = setupConfig.GraphBaseUrl;
 
-            // Handle --update-endpoint flag
+            // Handle --update-endpoint flag (--m365 is inferred for endpoint operations).
             if (!string.IsNullOrWhiteSpace(updateEndpoint))
             {
-                if (!isM365)
-                {
-                    LogNonM365EndpointGuidance(logger, "update");
-                    return;
-                }
-
                 await UpdateEndpointAsync(
                     config.FullName,
                     updateEndpoint,
@@ -337,7 +372,8 @@ internal static class BlueprintSubcommand
                     configService,
                     backendConfigurator,
                     platformDetector,
-                    correlationId: correlationId);
+                    correlationId: correlationId,
+                    ct: ct);
                 return;
             }
 
@@ -369,26 +405,29 @@ internal static class BlueprintSubcommand
             {
                 logger.LogInformation(
                     "Note: --m365 has no effect on 'setup blueprint' by itself. Use 'a365 setup all --m365' to register the messaging endpoint, " +
-                    "or 'a365 setup blueprint --endpoint-only --m365' after the blueprint exists.");
+                    "or 'a365 setup blueprint --endpoint-only' after the blueprint exists.");
             }
 
-            // Handle --endpoint-only flag — only wired up for --m365 agents.
+            // Handle --endpoint-only flag (--m365 is inferred for endpoint operations).
             if (endpointOnly)
             {
-                if (!isM365)
-                {
-                    LogNonM365EndpointGuidance(logger, "register");
-                    return;
-                }
-
-                await RegisterEndpointAndSyncAsync(
+                var endpointResult = await RegisterEndpointAndSyncAsync(
                     config.FullName,
                     logger,
                     configService,
                     backendConfigurator,
                     platformDetector,
+                    overrideEndpointUrl: messagingEndpointFlag,
                     correlationId: correlationId,
                     cancellationToken: ct);
+
+                // Non-zero exit when the endpoint did not actually register (not configured, contract
+                // mismatch, or other failure) so scripts and CI can detect it.
+                if (endpointResult != Models.EndpointRegistrationResult.Created &&
+                    endpointResult != Models.EndpointRegistrationResult.AlreadyExists)
+                {
+                    context.ExitCode = 1;
+                }
                 return;
             }
 
@@ -415,22 +454,6 @@ internal static class BlueprintSubcommand
         });
 
         return command;
-    }
-
-    /// <summary>
-    /// Logs the standard "non-M365 agent" message directing the user to configure the messaging
-    /// endpoint in the Teams Developer Portal. Used when the user did not pass --m365 on commands
-    /// that would otherwise call into the Teams Graph backend configurator.
-    /// </summary>
-    /// <param name="logger">Logger instance.</param>
-    /// <param name="action">Either "register" or "update" — included in the skip message.</param>
-    internal static void LogNonM365EndpointGuidance(ILogger logger, string action)
-    {
-        logger.LogInformation(
-            "Skipping messaging endpoint {Action} — this command only applies to M365 agents. " +
-            "Pass --m365 to opt in, or configure the endpoint manually in the Teams Developer Portal:",
-            action);
-        logger.LogInformation("  {Url}", Constants.ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
     }
 
     /// <summary>
@@ -860,8 +883,11 @@ internal static class BlueprintSubcommand
             if (lookupResult.Found)
             {
                 logger.LogInformation("Found existing blueprint by display name");
-                logger.LogInformation("  Blueprint ID: {AppId}", lookupResult.AppId);
-                logger.LogDebug("  Object ID: {ObjectId}", lookupResult.ObjectId);
+                using (logger.Indent())
+                {
+                    logger.LogInformation("Blueprint ID: {AppId}", lookupResult.AppId);
+                    logger.LogDebug("Object ID: {ObjectId}", lookupResult.ObjectId);
+                }
 
                 existingObjectId = lookupResult.ObjectId;
                 existingAppId = lookupResult.AppId;
@@ -2266,9 +2292,10 @@ internal static class BlueprintSubcommand
             await configService.SaveStateAsync(setupConfig, generatedConfigPath);
 
             logger.LogInformation("Client secret created successfully!");
-            logger.LogInformation("");
-            Console.WriteLine($"  Blueprint client secret: {secretText}");
-            logger.LogDebug("  Blueprint client secret: [displayed to terminal]");
+            // Console.WriteLine bypasses the log formatter's indent scope (the secret is never written
+            // to the log file), so prepend the level-2 indent to align it under this section.
+            Console.WriteLine($"        Blueprint client secret: {secretText}");
+            logger.LogDebug("Blueprint client secret: [displayed to terminal]");
             logger.LogWarning("Copy this value now — it will not be shown again automatically.");
             if (isProtected)
                 logger.LogWarning("To retrieve it later, run 'a365 setup blueprint --show-secret' from the same folder, Windows machine, and user account.");
@@ -2392,6 +2419,7 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         ITeamsGraphBackendConfigurator backendConfigurator,
         PlatformDetector platformDetector,
+        string? overrideEndpointUrl = null,
         string? correlationId = null,
         CancellationToken cancellationToken = default)
     {
@@ -2409,8 +2437,9 @@ internal static class BlueprintSubcommand
 
         // Only the Status value is relevant here — inline CLI output for --endpoint-only doesn't
         // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
+        // overrideEndpointUrl (from --messaging-endpoint) wins over the config value when supplied.
         var (result, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, backendConfigurator, correlationId: correlationId);
+            setupConfig, logger, backendConfigurator, overrideEndpointUrl, correlationId: correlationId, ct: cancellationToken);
 
         setupConfig.Completed = true;
         setupConfig.CompletedAt = DateTime.UtcNow;
@@ -2472,6 +2501,7 @@ internal static class BlueprintSubcommand
     /// <param name="backendConfigurator">Blueprint backend configurator service</param>
     /// <param name="platformDetector">Platform detector service</param>
     /// <param name="correlationId">Optional correlation ID for tracing</param>
+    /// <param name="ct">Cancellation token so Ctrl+C aborts the remove/register calls promptly.</param>
     public static async Task UpdateEndpointAsync(
         string configPath,
         string newEndpointUrl,
@@ -2479,7 +2509,8 @@ internal static class BlueprintSubcommand
         IConfigService configService,
         ITeamsGraphBackendConfigurator backendConfigurator,
         PlatformDetector platformDetector,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         var setupConfig = await configService.LoadAsync(configPath);
 
@@ -2501,14 +2532,14 @@ internal static class BlueprintSubcommand
         logger.LogInformation("Updating messaging endpoint...");
         logger.LogInformation("");
 
-        // Step 1: Clear the existing backend configuration (idempotent no-op if nothing is registered).
-        logger.LogInformation("Clearing existing backend configuration...");
+        // Step 1: Remove any existing messaging endpoint (idempotent no-op if none is registered).
+        logger.LogInformation("Removing existing messaging endpoint...");
         var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
-            setupConfig.AgentBlueprintId, correlationId: correlationId);
+            setupConfig.AgentBlueprintId, correlationId: correlationId, ct: ct);
 
         if (!cleared)
         {
-            logger.LogWarning("Could not confirm clearing of existing backend configuration — proceeding with registration anyway.");
+            logger.LogWarning("Could not confirm removal of the existing messaging endpoint — proceeding with registration anyway.");
         }
 
         // Step 2: Register the new endpoint.
@@ -2518,7 +2549,7 @@ internal static class BlueprintSubcommand
         // Only the Status value is relevant here — inline CLI output for --update-endpoint doesn't
         // show a summary/Action-Required block, so the failure reason isn't displayed in this path.
         var (registerResult, _) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-            setupConfig, logger, backendConfigurator, newEndpointUrl, correlationId: correlationId);
+            setupConfig, logger, backendConfigurator, newEndpointUrl, correlationId: correlationId, ct: ct);
 
         if (registerResult == Models.EndpointRegistrationResult.Failed)
         {
@@ -2649,9 +2680,12 @@ internal static class BlueprintSubcommand
 
                 if (result.success)
                 {
-                    logger.LogInformation("  - Credential Name: {Name}", credentialName);
-                    logger.LogInformation("  - Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
-                    logger.LogInformation("  - Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                    using (logger.Indent())
+                    {
+                        logger.LogInformation("Credential Name: {Name}", credentialName);
+                        logger.LogInformation("Issuer: https://login.microsoftonline.com/{TenantId}/v2.0", tenantId);
+                        logger.LogInformation("Subject (MSI Principal ID): {MsiId}", msiPrincipalId);
+                    }
                     return true;
                 }
 

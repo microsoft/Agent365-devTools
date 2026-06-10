@@ -15,7 +15,6 @@ This folder contains utility helper classes that provide common functionality us
 | **ManifestHelper** | `ManifestHelper.cs` | Teams app manifest parsing and modification |
 | **SecretProtectionHelper** | `SecretProtectionHelper.cs` | Mask secrets in logs and output |
 | **TenantDetectionHelper** | `TenantDetectionHelper.cs` | Detect tenant from Azure CLI or environment |
-| **PackageMCPServerHelper** | `PackageMCPServerHelper.cs` | Package MCP servers for deployment |
 | **ProjectSettingsSyncHelper** | `ProjectSettingsSyncHelper.cs` | Sync settings between project files |
 
 ---

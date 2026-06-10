@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -176,6 +177,65 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             if (string.IsNullOrWhiteSpace(token))
             {
                 return null;
+            }
+
+            // Self-heal: validate the tid claim in the returned token against the requested tenant.
+            // WAM may silently select a cached Windows work account from a different tenant when
+            // multiple accounts are present (issue #430). On mismatch, clear the in-memory cache
+            // entry and the MSAL persistent disk cache, then retry once with forceRefresh so WAM
+            // gets a clean slate and either picks the correct account or prompts the user.
+            // Only compare tid when tenantId is a GUID — JWT tid claims are always GUIDs,
+            // so a domain-form tenantId (e.g. contoso.onmicrosoft.com) would always appear
+            // as a mismatch and clear caches unnecessarily.
+            var returnedTid = JwtHelper.TryDecodeClaim(token, "tid");
+            if (!string.IsNullOrWhiteSpace(returnedTid) &&
+                Guid.TryParse(tenantId, out _) &&
+                !string.Equals(returnedTid, tenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Graph token returned for tenant {ReturnedTenant} but {RequestedTenant} is required. " +
+                    "Clearing cached credentials and retrying...",
+                    returnedTid, tenantId);
+
+                // Evict in-memory entry so the retry actually calls through to MSAL/PS.
+                _tokenCache.TryRemove(cacheKey, out _);
+
+                // Delete the MSAL persistent cache file so WAM starts with a clean account list.
+                var msalCachePath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    AuthenticationConstants.ApplicationName,
+                    AuthenticationConstants.MsalCacheFileName);
+                try
+                {
+                    if (File.Exists(msalCachePath))
+                    {
+                        File.Delete(msalCachePath);
+                        _logger.LogDebug("Cleared MSAL token cache at {Path}", msalCachePath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to clear MSAL token cache: {Message}", ex.Message);
+                }
+
+                // Retry once — do not recurse; use the underlying acquirer directly.
+                var retryToken = MsalTokenAcquirerOverride != null
+                    ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
+                    : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct, loginHint, forceRefresh: true);
+
+                if (!string.IsNullOrWhiteSpace(retryToken))
+                    token = retryToken;
+
+                // Fail fast if the retry also returned the wrong tenant — caching and returning
+                // a known-bad token would produce the same misleading 403s the fix is meant to prevent.
+                var retryTid = JwtHelper.TryDecodeClaim(token, "tid");
+                if (!string.IsNullOrWhiteSpace(retryTid) &&
+                    !string.Equals(retryTid, tenantId, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"Graph token retry returned token for tenant {retryTid} but {tenantId} is required. " +
+                        $"Ensure 'az login' targets the correct tenant, or select the correct account when prompted.");
+                }
             }
 
             // Cache expiry from JWT exp; if parsing fails, cache short (10 min) to still reduce spam

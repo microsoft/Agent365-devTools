@@ -1855,7 +1855,9 @@ public class GraphApiService
                     var json = await response.Content.ReadAsStringAsync(ct);
                     using var doc = JsonDocument.Parse(json);
                     var id = doc.RootElement.GetProperty("id").GetString();
-                    _logger.LogInformation("Agent identity created (ID: {Id})", id);
+                    // Debug only — callers (setup orchestrator, create-instance runner) emit the
+                    // user-facing "Agent identity created" line so it isn't logged twice.
+                    _logger.LogDebug("Agent identity created (ID: {Id})", id);
                     return id;
                 }
 
@@ -1909,22 +1911,7 @@ public class GraphApiService
     /// Returns null if the token cannot be decoded or the claim is absent.
     /// </summary>
     private static string? TryDecodeTokenClaim(string token, string claimName)
-    {
-        try
-        {
-            var parts = token.Split('.');
-            if (parts.Length < 2) return null;
-            var payload = parts[1];
-            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
-            using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty(claimName, out var claim) ? claim.GetString() : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+        => JwtHelper.TryDecodeClaim(token, claimName);
 
     /// <summary>
     /// Attempts to extract a human-readable error message from a Graph API JSON error response body.

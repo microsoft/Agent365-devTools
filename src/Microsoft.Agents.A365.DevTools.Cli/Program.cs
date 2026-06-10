@@ -5,6 +5,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -169,9 +170,11 @@ class Program
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
             var bootstrapResolver = serviceProvider.GetRequiredService<IBootstrapConfigResolver>();
 
+            var evaluationPipelineService = serviceProvider.GetRequiredService<IEvaluationPipelineService>();
+
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
-            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, graphApiService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService, graphApiService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
@@ -389,6 +392,19 @@ class Program
 
         // Register confirmation provider for user prompts
         services.AddSingleton<IConfirmationProvider, ConsoleConfirmationProvider>();
+
+        // Register evaluate pipeline services
+        services.AddSingleton<ISchemaDiscoveryService, SchemaDiscoveryService>();
+        services.AddSingleton<IChecklistGenerator, ChecklistGenerator>();
+        // Coding-agent launchers — registration order defines --eval-engine auto
+        // priority (GitHub Copilot first, then Claude Code). Add a new engine by
+        // adding its ICodingAgentLauncher implementation file plus one line here.
+        services.AddSingleton<ICodingAgentLauncher, GitHubCopilotLauncher>();
+        services.AddSingleton<ICodingAgentLauncher, ClaudeCodeLauncher>();
+        services.AddSingleton<IChecklistEvaluator, ChecklistEvaluator>();
+        services.AddSingleton<IEvaluationAnalyzer, EvaluationAnalyzer>();
+        services.AddSingleton<IReportGenerator, ReportGenerator>();
+        services.AddSingleton<IEvaluationPipelineService, EvaluationPipelineService>();
 
         // Register bootstrap config resolver — centralizes the three-mode config resolution
         // used by all subcommands that can run without a365.config.json.

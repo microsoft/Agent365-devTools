@@ -1,12 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
-using static Microsoft.Agents.A365.DevTools.Cli.Helpers.PackageMCPServerHelper;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 
@@ -16,11 +15,13 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 public static class DevelopMcpCommand
 {
     /// <summary>
-    /// Creates the develop-mcp command with subcommands for MCP server management in Dataverse
+    /// Creates the develop-mcp command with subcommands for MCP server management in Dataverse.
+    /// The evaluate subcommand is included only when <paramref name="evaluationPipelineService"/> is provided.
     /// </summary>
     public static Command CreateCommand(
         ILogger logger,
         IAgent365ToolingService toolingService,
+        IEvaluationPipelineService? evaluationPipelineService = null,
         GraphApiService? graphApiService = null)
     {
         var developMcpCommand = new Command("develop-mcp", "Manage MCP servers in Dataverse environments");
@@ -35,14 +36,87 @@ public static class DevelopMcpCommand
         // Add subcommands
         developMcpCommand.AddCommand(CreateListEnvironmentsSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateListServersSubcommand(logger, toolingService));
-        developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService));
+        developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService, graphApiService));
         developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
-        developMcpCommand.AddCommand(CreateApproveSubcommand(logger, toolingService));
-        developMcpCommand.AddCommand(CreateBlockSubcommand(logger, toolingService));
-        developMcpCommand.AddCommand(CreatePackageMCPServerSubCommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
 
+        if (evaluationPipelineService is not null)
+        {
+            developMcpCommand.AddCommand(CreateEvaluateSubcommand(logger, evaluationPipelineService));
+        }
+
         return developMcpCommand;
+    }
+
+    /// <summary>
+    /// Creates the evaluate subcommand for MCP server tool schema quality evaluation.
+    /// </summary>
+    private static Command CreateEvaluateSubcommand(ILogger logger, IEvaluationPipelineService pipelineService)
+    {
+        var command = new Command(
+            "evaluate",
+            "Evaluate MCP server tool schema quality and generate an HTML report. " +
+            "Uses a locally installed coding agent (GitHub Copilot or Claude Code) to score semantic checks. " +
+            "If no agent is detected, the command stops after writing the checklist so you can score it manually with your own LLM, " +
+            "or pass --eval-engine none to skip agent probing entirely. " +
+            "Only run this against MCP servers you trust: the server's tool names and descriptions are sent to a locally running coding agent.");
+
+        // Use a required option (not a positional argument) for consistency with other
+        // develop-mcp subcommands and Azure CLI conventions.
+        var serverUrlOption = new Option<string>(
+            ["--server-url", "-u"],
+            "MCP server Streamable HTTP endpoint URL")
+        {
+            IsRequired = true,
+        };
+
+        var outputDirOption = new Option<string>(
+            ["--output-dir", "-o"],
+            getDefaultValue: () => ".",
+            "Output directory for evaluation artifacts");
+
+        var evalEngineOption = new Option<string>(
+            "--eval-engine",
+            getDefaultValue: () => "auto",
+            "Which local coding agent scores semantic checks. " +
+            "auto: try github-copilot then claude-code. " +
+            "github-copilot or claude-code: use only that engine. " +
+            "none: skip automatic scoring and expect the checklist to be pre-scored (bring-your-own-LLM).");
+
+        var authTokenOption = new Option<string?>(
+            "--auth-token",
+            "Bearer token for MCP server authentication. Prefer the A365_MCP_AUTH_TOKEN environment variable; a token passed on the command line is visible to process listings (ps / Task Manager) and shell history.");
+
+        command.AddOption(serverUrlOption);
+        command.AddOption(outputDirOption);
+        command.AddOption(evalEngineOption);
+        command.AddOption(authTokenOption);
+
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
+        {
+            var serverUrl = context.ParseResult.GetValueForOption(serverUrlOption)!;
+            var outputDir = context.ParseResult.GetValueForOption(outputDirOption)!;
+            var evalEngine = context.ParseResult.GetValueForOption(evalEngineOption)!;
+            var authToken = context.ParseResult.GetValueForOption(authTokenOption);
+            var ct = context.GetCancellationToken();
+
+            // Secret handling: a token on the command line is visible to other processes
+            // (ps / Task Manager) and lands in shell history. A non-empty value here can
+            // only have come from --auth-token, so warn and steer to the env var; when the
+            // flag is absent, fall back to A365_MCP_AUTH_TOKEN.
+            if (!string.IsNullOrWhiteSpace(authToken))
+            {
+                logger.LogWarning("Passing a token via --auth-token exposes it to process listings (ps / Task Manager) and shell history. Prefer the A365_MCP_AUTH_TOKEN environment variable.");
+            }
+            else
+            {
+                authToken = Environment.GetEnvironmentVariable("A365_MCP_AUTH_TOKEN");
+            }
+
+            context.ExitCode = await pipelineService.RunAsync(serverUrl, outputDir, evalEngine, authToken, ct);
+        });
+
+        return command;
     }
 
     /// <summary>
@@ -279,180 +353,68 @@ public static class DevelopMcpCommand
     /// Creates the publish subcommand
     /// </summary>
     private static Command CreatePublishSubcommand(
-        ILogger logger, 
-        IAgent365ToolingService toolingService)
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        GraphApiService? graphApiService)
     {
-        var command = new Command("publish", "Publish an MCP server to a Dataverse environment");
+        var command = new Command("publish", "Publish an MCP server to a Dataverse environment.");
 
         var envIdOption = new Option<string?>(
             ["--environment-id", "-e"],
-            description: "Dataverse environment ID"
-        );
+            description: "Dataverse environment ID");
         envIdOption.IsRequired = false; // Allow null so we can prompt
         command.AddOption(envIdOption);
 
         var serverNameOption = new Option<string?>(
             ["--server-name", "-s"],
-            description: "MCP server name to publish"
-        );
-        serverNameOption.IsRequired = false; // Allow null so we can prompt
+            description: "MCP server name to publish");
+        serverNameOption.IsRequired = false;
         command.AddOption(serverNameOption);
 
         var aliasOption = new Option<string?>(
             ["--alias", "-a"],
-            description: "Alias for the MCP server"
-        );
+            description: "Alias for the MCP server");
         command.AddOption(aliasOption);
 
         var displayNameOption = new Option<string?>(
             ["--display-name", "-d"],
-            description: "Display name for the MCP server"
-        );
+            description: "Display name for the MCP server (max 30 chars)");
         command.AddOption(displayNameOption);
 
-        var dryRunOption = new Option<bool>(
-            name: "--dry-run",
-            description: "Show what would be done without executing"
-        );
+        var publisherNameOption = new Option<string?>(
+            ["--publisher-name", "-p"],
+            description: "Publisher name for the MCP Server. Required for custom (user-created) MCP servers; ignored for 1p Microsoft-owned servers (e.g. msdyn_DataverseMCPServer) which always publish as 'Microsoft'.");
+        command.AddOption(publisherNameOption);
+
+        var yesOption = new Option<bool>(
+            ["--yes", "-y"],
+            description: "Skip the interactive 'Proceed with publish? (y/N)' confirmation.");
+        command.AddOption(yesOption);
+
+        var dryRunOption = new Option<bool>("--dry-run", "Show what would be done without executing");
         command.AddOption(dryRunOption);
 
-        var verboseOption = new Option<bool>(
-            ["--verbose", "-v"],
-            description: "Enable verbose logging"
-        );
-        command.AddOption(verboseOption);
+        // Verbose is handled globally in Program.cs (sets LogLevel.Debug); declared here so the parser accepts -v.
+        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
 
-        command.SetHandler(async (envId, serverName, alias, displayName, dryRun, verbose) =>
+        command.SetHandler(async (context) =>
         {
-            _ = verbose;
-            try
+            var args = new RawPublishArgs(
+                EnvironmentId: context.ParseResult.GetValueForOption(envIdOption),
+                ServerName: context.ParseResult.GetValueForOption(serverNameOption),
+                Alias: context.ParseResult.GetValueForOption(aliasOption),
+                DisplayName: context.ParseResult.GetValueForOption(displayNameOption),
+                PublisherName: context.ParseResult.GetValueForOption(publisherNameOption),
+                Yes: context.ParseResult.GetValueForOption(yesOption),
+                DryRun: context.ParseResult.GetValueForOption(dryRunOption));
+
+            var executor = new PublishCommandExecutor(logger, toolingService, graphApiService);
+            var success = await executor.ExecuteAsync(args, context.GetCancellationToken());
+            if (!success)
             {
-                // Validate and prompt for missing required arguments with security checks
-                if (string.IsNullOrWhiteSpace(envId))
-                {
-                    envId = InputValidator.PromptAndValidateRequiredInput("Enter Dataverse environment ID: ", "Environment ID");
-                    if (string.IsNullOrWhiteSpace(envId))
-                    {
-                        logger.LogError("Environment ID is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided environment ID
-                    envId = InputValidator.ValidateInput(envId, "Environment ID");
-                    if (envId == null)
-                    {
-                        logger.LogError("Invalid environment ID format");
-                        return;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(serverName))
-                {
-                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to publish: ", "Server name", 100);
-                    if (string.IsNullOrWhiteSpace(serverName))
-                    {
-                        logger.LogError("Server name is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided server name
-                    serverName = InputValidator.ValidateInput(serverName, "Server name");
-                    if (serverName == null)
-                    {
-                        logger.LogError("Invalid server name format");
-                        return;
-                    }
-                }
-
-                logger.LogInformation("Starting publish operation for server {ServerName} in environment {EnvId}...", serverName, envId);
-
-                if (dryRun)
-                {
-                    logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
-                    logger.LogInformation("[DRY RUN] Would publish MCP server {ServerName} to environment {EnvId}", serverName, envId);
-                    logger.LogInformation("[DRY RUN] Alias: {Alias}", alias ?? "[would prompt]");
-                    logger.LogInformation("[DRY RUN] Display Name: {DisplayName}", displayName ?? "[would prompt]");
-                    await Task.CompletedTask;
-                    return;
-                }
-
-                // Validate and prompt for missing optional values with security checks
-                if (string.IsNullOrWhiteSpace(alias))
-                {
-                    alias = InputValidator.PromptAndValidateRequiredInput("Enter alias for the MCP server: ", "Alias", 50);
-                    if (string.IsNullOrWhiteSpace(alias))
-                    {
-                        logger.LogError("Alias is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided alias
-                    alias = InputValidator.ValidateInput(alias, "Alias", maxLength: 50);
-                    if (alias == null)
-                    {
-                        logger.LogError("Invalid alias format");
-                        return;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(displayName))
-                {
-                    displayName = InputValidator.PromptAndValidateRequiredInput("Enter display name for the MCP server: ", "Display name", 100);
-                    if (string.IsNullOrWhiteSpace(displayName))
-                    {
-                        logger.LogError("Display name is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided display name
-                    displayName = InputValidator.ValidateInput(displayName, "Display name", maxLength: 100);
-                    if (displayName == null)
-                    {
-                        logger.LogError("Invalid display name format");
-                        return;
-                    }
-                }
+                context.ExitCode = 1;
             }
-            catch (ArgumentException ex)
-            {
-                logger.LogError("Input validation failed: {Message}", ex.Message);
-                return;
-            }
-
-            // Create request
-            var request = new PublishMcpServerRequest
-            {
-                Alias = alias,
-                DisplayName = displayName
-            };
-
-            // Call service
-            var response = await toolingService.PublishServerAsync(envId, serverName, request);
-
-            if (response == null || !response.IsSuccess)
-            {
-                if (response?.Message != null)
-                {
-                    logger.LogError("Failed to publish MCP server {ServerName} to environment {EnvId}: {ErrorMessage}", serverName, envId, response.Message);
-                }
-                else
-                {
-                    logger.LogError("Failed to publish MCP server {ServerName} to environment {EnvId}: No response received", serverName, envId);
-                }
-                return;
-            }
-
-            logger.LogInformation("Successfully published MCP server {ServerName} to environment {EnvId}", serverName, envId);
-
-        }, envIdOption, serverNameOption, aliasOption, displayNameOption, dryRunOption, verboseOption);
+        });
 
         return command;
     }
@@ -571,229 +533,6 @@ public static class DevelopMcpCommand
     }
 
     /// <summary>
-    /// Creates the approve subcommand
-    /// </summary>
-    private static Command CreateApproveSubcommand(ILogger logger, IAgent365ToolingService toolingService)
-    {
-        var command = new Command("approve", "Approve an MCP server");
-
-        var serverNameOption = new Option<string?>(
-            ["--server-name", "-s"],
-            description: "MCP server name to approve"
-        );
-        serverNameOption.IsRequired = false; // Allow null so we can prompt
-        command.AddOption(serverNameOption);
-
-        var dryRunOption = new Option<bool>(
-            name: "--dry-run",
-            description: "Show what would be done without executing"
-        );
-        command.AddOption(dryRunOption);
-
-        var verboseOption = new Option<bool>(
-            ["--verbose", "-v"],
-            description: "Enable verbose logging"
-        );
-        command.AddOption(verboseOption);
-
-        command.SetHandler(async (serverName, dryRun, verbose) =>
-        {
-            _ = verbose;
-            try
-            {
-                // Validate and prompt for missing required arguments with security checks
-                if (string.IsNullOrWhiteSpace(serverName))
-                {
-                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to approve: ", "Server name", 100);
-                    if (string.IsNullOrWhiteSpace(serverName))
-                    {
-                        logger.LogError("Server name is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided server name
-                    serverName = InputValidator.ValidateInput(serverName, "Server name");
-                    if (serverName == null)
-                    {
-                        logger.LogError("Invalid server name format");
-                        return;
-                    }
-                }
-            }
-            catch (ArgumentException ex)
-            {
-                logger.LogError("Input validation failed: {Message}", ex.Message);
-                return;
-            }
-
-            logger.LogInformation("Starting approve operation for server {ServerName}...", serverName);
-
-            if (dryRun)
-            {
-                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
-                logger.LogInformation("[DRY RUN] Would approve MCP server {ServerName}", serverName);
-                await Task.CompletedTask;
-                return;
-            }
-
-            // Call service
-            var success = await toolingService.ApproveServerAsync(serverName);
-
-            if (!success)
-            {
-                logger.LogError("Failed to approve MCP server {ServerName}", serverName);
-                return;
-            }
-
-            logger.LogInformation("Successfully approved MCP server {ServerName}", serverName);
-
-        }, serverNameOption, dryRunOption, verboseOption);
-
-        return command;
-    }
-
-    /// <summary>
-    /// Creates the block subcommand
-    /// </summary>
-    private static Command CreateBlockSubcommand(ILogger logger, IAgent365ToolingService toolingService)
-    {
-        var command = new Command("block", "Block an MCP server");
-
-        var serverNameOption = new Option<string?>(
-            ["--server-name", "-s"],
-            description: "MCP server name to block"
-        );
-        serverNameOption.IsRequired = false; // Allow null so we can prompt
-        command.AddOption(serverNameOption);
-
-        var dryRunOption = new Option<bool>(
-            name: "--dry-run",
-            description: "Show what would be done without executing"
-        );
-        command.AddOption(dryRunOption);
-
-        var verboseOption = new Option<bool>(
-            ["--verbose", "-v"],
-            description: "Enable verbose logging"
-        );
-        command.AddOption(verboseOption);
-
-        command.SetHandler(async (serverName, dryRun, verbose) =>
-        {
-            _ = verbose;
-            try
-            {
-                // Validate and prompt for missing required arguments with security checks
-                if (string.IsNullOrWhiteSpace(serverName))
-                {
-                    serverName = InputValidator.PromptAndValidateRequiredInput("Enter MCP server name to block: ", "Server name", 100);
-                    if (string.IsNullOrWhiteSpace(serverName))
-                    {
-                        logger.LogError("Server name is required");
-                        return;
-                    }
-                }
-                else
-                {
-                    // Validate provided server name
-                    serverName = InputValidator.ValidateInput(serverName, "Server name");
-                    if (serverName == null)
-                    {
-                        logger.LogError("Invalid server name format");
-                        return;
-                    }
-                }
-            }
-            catch (ArgumentException ex)
-            {
-                logger.LogError("Input validation failed: {Message}", ex.Message);
-                return;
-            }
-
-            logger.LogInformation("Starting block operation for server {ServerName}...", serverName);
-
-            if (dryRun)
-            {
-                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
-                logger.LogInformation("[DRY RUN] Would block MCP server {ServerName}", serverName);
-                await Task.CompletedTask;
-                return;
-            }
-
-            // Call service
-            var success = await toolingService.BlockServerAsync(serverName);
-
-            if (!success)
-            {
-                logger.LogError("Failed to block MCP server {ServerName}", serverName);
-                return;
-            }
-
-            logger.LogInformation("Successfully blocked MCP server {ServerName}", serverName);
-
-        }, serverNameOption, dryRunOption, verboseOption);
-
-        return command;
-    }
-
-    /// <summary>
-    /// Creates the package generation subcommand
-    /// </summary>
-    private static Command CreatePackageMCPServerSubCommand(ILogger logger, IAgent365ToolingService toolingService)
-    {
-        var command = new Command("package-mcp-server", "Generate MCP server package for submission on Microsoft admin center");
-
-        var serverNameOption = new Option<string>("--server-name", "MCP server name") { IsRequired = true };
-        var developerNameOption = new Option<string>("--developer-name", "Publisher/developer display name") { IsRequired = true };
-        var iconUrlOption = new Option<string>("--icon-url", "Public URL to a PNG icon for the MCP server") { IsRequired = true };
-        var outputPathOption = new Option<string>("--output-path", "Target directory for the generated ZIP package") { IsRequired = true };
-        var dryRunOption = new Option<bool>(name: "--dry-run", description: "Show what would be done without executing");
-        var verboseOption = new Option<bool>(
-            ["--verbose", "-v"],
-            description: "Enable verbose logging"
-        );
-
-        command.AddOption(serverNameOption);
-        command.AddOption(developerNameOption);
-        command.AddOption(iconUrlOption);
-        command.AddOption(outputPathOption);
-        command.AddOption(dryRunOption);
-        command.AddOption(verboseOption);
-
-        command.SetHandler(async (serverName, developerName, iconUrl, outputPath, dryRun, verbose) =>
-        {
-            _ = verbose;
-            if (dryRun)
-            {
-                logger.LogInformation("[DRY RUN] Would query MCP servers management endpoint to fetch details of the MCP server");
-                logger.LogInformation("[DRY RUN] Fetch the icon from the provided url");
-                logger.LogInformation("[DRY RUN] Build the package content and put it in the target directory");
-                await Task.CompletedTask;
-                return;
-            }
-
-            logger.LogInformation("Starting package creation...");
-
-            try
-            {
-                var serverInfo = await toolingService.GetServerInfoAsync(serverName);
-                var manifest = PackageMCPServerHelper.GenerateManifestJson(serverInfo, developerName, logger);
-                var zipFilePath = PackageMCPServerHelper.BuildPackage(manifest, serverInfo, iconUrl, outputPath);
-                logger.LogInformation("Package was created successfully at {zipFilePath}", zipFilePath);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Package creation failed");
-            }
-
-        }, serverNameOption, developerNameOption, iconUrlOption, outputPathOption, dryRunOption, verboseOption);
-
-        return command;
-    }
-
-    /// <summary>
     /// Creates the register-external-mcp-server subcommand
     /// </summary>
     private static Command CreateRegisterExternalMcpServerSubcommand(
@@ -844,9 +583,6 @@ public static class DevelopMcpCommand
         var remoteScopesOption = new Option<string?>("--remote-scopes", description: "Scopes for the remote MCP server (e.g., 'api://{appId-guid}/{scopeName}' such as 'api://00000000-0000-0000-0000-000000000000/access_as_user')");
         command.AddOption(remoteScopesOption);
 
-        var tenantIdOption = new Option<string?>(["--tenant-id", "-t"], description: "Entra tenant ID for app registration (defaults to current az login tenant)");
-        command.AddOption(tenantIdOption);
-
         var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
         command.AddOption(serviceTreeIdOption);
 
@@ -881,7 +617,7 @@ public static class DevelopMcpCommand
                 ToolsInput: context.ParseResult.GetValueForOption(toolsOption),
                 InputFile: context.ParseResult.GetValueForOption(inputFileOption),
                 RemoteScopes: context.ParseResult.GetValueForOption(remoteScopesOption),
-                TenantId: context.ParseResult.GetValueForOption(tenantIdOption),
+                TenantId: null,
                 ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption),
                 SecretLifetimeMonths: context.ParseResult.GetValueForOption(secretLifetimeMonthsOption),
                 PublisherName: context.ParseResult.GetValueForOption(publisherOption),
