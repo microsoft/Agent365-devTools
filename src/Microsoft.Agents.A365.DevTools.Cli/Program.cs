@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
-using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -330,14 +329,13 @@ class Program
             var authService = provider.GetRequiredService<AuthenticationService>();
             var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
 
-            // Default to "prod". Override with A365_ENVIRONMENT env var or --config file.
+            // Default to "prod". Override with A365_ENVIRONMENT env var or a365.config.json.
             string environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
 
-            var args = Environment.GetCommandLineArgs();
-            var configFilePath = ResolveConfigPath(args);
-            try
+            var configFilePath = ConfigService.GetConfigFilePath();
+            if (configFilePath != null)
             {
-                if (File.Exists(configFilePath))
+                try
                 {
                     var json = File.ReadAllText(configFilePath);
                     using var doc = System.Text.Json.JsonDocument.Parse(json);
@@ -352,10 +350,10 @@ class Program
 
                     logger.LogDebug("Resolved environment from config: {Environment}", environment);
                 }
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug("Failed to read environment from config: {Error}", ex.Message);
+                catch (Exception ex)
+                {
+                    logger.LogDebug("Failed to read environment from config: {Error}", ex.Message);
+                }
             }
 
             return new Agent365ToolingService(configService, authService, logger, environment);
@@ -426,39 +424,6 @@ class Program
         return command.ToLowerInvariant()
             .Replace(" ", "-")
             .Replace("_", "-");
-    }
-
-    /// <summary>
-    /// Resolves the absolute path to a365.config.json from CLI arguments.
-    /// Handles both "--config path" and "--config=path" forms.
-    /// Empty or whitespace --config values fall back to the default "a365.config.json"
-    /// in the working directory so diagnostics never report the current directory as a config file.
-    /// </summary>
-    internal static string ResolveConfigPath(string[] args)
-    {
-        ArgumentNullException.ThrowIfNull(args);
-
-        for (var i = 0; i < args.Length; i++)
-        {
-            string? raw = null;
-
-            if ((args[i] == "--config" || args[i] == "-c") && i < args.Length - 1)
-                raw = args[i + 1];
-            else if (args[i].StartsWith("--config=", StringComparison.Ordinal))
-                raw = args[i]["--config=".Length..];
-
-            if (raw is not null)
-            {
-                if (string.IsNullOrWhiteSpace(raw))
-                    return Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
-
-                return Path.IsPathRooted(raw)
-                    ? raw
-                    : Path.Combine(Environment.CurrentDirectory, raw);
-            }
-        }
-
-        return Path.Combine(Environment.CurrentDirectory, ConfigConstants.DefaultConfigFileName);
     }
 }
 

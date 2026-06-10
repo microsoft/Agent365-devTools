@@ -739,21 +739,7 @@ public class AuthenticationService : IAuthenticationService
         var user = TryExtractUpnFromJwt(accessToken) ?? fallbackUserId ?? "(unknown)";
         var tenant = TryExtractTenantIdFromJwt(accessToken) ?? fallbackTenantId ?? "(unknown)";
 
-        var shouldLogContextChange = false;
-        lock (_authContextLogLock)
-        {
-            var changed = !string.Equals(_lastLoggedUser, user, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(_lastLoggedTenant, tenant, StringComparison.OrdinalIgnoreCase);
-
-            if (changed)
-            {
-                _lastLoggedUser = user;
-                _lastLoggedTenant = tenant;
-                shouldLogContextChange = true;
-            }
-        }
-
-        if (shouldLogContextChange)
+        if (TryClaimContextChange(user, tenant))
         {
             _logger.LogInformation(
                 "Authentication context: API calls will use user {User} in tenant {TenantId} ({Source})",
@@ -767,6 +753,27 @@ public class AuthenticationService : IAuthenticationService
             resourceUrl,
             user,
             tenant);
+    }
+
+    /// <summary>
+    /// Records the current authentication user/tenant and returns whether it changed
+    /// since the last logged context. Thread-safe.
+    /// </summary>
+    private bool TryClaimContextChange(string user, string tenant)
+    {
+        lock (_authContextLogLock)
+        {
+            var changed = !string.Equals(_lastLoggedUser, user, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(_lastLoggedTenant, tenant, StringComparison.OrdinalIgnoreCase);
+
+            if (changed)
+            {
+                _lastLoggedUser = user;
+                _lastLoggedTenant = tenant;
+            }
+
+            return changed;
+        }
     }
 
     /// <summary>
