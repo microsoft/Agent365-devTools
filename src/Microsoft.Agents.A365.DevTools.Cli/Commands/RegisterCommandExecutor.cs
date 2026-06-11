@@ -705,25 +705,20 @@ internal class RegisterCommandExecutor
         }
         else
         {
-            var msg = "A365 Proxy redirect URI was not returned by the server. Setting consent redirect URIs only.";
+            var msg = "A365 Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
             _logger.LogWarning(msg);
             concurrentWarnings.Add(msg);
-            tasks.Add(SetConsentOnlyRedirectUrisAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, concurrentWarnings, ct));
         }
 
         if (input.IsEntra && !string.IsNullOrWhiteSpace(remoteRedirectUri) && apps.RemoteProxyObjectId != null)
         {
             tasks.Add(UpdateRemoteProxyRedirectUrisAsync(tenantId, apps, remoteRedirectUri, concurrentWarnings, ct));
         }
-        else if (input.IsEntra && apps.RemoteProxyObjectId != null)
+        else if (input.IsEntra && string.IsNullOrWhiteSpace(remoteRedirectUri))
         {
-            if (string.IsNullOrWhiteSpace(remoteRedirectUri))
-            {
-                var msg = "Remote MCP Proxy redirect URI was not returned by the server. Setting consent redirect URIs only.";
-                _logger.LogWarning(msg);
-                concurrentWarnings.Add(msg);
-            }
-            tasks.Add(SetConsentOnlyRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId, apps.RemoteProxyAppName, concurrentWarnings, ct));
+            var msg = "Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
+            _logger.LogWarning(msg);
+            concurrentWarnings.Add(msg);
         }
         else if (input.IsEntra && apps.RemoteProxyObjectId == null)
         {
@@ -790,10 +785,7 @@ internal class RegisterCommandExecutor
         {
             var a365TcUri = DevelopMcpCommand.AddTcPrefix(a365RedirectUri);
             var a365NonTcUri = DevelopMcpCommand.RemoveTcPrefix(a365RedirectUri);
-            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri)
-                .Concat(EntraAppProvisioner.GetConsentRedirectUris())
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
+            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, retryCt),
@@ -827,10 +819,7 @@ internal class RegisterCommandExecutor
         {
             var remoteTcUri = DevelopMcpCommand.AddTcPrefix(remoteRedirectUri);
             var remoteNonTcUri = DevelopMcpCommand.RemoveTcPrefix(remoteRedirectUri);
-            var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri)
-                .Concat(EntraAppProvisioner.GetConsentRedirectUris())
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
+            var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri);
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId!, remoteUris, retryCt),
@@ -850,37 +839,6 @@ internal class RegisterCommandExecutor
         catch (Exception ex)
         {
             var msg = $"Failed to update redirect URIs on Remote Proxy app: {ex.Message}";
-            _logger.LogError(msg);
-            concurrentWarnings.Add(msg);
-        }
-    }
-
-    private async Task SetConsentOnlyRedirectUrisAsync(
-        string tenantId, string objectId, string appName,
-        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            var consentUris = EntraAppProvisioner.GetConsentRedirectUris();
-            var success = await _retryHelper.ExecuteWithRetryAsync(
-                async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
-                result => !result,
-                cancellationToken: ct);
-            if (!success)
-            {
-                var msg = $"Failed to set web redirect URIs on '{appName}' after retries.";
-                _logger.LogError(msg);
-                concurrentWarnings.Add(msg);
-            }
-            else
-            {
-                _logger.LogDebug("Set {Count} web redirect URIs on '{AppName}'", consentUris.Length, appName);
-            }
-        }
-        catch (Exception ex)
-        {
-            var msg = $"Failed to set web redirect URIs on '{appName}': {ex.Message}";
             _logger.LogError(msg);
             concurrentWarnings.Add(msg);
         }
