@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -156,26 +157,95 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             {
                 _logger.LogDebug("MSAL token acquisition failed, falling back to PowerShell Connect-MgGraph...");
                 var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
-                var result = await ExecuteWithFallbackAsync(script, ct);
-                token = ProcessResult(result);
 
-                // If PowerShell browser auth was blocked (Conditional Access Policy or interactive
-                // browser unavailable in embedded terminal), retry with device code.
-                if (string.IsNullOrWhiteSpace(token) && !useDeviceCode &&
-                    (IsConditionalAccessError(result) || IsInteractiveBrowserFailure(result)))
+                // The first attempt is recoverable via a device-code retry, so suppress its error logging;
+                // re-log below only if the failure turns out to be terminal.
+                var canRetryWithDeviceCode = !useDeviceCode;
+                var result = await ExecuteWithFallbackAsync(script, ct, suppressErrorLogging: canRetryWithDeviceCode);
+                token = ProcessResult(result, logErrors: !canRetryWithDeviceCode);
+
+                if (string.IsNullOrWhiteSpace(token) && canRetryWithDeviceCode)
                 {
-                    _logger.LogWarning(
-                        "PowerShell interactive browser authentication failed (Conditional Access Policy or embedded terminal). " +
-                        "Retrying with device code authentication...");
-                    var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
-                    var deviceCodeResult = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
-                    token = ProcessResult(deviceCodeResult);
+                    if (IsConditionalAccessError(result) || IsInteractiveBrowserFailure(result))
+                    {
+                        _logger.LogWarning(
+                            "PowerShell interactive browser authentication failed (Conditional Access Policy or embedded terminal). " +
+                            "Retrying with device code authentication...");
+                        var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
+                        var deviceCodeResult = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
+                        token = ProcessResult(deviceCodeResult);
+                    }
+                    else
+                    {
+                        // Not a recoverable interactive-browser/CAP failure — its error was suppressed
+                        // above on the assumption a retry would apply. Surface the real cause now.
+                        LogResultFailure(result);
+                    }
                 }
             }
 
             if (string.IsNullOrWhiteSpace(token))
             {
                 return null;
+            }
+
+            // Self-heal: validate the tid claim in the returned token against the requested tenant.
+            // WAM may silently select a cached Windows work account from a different tenant when
+            // multiple accounts are present (issue #430). On mismatch, clear the in-memory cache
+            // entry and the MSAL persistent disk cache, then retry once with forceRefresh so WAM
+            // gets a clean slate and either picks the correct account or prompts the user.
+            // Only compare tid when tenantId is a GUID — JWT tid claims are always GUIDs,
+            // so a domain-form tenantId (e.g. contoso.onmicrosoft.com) would always appear
+            // as a mismatch and clear caches unnecessarily.
+            var returnedTid = JwtHelper.TryDecodeClaim(token, "tid");
+            if (!string.IsNullOrWhiteSpace(returnedTid) &&
+                Guid.TryParse(tenantId, out _) &&
+                !string.Equals(returnedTid, tenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Graph token returned for tenant {ReturnedTenant} but {RequestedTenant} is required. " +
+                    "Clearing cached credentials and retrying...",
+                    returnedTid, tenantId);
+
+                // Evict in-memory entry so the retry actually calls through to MSAL/PS.
+                _tokenCache.TryRemove(cacheKey, out _);
+
+                // Delete the MSAL persistent cache file so WAM starts with a clean account list.
+                var msalCachePath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    AuthenticationConstants.ApplicationName,
+                    AuthenticationConstants.MsalCacheFileName);
+                try
+                {
+                    if (File.Exists(msalCachePath))
+                    {
+                        File.Delete(msalCachePath);
+                        _logger.LogDebug("Cleared MSAL token cache at {Path}", msalCachePath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to clear MSAL token cache: {Message}", ex.Message);
+                }
+
+                // Retry once — do not recurse; use the underlying acquirer directly.
+                var retryToken = MsalTokenAcquirerOverride != null
+                    ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
+                    : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct, loginHint, forceRefresh: true);
+
+                if (!string.IsNullOrWhiteSpace(retryToken))
+                    token = retryToken;
+
+                // Fail fast if the retry also returned the wrong tenant — caching and returning
+                // a known-bad token would produce the same misleading 403s the fix is meant to prevent.
+                var retryTid = JwtHelper.TryDecodeClaim(token, "tid");
+                if (!string.IsNullOrWhiteSpace(retryTid) &&
+                    !string.Equals(retryTid, tenantId, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"Graph token retry returned token for tenant {retryTid} but {tenantId} is required. " +
+                        $"Ensure 'az login' targets the correct tenant, or select the correct account when prompted.");
+                }
             }
 
             // Cache expiry from JWT exp; if parsing fails, cache short (10 min) to still reduce spam
@@ -276,18 +346,19 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
     private async Task<CommandResult> ExecuteWithFallbackAsync(
         string script,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool suppressErrorLogging = false)
     {
         // Try PowerShell Core first (cross-platform)
         var shell = "pwsh";
-        var result = await ExecutePowerShellAsync(shell, script, ct);
+        var result = await ExecutePowerShellAsync(shell, script, ct, suppressErrorLogging);
 
         // Fallback to Windows PowerShell if pwsh is not available
         if (!result.Success && IsPowerShellNotFoundError(result))
         {
             _logger.LogDebug("PowerShell Core not found, falling back to Windows PowerShell");
             shell = "powershell";
-            result = await ExecutePowerShellAsync(shell, script, ct);
+            result = await ExecutePowerShellAsync(shell, script, ct, suppressErrorLogging);
         }
 
         // If the failure is due to a missing or broken module, attempt auto-install and retry once.
@@ -298,7 +369,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             if (await TryAutoInstallRequiredModulesAsync(shell, ct))
             {
                 _logger.LogInformation("Auto-installed missing PowerShell module(s). Retrying...");
-                result = await ExecutePowerShellAsync(shell, script, ct);
+                result = await ExecutePowerShellAsync(shell, script, ct, suppressErrorLogging);
             }
         }
 
@@ -399,7 +470,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     private async Task<CommandResult> ExecutePowerShellAsync(
         string shell,
         string script,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool suppressErrorLogging = false)
     {
         var arguments = BuildPowerShellArguments(shell, script);
 
@@ -410,6 +482,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             outputPrefix: "",
             interactive: true,
             outputTransform: FormatDeviceCodeLine,
+            suppressErrorLogging: suppressErrorLogging,
             cancellationToken: ct);
     }
 
@@ -460,20 +533,14 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         return $"{baseArgs} -Command \"{wrappedScript}\"";
     }
 
-    private string? ProcessResult(CommandResult result)
+    private string? ProcessResult(CommandResult result, bool logErrors = true)
     {
         if (!result.Success)
         {
-            _logger.LogError(
-                "Failed to acquire Microsoft Graph access token. Error: {Error}",
-                result.StandardError);
-
-            if (IsPowerShellModuleMissingError(result))
-            {
-                _logger.LogError(
-                    "Required PowerShell module could not be loaded (auto-install was attempted but failed). " +
-                    "Run 'a365 setup requirements' to manually install missing modules.");
-            }
+            // logErrors is false for a recoverable first attempt (retried with device code); the caller
+            // re-logs via LogResultFailure if the failure turns out to be terminal.
+            if (logErrors)
+                LogResultFailure(result);
 
             return null;
         }
@@ -500,6 +567,20 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
         _logger.LogDebug("Microsoft Graph access token acquired successfully");
         return token;
+    }
+
+    private void LogResultFailure(CommandResult result)
+    {
+        _logger.LogError(
+            "Failed to acquire Microsoft Graph access token. Error: {Error}",
+            result.StandardError);
+
+        if (IsPowerShellModuleMissingError(result))
+        {
+            _logger.LogError(
+                "Required PowerShell module could not be loaded (auto-install was attempted but failed). " +
+                "Run 'a365 setup requirements' to manually install missing modules.");
+        }
     }
 
     private static bool IsConditionalAccessError(CommandResult result)

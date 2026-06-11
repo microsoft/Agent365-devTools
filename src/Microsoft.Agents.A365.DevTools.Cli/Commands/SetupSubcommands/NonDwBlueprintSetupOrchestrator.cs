@@ -33,9 +33,13 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
+        // --messaging-endpoint flag (if supplied) wins over the init-only config value for the plan.
+        var plannedEndpoint = !string.IsNullOrWhiteSpace(messagingEndpointOverride)
+            ? messagingEndpointOverride
+            : config.MessagingEndpoint;
 
         // Use explicitly-passed tokens when available; fall back to a known-correct default.
         // Environment.GetCommandLineArgs() is unreliable in dotnet tool / test hosting scenarios.
@@ -69,9 +73,9 @@ internal static class NonDwBlueprintSetupOrchestrator
 
             if (isM365)
             {
-                var endpointDetail = string.IsNullOrWhiteSpace(config.MessagingEndpoint)
-                    ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
-                    : $"register via Teams Graph: {config.MessagingEndpoint}";
+                var endpointDetail = string.IsNullOrWhiteSpace(plannedEndpoint)
+                    ? "deferred — pass --messaging-endpoint <url> or configure after deploy"
+                    : $"register via Teams Graph: {plannedEndpoint}";
                 logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
             }
             else
@@ -152,10 +156,9 @@ internal static class NonDwBlueprintSetupOrchestrator
         // 7. Messaging endpoint (M365 opt-in)
         if (isM365)
         {
-            var endpointForDisplay = config.MessagingEndpoint;
-            var endpointDetail = string.IsNullOrWhiteSpace(endpointForDisplay)
-                ? "register via Teams Graph (requires 'messagingEndpoint' in config)"
-                : $"register via Teams Graph: {endpointForDisplay}";
+            var endpointDetail = string.IsNullOrWhiteSpace(plannedEndpoint)
+                ? "deferred — pass --messaging-endpoint <url> or configure after deploy"
+                : $"register via Teams Graph: {plannedEndpoint}";
             logger.LogInformation(SetupHelpers.DryRunRow(7, "Messaging endpoint") + endpointDetail);
         }
         else
@@ -200,13 +203,16 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("The following required permissions are not yet consented for your client app ({ClientAppId}):", clientAppId);
-        foreach (var p in unconsented)
-            ctx.Logger.LogInformation("  - {Permission}", p);
+        using (ctx.Logger.Indent())
+        {
+            foreach (var p in unconsented)
+                ctx.Logger.LogInformation("{Permission}", p);
+        }
         ctx.Logger.LogInformation("");
 
-        // The PATCH on oauth2PermissionGrants requires DelegatedPermissionGrant.ReadWrite.All
-        // (admin-only). Skip the prompt for non-admins so we don't ask the user to confirm
-        // an operation they cannot complete; print the admin consent URL for hand-off instead.
+        // OAuth2 grant operations require Global Administrator. Skip the prompt for non-admins
+        // so we don't ask them to confirm an operation they cannot complete; print the admin
+        // consent URL for hand-off instead.
         var roleCheck = await ctx.GraphApiService.IsCurrentUserAdminAsync(tenantId, ctx.CancellationToken);
         if (roleCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
@@ -359,14 +365,21 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Non-fatal: a failure here (e.g. caller lacks Global Administrator) logs a warning
                 // and continues so the agent-identity grants below still apply.
                 await AllSubcommand.ExecuteBatchPermissionsStepAsync(
-                    ctx, specs,
+                    ctx, specs, buildResult.scopesByAudience,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
                 // If admin consent wasn't granted (non-GA caller), persist per-resource consent URLs
                 // and a combined URL so a Global Administrator can complete the hand-off out-of-band.
                 // Messaging Bot is gated on isM365 to avoid AADSTS650053 in tenants without the Bot SP.
+                // V2 audience routing (issue #429): pass the full scopesByAudience map so per-server
+                // audiences land on the bare appId GUID resource identifier rather than collapsing
+                // onto the WorkIQ Tools URI. api:// is NOT used — per-server SPs have
+                // identifierUris null and the bare GUID is what's in servicePrincipalNames.
                 SetupHelpers.ApplyConsentUrlsIfNeeded(
-                    ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes, isM365: ctx.IsM365);
+                    ctx, buildResult.mcpResourceAppId, ctx.Config.AgentApplicationScopes, buildResult.mcpScopes,
+                    isM365: ctx.IsM365,
+                    mcpScopesByAudience: buildResult.scopesByAudience,
+                    mcpAudienceDisplayNames: buildResult.serverNamesByAudience);
 
                 // Save state before agent identity steps so progress (blueprint stamping outcomes,
                 // consent URLs) is not lost on failure in the steps below.
@@ -505,9 +518,11 @@ internal static class NonDwBlueprintSetupOrchestrator
             {
                 ctx.Results.EffectiveAuthMode = ctx.IsBothMode ? Models.AuthMode.Both : ctx.IsS2sMode ? Models.AuthMode.S2s : Models.AuthMode.Obo;
 
-                // OBO and Both: principal-scoped delegated grants (no admin required).
-                if (ctx.IsOboMode || ctx.IsBothMode)
-                    await GrantAgentIdentityPermissionsAsync(ctx, specs);
+                // OBO and Both: delegated permissions for the agent identity are inherited from the
+                // blueprint via the inheritable permissions configured in Phase 1 plus the tenant-wide
+                // admin consent granted via the /v2.0/adminconsent URL in Phase 2. No per-identity
+                // POST /oauth2PermissionGrants call is needed (and would require
+                // DelegatedPermissionGrant.ReadWrite.All, which the CLI's token never carries).
 
                 // S2S and Both: app role assignments (requires Global Admin; falls back to PowerShell instructions).
                 if (ctx.IsS2sMode || ctx.IsBothMode)
@@ -620,6 +635,8 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // Step 6.5: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
         // Skipped for --agent-registration-only (skipIdentityAndPermissions) — endpoint is already registered.
+        // Phase separator is emitted inside ExecuteMessagingEndpointStepAsync after the
+        // non-M365 early-return so non-M365 runs don't accumulate a stray blank line.
         if (!skipIdentityAndPermissions)
             await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
 
@@ -627,6 +644,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // to register the agent, not to regenerate appsettings files.
         if (!skipIdentityAndPermissions)
         {
+            ctx.Logger.LogInformation("");
             ctx.Logger.LogInformation("Updating project settings...");
             using (ctx.Logger.Indent())
             {
@@ -634,127 +652,6 @@ internal static class NonDwBlueprintSetupOrchestrator
                     ctx.ConfigFile.FullName, ctx.Config,
                     ctx.PlatformDetector, ctx.Logger);
             }
-        }
-    }
-
-    /// <summary>
-    /// Grants the same oauth2 permission grants to the Agent Identity SP that the blueprint has.
-    /// Called after agent identity creation so the identity can acquire app-only tokens for all
-    /// blueprint resources (e.g. Power Platform, Observability API) via the FMI token chain.
-    /// This step is idempotent — safe to re-run on subsequent setup invocations.
-    /// </summary>
-    internal static async Task GrantAgentIdentityPermissionsAsync(
-        SetupContext ctx,
-        List<ResourcePermissionSpec> specs)
-    {
-        if (specs.Count == 0)
-        {
-            ctx.Logger.LogDebug("No permission specs to grant to agent identity; skipping.");
-            return;
-        }
-
-        ctx.Logger.LogDebug("Granting permissions to agent identity ({AgentId})...", ctx.Config.AgenticAppId);
-
-        // Resolve the current developer's object ID so we can create Principal-scoped grants
-        // that don't require GA or Cloud App Admin.
-        var currentUserObjectId = await ctx.GraphApiService.GetCurrentUserObjectIdAsync(
-            ctx.Config.TenantId!, ctx.CancellationToken);
-
-        if (string.IsNullOrWhiteSpace(currentUserObjectId))
-        {
-            ctx.Logger.LogWarning(
-                "Could not resolve current user object ID. " +
-                "Permissions to the agent identity must be granted manually in the Entra portal.");
-            ctx.Results.Warnings.Add(
-                "Could not resolve current user object ID for Principal-scoped permission grants. " +
-                "Grant them manually in the Entra portal.");
-            return;
-        }
-
-        // AgenticAppId is the SP object ID returned by CreateAgentIdentityAsync and stored in config.
-        var agentIdentitySpObjectId = ctx.Config.AgenticAppId;
-
-        if (string.IsNullOrWhiteSpace(agentIdentitySpObjectId))
-        {
-            ctx.Logger.LogWarning(
-                "Agent identity ID not found in config. " +
-                "Permissions must be granted manually in the Entra portal.");
-            return;
-        }
-
-        var anyFailed = false;
-        foreach (var spec in specs)
-        {
-            if (spec.Scopes.Length == 0) continue;
-
-            var resourceSpObjectId = await ctx.GraphApiService.EnsureServicePrincipalForAppIdAsync(
-                ctx.Config.TenantId!,
-                spec.ResourceAppId,
-                ctx.CancellationToken,
-                Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
-
-            if (string.IsNullOrWhiteSpace(resourceSpObjectId))
-            {
-                ctx.Logger.LogWarning(
-                    "Could not resolve SP for resource {ResourceName} ({ResourceAppId}); skipping.",
-                    spec.ResourceName, spec.ResourceAppId);
-                anyFailed = true;
-                continue;
-            }
-
-            // Query the resource SP's published scopes and filter out any that haven't
-            // been rolled out to this tenant yet. Attempting to grant a non-existent scope
-            // returns Request_BadRequest from Graph, which would surface as a misleading warning.
-            var availableScopes = await ctx.GraphApiService.GetAvailableScopeNamesAsync(
-                ctx.Config.TenantId!, resourceSpObjectId, ctx.CancellationToken);
-
-            var scopesToGrant = availableScopes.Count > 0
-                ? spec.Scopes.Where(s => availableScopes.Contains(s)).ToArray()
-                : spec.Scopes; // if the query failed, try all and let Graph surface any real error
-
-            if (scopesToGrant.Length == 0)
-            {
-                ctx.Logger.LogInformation(
-                    "Scopes [{Scopes}] not yet available on {ResourceName} in this tenant — skipping.",
-                    string.Join(" ", spec.Scopes), spec.ResourceName);
-                continue;
-            }
-
-            var granted = await ctx.GraphApiService.CreatePrincipalOauth2PermissionGrantAsync(
-                ctx.Config.TenantId!,
-                agentIdentitySpObjectId,
-                resourceSpObjectId,
-                currentUserObjectId,
-                scopesToGrant,
-                ctx.CancellationToken,
-                Constants.AuthenticationConstants.RequiredPermissionGrantScopes);
-
-            if (granted)
-                ctx.Logger.LogDebug(
-                    "Granted {Scopes} on {ResourceName} to agent identity (principal scope).",
-                    string.Join(" ", scopesToGrant), spec.ResourceName);
-            else
-            {
-                ctx.Logger.LogWarning(
-                    "Failed to grant {Scopes} on {ResourceName} to agent identity.",
-                    string.Join(" ", scopesToGrant), spec.ResourceName);
-                anyFailed = true;
-            }
-        }
-
-        if (anyFailed)
-        {
-            ctx.Results.AgentIdentityDelegatedOutcome = Models.GrantOutcome.Failed;
-            ctx.Results.Warnings.Add(
-                "Delegated permissions for the agent identity could not be granted automatically. " +
-                "See the Action Required section for PowerShell instructions.");
-        }
-        else
-        {
-            var grantedNames = string.Join(", ", specs.Where(s => s.Scopes.Length > 0).Select(s => s.ResourceName));
-            using (ctx.Logger.Indent())
-                ctx.Logger.LogInformation("Developer-scoped permissions granted ({Resources}).", grantedNames);
-            ctx.Results.AgentIdentityDelegatedOutcome = Models.GrantOutcome.Granted;
         }
     }
 
@@ -789,7 +686,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         var failedSpecs = new List<ResourcePermissionSpec>();
         foreach (var spec in s2sSpecs)
         {
-            var granted = await ctx.BlueprintService.GrantAppRoleAssignmentAsync(
+            var grantResult = await ctx.BlueprintService.GrantAppRoleAssignmentAsync(
                 ctx.Config.TenantId!,
                 agentIdentitySpObjectId,
                 spec.ResourceAppId,
@@ -797,8 +694,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 Constants.AuthenticationConstants.RequiredPermissionGrantScopes,
                 ctx.CancellationToken);
 
-            if (granted)
-                ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity.", spec.ResourceName);
+            if (grantResult.AllSucceeded)
+                ctx.Logger.LogDebug("S2S app roles granted on {ResourceName} to agent identity (already assigned: {AlreadyAssigned}).",
+                    spec.ResourceName, grantResult.AllAlreadyAssigned);
             else
             {
                 ctx.Logger.LogDebug("S2S app role assignment failed for {ResourceName} — user likely lacks a required role ({Roles}).", spec.ResourceName, AuthenticationConstants.S2SGrantRequiredRoles);
@@ -820,7 +718,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("S2S app role assignments require {Roles}. Run the following PowerShell:", AuthenticationConstants.S2SGrantRequiredRoles);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  # Connect to Microsoft Graph");
-        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All', 'Directory.Read.All'", ctx.Config.TenantId);
+        ctx.Logger.LogInformation("  Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All' -UseDeviceCode", ctx.Config.TenantId);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("  $agentSpId = '{AgentSpId}'", agentIdentitySpObjectId);
 

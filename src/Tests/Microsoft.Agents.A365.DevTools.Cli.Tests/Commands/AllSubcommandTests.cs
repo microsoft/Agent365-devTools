@@ -137,7 +137,9 @@ public class AllSubcommandTests : IDisposable
     private static SetupContext BuildMessagingEndpointContext(
         ITeamsGraphBackendConfigurator backendConfigurator,
         bool isM365,
-        string? blueprintId = "blueprint-id")
+        string? blueprintId = "blueprint-id",
+        string? configEndpoint = "https://example.com/api/messages",
+        string? messagingEndpointOverride = null)
     {
         var config = new Agent365Config
         {
@@ -146,7 +148,7 @@ public class AllSubcommandTests : IDisposable
             AgentBlueprintId = blueprintId,
             AgentIdentityDisplayName = "Test Agent",
             ClientAppId = "client-app-id",
-            MessagingEndpoint = "https://example.com/api/messages",
+            MessagingEndpoint = configEndpoint ?? string.Empty,
         };
 
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
@@ -189,7 +191,12 @@ public class AllSubcommandTests : IDisposable
                 Substitute.For<ILogger<FederatedCredentialService>>(), graph),
             clientAppValidator: Substitute.For<IClientAppValidator>(),
             isM365: isM365,
-            loginHintResolver: noOpLoginHint);
+            loginHintResolver: noOpLoginHint,
+            messagingEndpointOverride: messagingEndpointOverride,
+            // Tests are non-interactive: a missing endpoint must defer rather than block on a console
+            // prompt. This keeps the result deterministic regardless of test runner (the VS test host
+            // does not redirect stdin the way 'dotnet test' does, so Console.IsInputRedirected is unreliable).
+            nonInteractive: true);
     }
 
     [Fact]
@@ -305,5 +312,45 @@ public class AllSubcommandTests : IDisposable
         ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.Failed);
         ctx.Results.MessagingEndpointFailureReason.Should().Be(MessagingEndpointFailureReasons.Other);
         ctx.Results.MessagingEndpointRegistered.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteMessagingEndpointStepAsync_WhenM365AndEndpointMissing_DefersWithoutCallingConfigurator()
+    {
+        // No endpoint in config, no --messaging-endpoint override, and a redirected stdin (the test
+        // host) so the interactive prompt is skipped: the step must defer, not fail.
+        var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
+        var ctx = BuildMessagingEndpointContext(backend, isM365: true, configEndpoint: null);
+
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
+        await backend.DidNotReceiveWithAnyArgs().SetBackendConfigurationAsync(default!, default!, default);
+        ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.Failed,
+            because: "an absent endpoint is recorded as Failed+NotConfigured so the summary can render it as deferred");
+        ctx.Results.MessagingEndpointFailureReason.Should().Be(MessagingEndpointFailureReasons.NotConfigured,
+            because: "NotConfigured is the deferred reason the summary reframes as 'configure after deploy'");
+        ctx.Results.MessagingEndpointRegistered.Should().BeFalse();
+        ctx.Results.Warnings.Should().BeEmpty(
+            because: "deferring an endpoint is expected and must not add a warning that downgrades the status line");
+    }
+
+    [Fact]
+    public async Task ExecuteMessagingEndpointStepAsync_WhenOverrideProvidedAndConfigEmpty_RegistersUsingOverride()
+    {
+        const string overrideUrl = "https://override.example.com/api/messages";
+        var backend = Substitute.For<ITeamsGraphBackendConfigurator>();
+        backend.SetBackendConfigurationAsync("blueprint-id", overrideUrl, "test-correlation-id")
+            .Returns((EndpointRegistrationResult.Created, (string?)null));
+
+        // --messaging-endpoint supplied even though config has no endpoint — the override must win.
+        var ctx = BuildMessagingEndpointContext(backend, isM365: true, configEndpoint: null, messagingEndpointOverride: overrideUrl);
+
+        await AllSubcommand.ExecuteMessagingEndpointStepAsync(ctx);
+
+        await backend.Received(1).SetBackendConfigurationAsync("blueprint-id", overrideUrl, "test-correlation-id");
+        ctx.Results.MessagingEndpointResult.Should().Be(EndpointRegistrationResult.Created);
+        ctx.Results.MessagingEndpointRegistered.Should().BeTrue();
+        ctx.Results.MessagingEndpoint.Should().Be(overrideUrl,
+            because: "the registered endpoint reported in the summary must be the override URL");
     }
 }

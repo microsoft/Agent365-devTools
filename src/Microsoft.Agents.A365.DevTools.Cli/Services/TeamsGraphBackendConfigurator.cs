@@ -22,6 +22,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     private readonly ILogger<ITeamsGraphBackendConfigurator> _logger;
     private readonly IConfigService _configService;
     private readonly AuthenticationService _authService;
+    private readonly RetryHelper _retryHelper;
 
     public TeamsGraphBackendConfigurator(
         ILogger<ITeamsGraphBackendConfigurator> logger,
@@ -31,15 +32,20 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
         _logger = logger;
         _configService = configService ?? throw new ArgumentNullException(nameof(configService));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
+        // Retries transient transport failures (DNS/socket) the per-attempt auth loop does not catch.
+        _retryHelper = new RetryHelper(logger);
     }
 
     /// <inheritdoc />
     public async Task<(EndpointRegistrationResult Result, string? FailureReason)> SetBackendConfigurationAsync(
         string agentBlueprintId,
         string messagingEndpoint,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
-        _logger.LogInformation("Setting backend configuration for Agent Blueprint...");
+        // Debug only — the caller's "Configuring messaging endpoint..." header already frames this,
+        // and "backend configuration" is internal MCP Platform terminology, not user-facing.
+        _logger.LogDebug("Setting backend configuration for Agent Blueprint...");
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
         _logger.LogDebug("   Callback URI: {Endpoint}", messagingEndpoint);
 
@@ -50,7 +56,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
             if (string.IsNullOrEmpty(tenantId))
             {
-                _logger.LogError("Could not determine tenant ID for backend configuration");
+                _logger.LogError("Could not determine tenant ID to register the messaging endpoint.");
                 return (EndpointRegistrationResult.Failed, "Other");
             }
 
@@ -73,7 +79,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             {
                 bool forceRefresh = attempt > 0;
 
-                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser, ct: ct);
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
@@ -82,21 +88,25 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                using var response = await httpClient.PostAsync(
-                    createEndpointUrl,
-                    new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"));
+                // Retry transient transport errors; content is rebuilt per attempt (HttpContent is single-use).
+                using var response = await _retryHelper.ExecuteWithRetryAsync(
+                    sendCt => httpClient.PostAsync(
+                        createEndpointUrl,
+                        new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                        sendCt),
+                    cancellationToken: ct);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Backend configuration set successfully.");
+                    _logger.LogInformation("Registered successfully.");
                     return (EndpointRegistrationResult.Created, null);
                 }
 
-                var errorContent = await response.Content.ReadAsStringAsync();
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
 
                 if (response.StatusCode == HttpStatusCode.Conflict)
                 {
-                    _logger.LogInformation("Backend configuration already exists.");
+                    _logger.LogInformation("Messaging endpoint already registered.");
                     return (EndpointRegistrationResult.AlreadyExists, null);
                 }
 
@@ -122,7 +132,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                     return (EndpointRegistrationResult.SkippedContractMismatch, null);
                 }
 
-                _logger.LogError("Failed to set backend configuration. Status: {Status}", response.StatusCode);
+                _logger.LogError("Failed to register the messaging endpoint. Status: {Status}", response.StatusCode);
                 _logger.LogError("Response: {Error}", errorContent);
                 return (EndpointRegistrationResult.Failed, ClassifyFailureReason(errorContent));
             }
@@ -139,9 +149,15 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
             return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // User Ctrl+C — propagate for a silent abort. A non-user cancellation (e.g. HttpClient
+            // timeout after retries) falls through to the general handler and surfaces as a failure.
+            throw;
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error setting backend configuration: {Message}", ex.Message);
+            _logger.LogError(ex, "Unexpected error registering the messaging endpoint: {Message}", ex.Message);
             return (EndpointRegistrationResult.Failed, ClassifyFailureReason(ex.Message));
         }
     }
@@ -149,9 +165,11 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
     /// <inheritdoc />
     public async Task<bool> ClearBackendConfigurationAsync(
         string agentBlueprintId,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
-        _logger.LogInformation("Clearing backend configuration for Agent Blueprint...");
+        // Debug only — the caller's "Removing messaging endpoint..." header already frames this.
+        _logger.LogDebug("Clearing backend configuration for Agent Blueprint...");
         _logger.LogDebug("   Agent Blueprint ID: {AgentBlueprintId}", agentBlueprintId);
 
         try
@@ -161,7 +179,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
             if (string.IsNullOrEmpty(tenantId))
             {
-                _logger.LogError("Could not determine tenant ID for backend configuration");
+                _logger.LogError("Could not determine tenant ID to remove the messaging endpoint.");
                 return false;
             }
 
@@ -183,7 +201,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             {
                 bool forceRefresh = attempt > 0;
 
-                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser);
+                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser, ct: ct);
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
@@ -192,25 +210,30 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
                 using var httpClient = Services.Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
 
-                using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl)
-                {
-                    Content = new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                };
-
-                using var response = await httpClient.SendAsync(request);
+                // Retry transient transport errors; the request is rebuilt per attempt (HttpRequestMessage is single-use).
+                using var response = await _retryHelper.ExecuteWithRetryAsync(
+                    async sendCt =>
+                    {
+                        using var request = new HttpRequestMessage(HttpMethod.Delete, deleteEndpointUrl)
+                        {
+                            Content = new StringContent(requestBody.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+                        };
+                        return await httpClient.SendAsync(request, sendCt);
+                    },
+                    cancellationToken: ct);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Backend configuration cleared successfully.");
+                    _logger.LogInformation("Removed successfully.");
                     return true;
                 }
 
-                var errorContent = await response.Content.ReadAsStringAsync();
+                var errorContent = await response.Content.ReadAsStringAsync(ct);
 
                 // Treat NotFound as idempotent success — nothing to clear.
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
-                    _logger.LogInformation("Backend configuration not found — already cleared.");
+                    _logger.LogInformation("Messaging endpoint already removed.");
                     return true;
                 }
 
@@ -218,7 +241,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                 if (response.StatusCode == HttpStatusCode.BadRequest &&
                     ResponseDetailsContains(errorContent, "not found"))
                 {
-                    _logger.LogInformation("Backend configuration not found — already cleared.");
+                    _logger.LogInformation("Messaging endpoint already removed.");
                     return true;
                 }
 
@@ -245,7 +268,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
                     return true;
                 }
 
-                _logger.LogError("Failed to clear backend configuration. Status: {Status}", response.StatusCode);
+                _logger.LogError("Failed to remove messaging endpoint. Status: {Status}", response.StatusCode);
                 _logger.LogError("Response: {Error}", errorContent);
                 return false;
             }
@@ -262,9 +285,15 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             _logger.LogError("Failed to parse tenant information: {Message}", ex.Message);
             return false;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // User Ctrl+C — propagate for a silent abort. A non-user cancellation (e.g. HttpClient
+            // timeout after retries) falls through to the general handler and surfaces as a failure.
+            throw;
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error clearing backend configuration: {Message}", ex.Message);
+            _logger.LogError(ex, "Unexpected error removing the messaging endpoint: {Message}", ex.Message);
             return false;
         }
     }

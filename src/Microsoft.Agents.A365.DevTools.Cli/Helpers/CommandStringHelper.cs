@@ -8,6 +8,18 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Helpers;
 /// </summary>
 public static class CommandStringHelper
 {
+    private const string RedactedValue = "<redacted>";
+    private static readonly HashSet<string> SensitiveValueOptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "--access-token",
+        "--api-key",
+        "--client-secret",
+        "--idp-client-secret",
+        "--password",
+        "--refresh-token",
+        "--token"
+    };
+
     /// <summary>
     /// Escapes a string for safe use in PowerShell single-quoted strings.
     /// In PowerShell single-quoted strings, only single quotes need escaping (doubled).
@@ -40,5 +52,45 @@ public static class CommandStringHelper
 
         var dangerous = new[] { '\'', '"', ';', '`', '$', '&', '|', '<', '>', '\n', '\r', '\t' };
         return input.IndexOfAny(dangerous) >= 0;
+    }
+
+    /// <summary>
+    /// Formats a command line for diagnostics while redacting values for options that carry secrets.
+    /// </summary>
+    public static string FormatForDisplay(string executable, IReadOnlyList<string> args)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(executable);
+        ArgumentNullException.ThrowIfNull(args);
+
+        var redactedArgs = new List<string>(args.Count);
+        var redactNext = false;
+
+        foreach (var arg in args)
+        {
+            if (redactNext)
+            {
+                redactedArgs.Add(RedactedValue);
+                redactNext = false;
+                continue;
+            }
+
+            var equalsIndex = arg.IndexOf('=');
+            if (equalsIndex > 0)
+            {
+                var optionName = arg[..equalsIndex];
+                if (SensitiveValueOptions.Contains(optionName))
+                {
+                    redactedArgs.Add($"{optionName}={RedactedValue}");
+                    continue;
+                }
+            }
+
+            redactedArgs.Add(arg);
+            redactNext = SensitiveValueOptions.Contains(arg);
+        }
+
+        return redactedArgs.Count == 0
+            ? executable
+            : $"{executable} {string.Join(" ", redactedArgs)}";
     }
 }

@@ -155,6 +155,13 @@ public class GraphApiService
             _logger.LogError("Failed to acquire Graph API access token for tenant {TenantId}", tenantId);
             return null;
         }
+        catch (OperationCanceledException)
+        {
+            // Honor cancellation — never swallow. Otherwise Ctrl+C is silently converted to
+            // a "no token" result, and the caller falls through to interactive prompts or
+            // misleading "not found" errors.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error acquiring Graph API access token");
@@ -479,9 +486,9 @@ public class GraphApiService
                 var body = await resp.Content.ReadAsStringAsync(ct);
                 var errorMessage = TryExtractGraphErrorMessage(body);
                 if (errorMessage != null)
-                    _logger.LogError("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
+                    _logger.LogDebug("Graph PATCH {Url} failed: {ErrorMessage}", url, errorMessage);
                 else
-                    _logger.LogError("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
+                    _logger.LogDebug("Graph PATCH {Url} failed {Code} {Reason}", url, (int)resp.StatusCode, resp.ReasonPhrase);
                 _logger.LogDebug("Graph PATCH response body: {Body}", body);
             }
 
@@ -1848,7 +1855,9 @@ public class GraphApiService
                     var json = await response.Content.ReadAsStringAsync(ct);
                     using var doc = JsonDocument.Parse(json);
                     var id = doc.RootElement.GetProperty("id").GetString();
-                    _logger.LogInformation("Agent identity created (ID: {Id})", id);
+                    // Debug only — callers (setup orchestrator, create-instance runner) emit the
+                    // user-facing "Agent identity created" line so it isn't logged twice.
+                    _logger.LogDebug("Agent identity created (ID: {Id})", id);
                     return id;
                 }
 
@@ -1902,22 +1911,7 @@ public class GraphApiService
     /// Returns null if the token cannot be decoded or the claim is absent.
     /// </summary>
     private static string? TryDecodeTokenClaim(string token, string claimName)
-    {
-        try
-        {
-            var parts = token.Split('.');
-            if (parts.Length < 2) return null;
-            var payload = parts[1];
-            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
-            using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty(claimName, out var claim) ? claim.GetString() : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+        => JwtHelper.TryDecodeClaim(token, claimName);
 
     /// <summary>
     /// Attempts to extract a human-readable error message from a Graph API JSON error response body.
@@ -2112,26 +2106,61 @@ public class GraphApiService
 
     /// <summary>
     /// Adds a password (client secret) to an Entra application.
+    /// When <paramref name="lifetimeMonths"/> is null, Graph applies its default lifetime (~2 years).
+    /// When provided, an explicit endDateTime computed via <see cref="DateTimeOffset.AddMonths(int)"/>
+    /// is sent so callers can fit within tenant appManagementPolicies caps. Calendar-aware: e.g.
+    /// Jan 31 + 1 month resolves to Feb 28/29 rather than overflowing.
     /// </summary>
     public virtual async Task<string?> AddAppPasswordAsync(
-        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", CancellationToken ct = default)
+        string tenantId, string applicationObjectId, string displayName = "CLI-generated secret", int? lifetimeMonths = null, CancellationToken ct = default)
     {
-        var payload = new
+        object payload;
+        if (lifetimeMonths is { } months)
         {
-            passwordCredential = new
+            payload = new
             {
-                displayName,
-            },
-        };
-
-        using var doc = await GraphPostAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/addPassword", payload, ct);
-        if (doc == null)
+                passwordCredential = new
+                {
+                    displayName,
+                    endDateTime = DateTimeOffset.UtcNow.AddMonths(months).ToString("o", System.Globalization.CultureInfo.InvariantCulture),
+                },
+            };
+        }
+        else
         {
-            _logger.LogError("Failed to add password to application {ObjectId}", applicationObjectId);
+            payload = new { passwordCredential = new { displayName } };
+        }
+
+        var response = await GraphPostWithResponseAsync(tenantId, $"/v1.0/applications/{applicationObjectId}/addPassword", payload, ct);
+
+        if (!response.IsSuccess)
+        {
+            using var _ = response.Json;
+            var errorMessage = TryExtractGraphErrorMessage(response.Body);
+            if (IsTenantSecretLifetimePolicyRejection(response.StatusCode, errorMessage))
+            {
+                var attempted = lifetimeMonths is { } m
+                    ? $"the requested {m}-month lifetime"
+                    : "the Graph default (~2 years)";
+                _logger.LogError(
+                    "Tenant Entra ID policy rejected {Attempted} for the client secret on application {ObjectId}. Pass --secret-lifetime-months N with a smaller value (e.g. --secret-lifetime-months 3) that fits inside your tenant's appManagementPolicies cap. Graph response: {Error}",
+                    attempted,
+                    applicationObjectId,
+                    errorMessage ?? $"HTTP {response.StatusCode} {response.ReasonPhrase}");
+            }
+            else
+            {
+                _logger.LogError(
+                    "Failed to add password to application {ObjectId}: {Error}",
+                    applicationObjectId,
+                    errorMessage ?? $"HTTP {response.StatusCode} {response.ReasonPhrase}");
+            }
+
             return null;
         }
 
-        if (!doc.RootElement.TryGetProperty("secretText", out var secretTextElement))
+        using var doc = response.Json;
+        if (doc == null || !doc.RootElement.TryGetProperty("secretText", out var secretTextElement))
         {
             _logger.LogError("Graph response for application {ObjectId} did not contain secretText", applicationObjectId);
             return null;
@@ -2140,6 +2169,26 @@ public class GraphApiService
         var secretText = secretTextElement.GetString();
         _logger.LogDebug("Added password to application {ObjectId}", applicationObjectId);
         return secretText;
+    }
+
+    // Detects the Microsoft Graph error returned when a tenant's appManagementPolicies
+    // restrict the maximum lifetime of a client secret to a value shorter than the one requested.
+    // Graph returns HTTP 400/403 with no stable machine-readable code, so we match on tokens
+    // that are specific to the lifetime case: "lifetime", "appManagementPolic" (matches both
+    // "appManagementPolicy" and "appManagementPolicies"), or "endDateTime" (the field we send
+    // to specify the desired expiry). A broader "policy + password" match was intentionally
+    // dropped because it also fires for password-strength / complexity rejections, which would
+    // wrongly steer users toward --secret-lifetime-months. If Graph reword changes break this
+    // matcher, update both the token list here and the GraphApiServiceAddAppPasswordTests
+    // Theory cases that pin it.
+    internal static bool IsTenantSecretLifetimePolicyRejection(int statusCode, string? errorMessage)
+    {
+        if (statusCode != 400 && statusCode != 403) return false;
+        if (string.IsNullOrWhiteSpace(errorMessage)) return false;
+        var msg = errorMessage;
+        return msg.Contains("lifetime", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("appManagementPolic", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("endDateTime", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

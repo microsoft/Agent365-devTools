@@ -3,8 +3,10 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -18,7 +20,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// Unit tests for Permissions subcommand
 /// </summary>
 [Collection("Sequential")]
-public class PermissionsSubcommandTests
+public class PermissionsSubcommandTests : IDisposable
 {
     private readonly ILogger _mockLogger;
     private readonly AzureAuthValidator _mockAuthValidator;
@@ -48,6 +50,19 @@ public class PermissionsSubcommandTests
         _mockGraphApiService.GraphGetAsync(Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns((JsonDocument?)null);
+
+        // The orchestrator's admin-consent path opens a real browser and polls Graph for up to
+        // 180s. Both are suppressed here so admin-path tests run in milliseconds without spawning
+        // a browser window. Reset in Dispose to avoid leaking state into other test classes.
+        BrowserHelper.OpenUrlOverrideForTests = (_, _) => { };
+        AdminConsentHelper.BypassConsentChecksForTests = true;
+    }
+
+    public void Dispose()
+    {
+        BrowserHelper.OpenUrlOverrideForTests = null;
+        AdminConsentHelper.BypassConsentChecksForTests = false;
+        GC.SuppressFinalize(this);
         _mockGraphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Microsoft.Agents.A365.DevTools.Cli.Models.RoleCheckResult.Unknown);
         _mockGraphApiService.IsCurrentUserAgentIdAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -778,10 +793,10 @@ public class PermissionsSubcommandTests
             Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(RoleCheckResult.HasRole));
 
-        _mockGraphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+        _mockGraphApiService.CreateOrUpdateOauth2PermissionGrantWithDetailsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns(Task.FromResult(true));
+            .Returns(Task.FromResult<(bool Success, int StatusCode, string? ErrorCode)>((true, 201, null)));
 
         _mockBlueprintService.SetInheritablePermissionsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
@@ -791,7 +806,7 @@ public class PermissionsSubcommandTests
         _mockBlueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(s2sSucceeds));
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Models.AppRoleGrantResult(AllSucceeded: s2sSucceeds, AllAlreadyAssigned: false)));
 
         _mockGraphApiService.GraphGetAsync(
             Arg.Any<string>(), Arg.Any<string>(),

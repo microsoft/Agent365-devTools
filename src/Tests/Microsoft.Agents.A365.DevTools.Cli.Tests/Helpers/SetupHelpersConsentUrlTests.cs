@@ -306,4 +306,186 @@ public class SetupHelpersConsentUrlTests
             rc => rc.ResourceAppId == ConfigConstants.MessagingBotApiAppId,
             because: "no Messaging Bot consent URL is generated for non-M365 agents, so no resourceConsents entry should be persisted");
     }
+
+    // ── V2 per-server audience routing (issue #429) ──────────────────────────
+    //
+    // V2 manifest entries declare a per-server audience (a unique Entra appId) and the
+    // generic scope "Tools.ListInvoke.All". Each per-server SP exposes that scope on its
+    // OWN identifierUri; WorkIQ Tools (the V1 shared resource) does NOT publish it.
+    //
+    // Pre-fix behavior collapsed every "Agent 365 Tools"-named spec onto the shared
+    // WorkIQ URI (https://agent365.svc.cloud.microsoft), producing a URL that asked Entra
+    // for Tools.ListInvoke.All on WorkIQ — which fails with AADSTS650053. The URL builders
+    // must route per-server audiences through the bare appId GUID so each scope lands on
+    // its actual SP. api://{appId} is NOT used — per-server SPs have identifierUris null
+    // and the bare GUID is what's in servicePrincipalNames (api:// triggers AADSTS500011).
+
+    private const string PerServerAudienceMail = "16b1878d-62c7-4009-aa25-68989d63bbad";
+    private const string PerServerAudienceCalendar = "910333d2-47e9-43ca-981f-6df2f4531ef4";
+    private const string V2Scope = "Tools.ListInvoke.All";
+
+    [Fact]
+    public void BuildCombinedConsentUrl_V2PerServerAudiences_EmitsBareAppIdResourcePerAudienceNotWorkIqUri()
+    {
+        var scopesByAudience = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [PerServerAudienceMail] = new[] { V2Scope },
+            [PerServerAudienceCalendar] = new[] { V2Scope },
+            // WorkIQ Tools still carries its V1-compat seed scope; it must keep the canonical URI.
+            [McpConstants.WorkIQToolsProdAppId] = new[] { "McpServersMetadata.Read.All" },
+        };
+
+        var url = SetupHelpers.BuildCombinedConsentUrl(
+            TenantId, BlueprintClientId,
+            graphScopes: Array.Empty<string>(),
+            mcpScopes: Array.Empty<string>(),
+            isM365: false,
+            mcpScopesByAudience: scopesByAudience);
+
+        // Per-server V2 SPs (e.g. Work IQ Mail MCP, appId 16b1878d-...) have identifierUris
+        // unset; their only registered resource identifier is the bare appId GUID in
+        // servicePrincipalNames. The previous "api://{appId}" form caused AADSTS500011
+        // ("resource principal not found"); the bare appId form is the canonical fallback
+        // Entra accepts for SPs without a published Application ID URI.
+        url.Should().Contain(Uri.EscapeDataString($"{PerServerAudienceMail}/{V2Scope}"),
+            because: "V2 per-server SPs publish only the bare appId GUID as their resource identifier; api://{appId} produces AADSTS500011 because that URI is not registered on the SP (issue #429)");
+        url.Should().NotContain(Uri.EscapeDataString($"api://{PerServerAudienceMail}/{V2Scope}"),
+            because: "the api:// prefix must NOT be emitted for per-server audiences — that was the AADSTS500011 regression");
+        url.Should().Contain(Uri.EscapeDataString($"{PerServerAudienceCalendar}/{V2Scope}"),
+            because: "every V2 audience routes through its own appId; collapsing them would produce a single URL fragment that Entra rejects");
+        url.Should().Contain(Uri.EscapeDataString($"{McpConstants.Agent365ToolsIdentifierUri}/McpServersMetadata.Read.All"),
+            because: "the WorkIQ Tools (V1-shared) audience still uses the canonical https URI — the V2 fix must not regress V1 routing");
+    }
+
+    [Fact]
+    public void BuildAdminConsentUrls_V2PerServerAudiences_OneUrlPerAudience()
+    {
+        var scopesByAudience = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [PerServerAudienceMail] = new[] { V2Scope },
+            [PerServerAudienceCalendar] = new[] { V2Scope },
+        };
+
+        var urls = SetupHelpers.BuildAdminConsentUrls(
+            TenantId, BlueprintClientId,
+            graphScopes: new[] { "Mail.Send" },
+            mcpScopes: Array.Empty<string>(),
+            isM365: false,
+            mcpScopesByAudience: scopesByAudience);
+
+        urls.Should().Contain(u => u.ConsentUrl.Contains(Uri.EscapeDataString($"{PerServerAudienceMail}/{V2Scope}")),
+            because: "the per-resource URL list must surface a URL the operator can hand off for the Mail MCP audience — collapsing it onto WorkIQ would point the operator at an SP that does not publish the scope");
+        urls.Should().Contain(u => u.ConsentUrl.Contains(Uri.EscapeDataString($"{PerServerAudienceCalendar}/{V2Scope}")),
+            because: "every per-server audience needs its own per-resource handoff URL");
+    }
+
+    [Fact]
+    public void PopulateAdminConsentUrls_V2PerServerAudiences_AddsResourceConsentPerAudience()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TenantId,
+            AgentBlueprintId = BlueprintClientId,
+        };
+
+        var scopesByAudience = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [PerServerAudienceMail] = new[] { V2Scope },
+            [PerServerAudienceCalendar] = new[] { V2Scope },
+        };
+
+        var names = SetupHelpers.PopulateAdminConsentUrls(
+            config, McpConstants.WorkIQToolsProdAppId,
+            mcpScopes: Array.Empty<string>(),
+            isM365: false,
+            mcpScopesByAudience: scopesByAudience);
+
+        config.ResourceConsents.Should().Contain(rc => rc.ResourceAppId == PerServerAudienceMail,
+            because: "each V2 per-server audience needs its own ResourceConsent entry so query-entra and the setup summary surface the right SP for the operator to verify");
+        config.ResourceConsents.Should().Contain(rc => rc.ResourceAppId == PerServerAudienceCalendar);
+        names.Should().Contain(n => n.Contains(PerServerAudienceMail) || n.Contains("Mail", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GetResourceIdentifierUri — three-branch contract.
+    //
+    // Branch 1: known platform resources (Graph, Bot, Obs, PP) → canonical URI.
+    //   (Covered by the BuildAdminConsentUrls happy-path tests above.)
+    // Branch 2: WorkIQ Tools shared appId → canonical https URI; takes precedence
+    //   even when isMcpAudience=true (because the WorkIQ SP publishes the
+    //   canonical URI and Entra accepts it).
+    // Branch 3: isMcpAudience=true (V2 MCP per-server) → bare appId GUID.
+    //   Reason: those SPs have identifierUris=null; api://{appId} → AADSTS500011.
+    // Branch 4 (default): every other unknown resource → api://{appId}. Restores
+    //   the long-standing pre-PR-#432 behavior for custom resources so a custom
+    //   appId whose SP omits the bare GUID from servicePrincipalNames doesn't
+    //   silently break consent.
+    //
+    // These tests pin all four branches so a future refactor cannot generalize
+    // the bare-GUID-for-all-unknowns rule back without us noticing.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private const string CustomResourceAppId = "abcdef01-2345-6789-abcd-ef0123456789";
+
+    [Fact]
+    public void GetResourceIdentifierUri_UnknownResource_DefaultsToApiScheme()
+    {
+        var uri = SetupHelpers.GetResourceIdentifierUri(CustomResourceAppId);
+
+        uri.Should().Be($"api://{CustomResourceAppId}",
+            because: "custom resources default to api://{appId} — switching them to the bare GUID would risk AADSTS errors for custom apps whose SPs do not register the bare appId in servicePrincipalNames");
+    }
+
+    [Fact]
+    public void GetResourceIdentifierUri_UnknownResource_WithIsMcpAudienceFalse_DefaultsToApiScheme()
+    {
+        // Caller has examined the manifest, knows this appId is NOT an MCP audience.
+        var uri = SetupHelpers.GetResourceIdentifierUri(CustomResourceAppId, isMcpAudience: false);
+
+        uri.Should().Be($"api://{CustomResourceAppId}",
+            because: "isMcpAudience=false signals 'caller checked the manifest; this is not an MCP per-server audience' — keep the safer api://{appId} form");
+    }
+
+    [Fact]
+    public void GetResourceIdentifierUri_PerServerMcpAudience_WithIsMcpAudienceTrue_ReturnsBareAppIdGuid()
+    {
+        // Caller is iterating the manifest audience set OR found this appId in it.
+        var perServerAppId = "16b1878d-62c7-4009-aa25-68989d63bbad"; // Mail MCP, from ToolingManifest.json
+        var uri = SetupHelpers.GetResourceIdentifierUri(perServerAppId, isMcpAudience: true);
+
+        uri.Should().Be(perServerAppId,
+            because: "V2 MCP per-server SPs publish only the bare appId GUID in servicePrincipalNames — the api:// form is rejected with AADSTS500011 (issue #429)");
+    }
+
+    [Fact]
+    public void GetResourceIdentifierUri_WorkIqSharedAppId_ReturnsCanonicalHttpsUri_RegardlessOfIsMcpAudience()
+    {
+        // WorkIQ shared appId branch fires before the isMcpAudience check, so even if
+        // the caller mistakenly flags it as an MCP per-server audience, the result is
+        // the canonical https URI that the WorkIQ SP publishes.
+        var withFalse = SetupHelpers.GetResourceIdentifierUri(McpConstants.WorkIQToolsProdAppId, isMcpAudience: false);
+        var withTrue  = SetupHelpers.GetResourceIdentifierUri(McpConstants.WorkIQToolsProdAppId, isMcpAudience: true);
+
+        withFalse.Should().Be(McpConstants.Agent365ToolsIdentifierUri,
+            because: "the WorkIQ Tools shared audience publishes the canonical https URI; that must continue to flow through (the V2 fix must not regress V1 routing)");
+        withTrue.Should().Be(McpConstants.Agent365ToolsIdentifierUri,
+            because: "WorkIQ shared check is by appId and takes precedence over the isMcpAudience signal — guards against a caller that erroneously flags WorkIQ as a per-server audience");
+    }
+
+    [Fact]
+    public void BuildFullyQualifiedScope_PassesIsMcpAudienceThrough()
+    {
+        // Spot-check that the convenience helper's isMcpAudience parameter is forwarded
+        // to GetResourceIdentifierUri (and the result is "{resource}/{scope}" concatenated).
+        var perServerAppId = "16b1878d-62c7-4009-aa25-68989d63bbad";
+        var scope = "Tools.ListInvoke.All";
+
+        var withFalse = SetupHelpers.BuildFullyQualifiedScope(perServerAppId, scope, isMcpAudience: false);
+        var withTrue  = SetupHelpers.BuildFullyQualifiedScope(perServerAppId, scope, isMcpAudience: true);
+
+        withFalse.Should().Be($"api://{perServerAppId}/{scope}",
+            because: "default catch-all when caller has no MCP signal");
+        withTrue.Should().Be($"{perServerAppId}/{scope}",
+            because: "V2 MCP per-server audience — bare appId GUID prefix");
+    }
 }

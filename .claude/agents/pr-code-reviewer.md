@@ -360,6 +360,59 @@ For each changed file, analyze:
      - `// the current implementation does X` (when X is exactly what the diff is changing) → `// before this change, the implementation did X` or simply remove
    - **Real example (this PR, Copilot Comments 4 & 6)**: `GlobalConfigDirectoryCleanupTests` had two comments saying `"(today-buggy) fallback"` and `"(today-buggy) merge logic ... accepts the global file"`. Once the fix landed, both comments read as if the merge logic was still broken. Rephrased to `"pre-fix global fallback would have found"` and `"if the pre-fix merge logic were still active, it would accept the global file"` — same meaning, correct tense. `AddMcpServersMissingManifestTests.cs` had a CR-009 comment claiming `"--dry-run short-circuits before the manifest resolver runs"` that was true when written but became false in the same PR after the typo-guard was moved above the dry-run block.
 
+   **N. Method return value carries a documented null-or-sentinel semantic — trace all callers**
+
+   When a method in the diff returns a tuple, struct, or nullable value where `null` (or a sentinel like `false`, or an enum case) carries a *documented* special meaning — either in an XML `<returns>` doc, an inline comment, or a clearly named variable like `consentUrl == null` as "verified signal" — apply this rule:
+
+   - Read the method's return type and any doc/comment describing what each return state means.
+   - `Grep` for every call site of that method in non-test source files.
+   - At each call site verify: (a) the null/sentinel branch is handled according to the documented contract (e.g., "null → safe to persist") and (b) every code path in the **producing** method returns null/sentinel only when the contract says it should.
+   - Look specifically for code paths in the producer that return a non-null/non-sentinel value in a situation the contract describes as "verified" — this silently breaks the caller's persistence gate or display logic.
+   - **Severity**: **HIGH** when the mismatch causes state to be persisted incorrectly or a user-visible action to be skipped silently (e.g., consent verified but URL still shown, or verified but ResourceConsents not updated).
+   - **Real example (PR #424)**: `GrantAdminConsentAsync` was documented with the contract `consentUrl == null` means "directly verified — safe to persist". The `allConsented` early-return path returned `(true, consentUrl)` instead of `(true, null)`. The caller's guard `if (consentGranted && consentUrl == null)` silently skipped persisting `ResourceConsents` every time consent was already in place.
+
+   **O. Numeric threshold, interval, or count mentioned in CHANGELOG/doc — verify it matches the code**
+
+   When a `CHANGELOG.md` entry (under `[Unreleased]` or any released section) or a doc comment describes a specific numeric value — timeout seconds, poll interval, retry count, delay seconds, progress-print cadence — apply this rule:
+
+   - Extract every numeric claim from the CHANGELOG `[Unreleased]` section (and nearby released entries relevant to changed code).
+   - For each claim, `Grep` the production source files for integer literals that plausibly represent that value (e.g., `>= 30`, `maxRetries: 5`, `TimeSpan.FromSeconds(60)`).
+   - If a literal in the code differs from what the CHANGELOG/doc states, flag the mismatch. Either the code or the CHANGELOG entry must be corrected to agree.
+   - **Severity**: **MEDIUM** — the behavior differs from what was communicated to users and operators.
+   - **Real example (PR #424)**: CHANGELOG entry said "prints a friendly progress message at 30 seconds" but both `PollAdminConsentAsync` overloads checked `>= 60`. The 60s vs 30s mismatch was never caught internally — only surfaced by Copilot after the PR was opened.
+
+   **P. `catch (OperationCanceledException)` that swallows and returns instead of rethrowing — verify intent**
+
+   When a `catch (OperationCanceledException)` block in a method that receives a `CancellationToken ct` parameter returns a value (e.g., `return false;`, `return SomeEnum.NotDetected;`) instead of rethrowing (`throw;`):
+
+   - Ask: is this method called from a long-running interactive flow (setup command, consent polling loop, retry loop) where Ctrl+C should terminate the command?
+   - If yes, and there is no explicit comment documenting that swallowing is intentional (e.g., "graceful degradation — treat cancellation as timeout"), flag the catch block.
+   - Also check sibling overloads or parallel methods: if one overload rethrows and another swallows, the inconsistency itself is a finding even if one behavior is defensible.
+   - **Severity**: **MEDIUM** when the caller is a long-running user-facing flow where Ctrl+C non-responsiveness is surprising; **LOW** for fire-and-forget operations where continuing after cancellation is acceptable by design.
+   - **Fix**: add `throw;` after the log statement, or add an explicit comment explaining why the exception is intentionally absorbed (e.g., `// timeout path: treat as AssumedComplete, caller surfaces URL`).
+   - **Real example (PR #424)**: `AdminConsentHelper.PollAdminConsentAsync` (Graph overload) caught `OperationCanceledException` and returned `ConsentPollResult.NotDetected`. Pressing Ctrl+C during consent polling would not abort `a365 setup` — the command continued to completion, which is surprising and inconsistent with how the rest of the command handles cancellation.
+
+   **Q. Test-only escape hatch declared `public` in a production assembly**
+
+   When the diff adds or modifies a property, field, or method whose name contains a test-oriented suffix (`ForTests`, `ForTestsOnly`, `TestOverride`, `InTests`, `BypassForTest`) and it is declared in a non-test production assembly with `public` access:
+
+   - Verify whether the project has an `InternalsVisibleTo` entry for the test assembly (check the `.csproj` file).
+   - If `InternalsVisibleTo` is present, `public` is unnecessary — `internal` is the correct visibility. A `public` test bypass is part of the assembly's public API and can be toggled by any consumer, not just tests.
+   - **Severity**: **MEDIUM** — widens the production API surface; a runtime switch that can disable real consent verification, polling, or auth is a security surface area risk.
+   - **Fix**: Change `public` to `internal`. No test changes are needed when `InternalsVisibleTo` is already configured.
+   - **Real example (PR #424 Copilot comment)**: `AdminConsentHelper.BypassConsentChecksForTests` was declared `public static bool` in the production assembly. The project already had `<InternalsVisibleTo Include="Microsoft.Agents.A365.DevTools.Cli.Tests" />` in the `.csproj`, so `internal` was sufficient. A `public` bypass can be set by any code that references the assembly, not just the test project.
+
+   **R. User-visible `--help` text must accurately reflect current CLI behavior**
+
+   When the diff changes how a command surfaces output to the user — new admin handoff mechanisms, changed fallback paths, updated from PowerShell snippets to URLs, or vice versa — scan all `--help` description strings and command description strings in the same file and its parent command registration:
+
+   - Read every string literal passed to `Description =`, `command.Description =`, or multi-line help text string concatenations in the changed file.
+   - Compare each description against what the code actually does post-diff. If the help text mentions a specific output form (e.g., "prints copy-paste PowerShell") but the code now produces a different form (e.g., admin-consent URL plus optional PowerShell), flag it.
+   - Also check parent command descriptions registered in the same file — a parent command's help text often describes the overall flow and may not be updated when a subcommand's behavior changes.
+   - **Severity**: **MEDIUM** — operators who read `--help` before running a command will act on stale guidance and may miss the correct admin handoff path.
+   - **Fix**: Update the description string to accurately reflect both output forms. Be specific: name the URL and the PowerShell path rather than picking one to the exclusion of the other.
+   - **Real example (PR #424 Copilot comment)**: `SetupCommand.cs` help text said "any step that needs Global Administrator action prints copy-paste PowerShell that an admin can run out-of-band." After the delegated-consent handoff changed to a `/v2.0/adminconsent` URL (PowerShell only for S2S app roles), the description was stale. Fixed to: "an admin-consent URL (and, when needed, a PowerShell snippet) that an admin can run out-of-band."
+
 ### Step 3: Generate Findings
 
 For each issue found, provide:
@@ -670,6 +723,23 @@ Two separate implementations of the same operation using different execution pat
 - **Pattern to catch**: `await Task.Delay(N)` inside a method/handler that has a `ct` or `cancellationToken` parameter in scope
 - **Severity**: `medium` — Ctrl+C stalls during the delay; can compound if the delay is in a loop
 - **Fix**: `await Task.Delay(N, ct);`
+
+### 7a. Blocking Async Method With No CancellationToken Parameter (cancellation unreachable)
+A service/helper method whose body awaits a blocking operation — an HTTP send (`PostAsync`/`SendAsync`/`GetAsync`), a retry wrapper (`ExecuteWithRetryAsync`), a `Task.Delay` backoff, or a network poll loop — but **exposes no `CancellationToken` parameter at all**. Sections 5 and 7 catch the case where a token is in scope but passed as `.None`/omitted; this catches the case where there is *no token to pass*, so callers cannot thread one even though the command handler has one (`SetupContext.CancellationToken`, `context.GetCancellationToken()`). The CLI uses cooperative cancellation (`CancelOnProcessTermination`), so a path that never receives the token leaves Ctrl+C unresponsive for the full retry/timeout window.
+- **Pattern to catch**: a method added/modified in the diff that `await`s `*.PostAsync`/`*.SendAsync`/`*.GetAsync`, `ExecuteWithRetryAsync`, `Task.Delay`, or loops over a poll, **and** whose signature has no `CancellationToken` parameter.
+- **Severity**: `medium` — `high` when the operation has a long retry+timeout window (e.g. HTTP with exponential backoff over several attempts), where the apparent hang is most acute.
+- **Check**:
+  1. Add a `CancellationToken ct = default` parameter and forward it into every blocking await (`cancellationToken: ct`, `..., ct`), including the retry wrapper, the `Task.Delay`, the HTTP call, and the response read (`ReadAsStringAsync(ct)`).
+  2. Trace the call chain up to the command handler; thread the token through **every** intermediate helper (partial threading leaves a gap — the leaf still gets `default`). Confirm the handler sources it from `context.GetCancellationToken()` / `SetupContext.CancellationToken`.
+  3. Update tests: append `Arg.Any<CancellationToken>()` to the method's NSubstitute setups and `Received`/`DidNotReceive` matchers — once a real (cancelable) token flows, matchers written for the old arity silently stop matching and the stub returns `default`, which surfaces as a misleading behavioral failure rather than a compile error.
+- **Real example**: `TeamsGraphBackendConfigurator.SetBackendConfigurationAsync` / `ClearBackendConfigurationAsync` wrapped the HTTP send in `RetryHelper` but took no `CancellationToken`, so the retry + exponential backoff (up to ~6 attempts gated by the HttpClient timeout) ran with `CancellationToken.None`; Ctrl+C did nothing until the attempts were exhausted. Fixed by threading a token from `SetupContext.CancellationToken` / `context.GetCancellationToken()` through `RegisterBlueprintMessagingEndpointAsync` / `UpdateEndpointAsync` / `DeleteMessagingEndpointAsync` into the configurator and `RetryHelper`.
+
+### 7b. Unconditional `OperationCanceledException` Rethrow (library timeout misreported as cancellation)
+The mirror of the swallowed-cancellation rule (§919). A `catch (OperationCanceledException)` / `catch (TaskCanceledException)` that rethrows **unconditionally** in code that awaits `HttpClient` (or any API that surfaces its own timeout as `TaskCanceledException`) cannot distinguish a user Ctrl+C from a client/library timeout — both surface as `TaskCanceledException`, but only user cancellation sets the threaded token's `IsCancellationRequested`. An unconditional rethrow makes a genuine timeout propagate as a *silent cancellation abort* instead of being surfaced as a failure (`Failed` result, error log, non-zero exit).
+- **Pattern to catch**: `catch (OperationCanceledException)` (or `TaskCanceledException`) whose body is just `throw;`, inside a method that awaits an HTTP call or a retry wrapper, **without** a `when (ct.IsCancellationRequested)` filter.
+- **Severity**: `medium` — on a real timeout the command exits silently as if the user cancelled; the failure is never surfaced.
+- **Fix**: `catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }` — real user cancellation propagates (silent abort); a timeout falls through to the general handler and is reported. Matches the `RetryHelper` convention, which also gates on `cancellationToken.IsCancellationRequested`.
+- **Real example**: `TeamsGraphBackendConfigurator.SetBackendConfigurationAsync` / `ClearBackendConfigurationAsync` added `catch (OperationCanceledException) { throw; }` after wrapping the send in `RetryHelper`. `RetryHelper` retries an `HttpClient` timeout (token not cancelled) and rethrows it once attempts are exhausted; the unconditional catch would then have aborted setup/cleanup silently instead of returning `Failed`. Fixed by adding `when (ct.IsCancellationRequested)`.
 
 ### 8. `Process.WaitForExitAsync` With Unread Redirected Stderr
 `RedirectStandardError = true` combined with reading only stdout — if the process writes enough to stderr the pipe buffer fills and it deadlocks waiting for the reader.

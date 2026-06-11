@@ -3,7 +3,9 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -26,6 +28,24 @@ class Program
         // Check if verbose flag is present to adjust logging level
         var isVerbose = args.Contains("--verbose") || args.Contains("-v");
         var logLevel = isVerbose ? LogLevel.Debug : LogLevel.Information;
+
+        // Write a run-start separator directly to the log file before the DI logger is ready.
+        // This makes it easy to find where each invocation begins when reviewing the log.
+        if (!string.IsNullOrEmpty(logFilePath))
+        {
+            try
+            {
+                var commandLine = CommandStringHelper.FormatForDisplay("a365", args);
+                var separator =
+                    Environment.NewLine +
+                    "============================================================" + Environment.NewLine +
+                    $"Command : {commandLine}" + Environment.NewLine +
+                    $"Started : {DateTime.Now:yyyy-MM-dd HH:mm:ss}" + Environment.NewLine +
+                    "============================================================" + Environment.NewLine;
+                File.AppendAllText(logFilePath, separator);
+            }
+            catch { }
+        }
 
         // Configure Microsoft.Extensions.Logging with clean console formatter
         var loggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory(logLevel);
@@ -150,9 +170,11 @@ class Program
             var clientAppValidator = serviceProvider.GetRequiredService<IClientAppValidator>();
             var bootstrapResolver = serviceProvider.GetRequiredService<IBootstrapConfigResolver>();
 
+            var evaluationPipelineService = serviceProvider.GetRequiredService<IEvaluationPipelineService>();
+
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
-            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, graphApiService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService, graphApiService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
@@ -310,30 +332,22 @@ class Program
             var authService = provider.GetRequiredService<AuthenticationService>();
             var logger = provider.GetRequiredService<ILogger<Agent365ToolingService>>();
 
-            // Default to "prod". Override with A365_ENVIRONMENT env var or --config file.
+            // Default to "prod". Override with A365_ENVIRONMENT env var or a365.config.json.
             string environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
 
-            var args = Environment.GetCommandLineArgs();
-            var configIndex = Array.FindIndex(args, arg => arg == "--config" || arg == "-c");
-            if (configIndex >= 0 && configIndex < args.Length - 1)
+            var configFilePath = ConfigService.GetConfigFilePath();
+            if (configFilePath != null)
             {
                 try
                 {
-                    var configFilePath = args[configIndex + 1];
-                    if (!Path.IsPathRooted(configFilePath))
-                        configFilePath = Path.Combine(System.Environment.CurrentDirectory, configFilePath);
-
-                    if (File.Exists(configFilePath))
+                    var json = File.ReadAllText(configFilePath);
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("environment", out var envProp))
                     {
-                        var json = File.ReadAllText(configFilePath);
-                        using var doc = System.Text.Json.JsonDocument.Parse(json);
-                        if (doc.RootElement.TryGetProperty("environment", out var envProp))
+                        var envValue = envProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(envValue))
                         {
-                            var envValue = envProp.GetString();
-                            if (!string.IsNullOrWhiteSpace(envValue))
-                            {
-                                environment = envValue;
-                            }
+                            environment = envValue;
                         }
                     }
 
@@ -375,9 +389,22 @@ class Program
 
         // Register Azure CLI service
         services.AddSingleton<IAzureCliService, AzureCliService>();
-        
+
         // Register confirmation provider for user prompts
         services.AddSingleton<IConfirmationProvider, ConsoleConfirmationProvider>();
+
+        // Register evaluate pipeline services
+        services.AddSingleton<ISchemaDiscoveryService, SchemaDiscoveryService>();
+        services.AddSingleton<IChecklistGenerator, ChecklistGenerator>();
+        // Coding-agent launchers — registration order defines --eval-engine auto
+        // priority (GitHub Copilot first, then Claude Code). Add a new engine by
+        // adding its ICodingAgentLauncher implementation file plus one line here.
+        services.AddSingleton<ICodingAgentLauncher, GitHubCopilotLauncher>();
+        services.AddSingleton<ICodingAgentLauncher, ClaudeCodeLauncher>();
+        services.AddSingleton<IChecklistEvaluator, ChecklistEvaluator>();
+        services.AddSingleton<IEvaluationAnalyzer, EvaluationAnalyzer>();
+        services.AddSingleton<IReportGenerator, ReportGenerator>();
+        services.AddSingleton<IEvaluationPipelineService, EvaluationPipelineService>();
 
         // Register bootstrap config resolver — centralizes the three-mode config resolution
         // used by all subcommands that can run without a365.config.json.

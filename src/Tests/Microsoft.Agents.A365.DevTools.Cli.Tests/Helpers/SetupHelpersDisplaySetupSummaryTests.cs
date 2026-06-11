@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Linq;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
@@ -122,8 +123,8 @@ public class SetupHelpersDisplaySetupSummaryTests
 
         logger.AllOutput.Should().Contain("New-MgServicePrincipalAppRoleAssignment",
             because: "the S2S fallback must emit the app role assignment PowerShell command");
-        logger.AllOutput.Should().Contain("Directory.Read.All",
-            because: "Connect-MgGraph must request Directory.Read.All so Get-MgServicePrincipal works");
+        logger.AllOutput.Should().Contain("Application.Read.All",
+            because: "Connect-MgGraph must request Application.Read.All (the minimum scope) so Get-MgServicePrincipal works");
         logger.AllOutput.Should().Contain("AppRoleAssignment.ReadWrite.All",
             because: "Connect-MgGraph must request AppRoleAssignment.ReadWrite.All to assign roles");
     }
@@ -447,6 +448,151 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the pre-rename 'Permission Grants' label (without the 'Blueprint' prefix) must not reappear");
     }
 
+    // ── TenantWideConsentOutcome = Unverified ─────────────────────────────────
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdmin_TenantConsentUnverified_PermissionGrantsRowShowsUnverified()
+    {
+        // Locks in the row text contract for the Unverified outcome: the CLI opened the browser
+        // and timed out without observing the grant, so the row must NOT claim "granted".
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Unverified,
+            AdminConsentUrl = "https://login.microsoftonline.com/tenant/adminconsent?client_id=bp-id",
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        var lines = logger.AllOutput.Split('\n');
+        var grantsRow = System.Array.Find(lines, l => l.Contains("Blueprint Permission Grants"));
+        grantsRow.Should().NotBeNull(
+            because: "the 'Blueprint Permission Grants' row must be emitted on the Unverified path");
+        grantsRow!.Should().Contain("unverified",
+            because: "Unverified must not claim the grant succeeded — the consent was not directly observed");
+        grantsRow!.Should().NotContain("granted  tenant-wide",
+            because: "the Unverified row must not use the Granted row text");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdmin_TenantConsentUnverified_EmitsActionRequired()
+    {
+        // Locks in that Unverified triggers an Action Required block — the operator must be
+        // told to verify, even though setup otherwise completed successfully.
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Unverified,
+            AdminConsentUrl = "https://login.microsoftonline.com/tenant/adminconsent?client_id=bp-id",
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Action Required",
+            because: "unverified consent must prompt the operator to check — setup completing is not the same as permissions being in place");
+        logger.AllOutput.Should().Contain("query-entra inheritance",
+            because: "the operator must be told the exact command to verify the grants");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdmin_TenantConsentUnverified_SurfacesReGrantUrl()
+    {
+        // Locks in that AdminConsentUrl is printed in the Action Required block so the
+        // operator can re-grant if 'a365 query-entra inheritance' shows nothing is in place.
+        const string consentUrl = "https://login.microsoftonline.com/tenant/adminconsent?client_id=bp-id&scope=Mail.Read";
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Unverified,
+            AdminConsentUrl = consentUrl,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(consentUrl,
+            because: "the re-grant URL must be surfaced verbatim so the operator can complete consent if 'query-entra inheritance' confirms nothing was granted");
+    }
+
+    // ── blueprint-only scope (standalone `setup blueprint`) ───────────────────
+
+    [Fact]
+    public void DisplaySetupSummary_BlueprintOnly_SuppressesAgentAndEndpointRows()
+    {
+        var logger = new CapturingLogger();
+        SetupHelpers.DisplaySetupSummary(BuildBlueprintOnlyResults(consentPending: false), logger);
+
+        logger.AllOutput.Should().Contain("Blueprint",
+            because: "the blueprint row is part of what 'setup blueprint' runs");
+        logger.AllOutput.Should().NotContain("Agent identity",
+            because: "'setup blueprint' does not create an agent identity — that row must be suppressed");
+        logger.AllOutput.Should().NotContain("Agent Registration",
+            because: "'setup blueprint' does not register an agent — that row must be suppressed");
+        logger.AllOutput.Should().NotContain("Messaging endpoint",
+            because: "'setup blueprint' does not configure the messaging endpoint — that row must be suppressed");
+        logger.AllOutput.Should().NotContain("Project settings",
+            because: "'setup blueprint' does not write project settings — that row must be suppressed");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_BlueprintOnly_ConsentPending_ShowsConsentUrlInActionRequired()
+    {
+        var logger = new CapturingLogger();
+        SetupHelpers.DisplaySetupSummary(BuildBlueprintOnlyResults(consentPending: true), logger);
+
+        logger.AllOutput.Should().Contain("Action Required",
+            because: "a non-admin blueprint run leaves consent pending and must flag the hand-off");
+        logger.AllOutput.Should().Contain(BlueprintConsentUrl,
+            because: "the consent URL must be surfaced so an admin can grant tenant-wide consent");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_BlueprintOnly_EmitsPermissionsNextSteps()
+    {
+        var logger = new CapturingLogger();
+        SetupHelpers.DisplaySetupSummary(BuildBlueprintOnlyResults(consentPending: false), logger);
+
+        logger.AllOutput.Should().Contain("a365 setup permissions mcp",
+            because: "the blueprint summary must point to the remaining MCP permissions step");
+        logger.AllOutput.Should().Contain("a365 setup permissions bot",
+            because: "the blueprint summary must point to the bot/observability permissions step");
+    }
+
+    private const string BlueprintConsentUrl = "https://login.microsoftonline.com/" + TenantId + "/v2.0/adminconsent?client_id=" + BlueprintId;
+
+    private static SetupResults BuildBlueprintOnlyResults(bool consentPending) => new()
+    {
+        IsNonDwBlueprintFlow = true,
+        IsBlueprintOnlyFlow = true,
+        IsM365 = true,
+        TenantId = TenantId,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        BlueprintDisplayName = "Repro Blueprint",
+        BlueprintServicePrincipalCreated = true,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+        TenantWideConsentOutcome = consentPending ? Cli.Models.GrantOutcome.Failed : Cli.Models.GrantOutcome.Granted,
+        AdminConsentUrl = consentPending ? BlueprintConsentUrl : null,
+    };
+
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private static SetupResults BuildDelegatedPendingResults() => new()
@@ -478,6 +624,311 @@ public class SetupHelpersDisplaySetupSummaryTests
         TenantId = TenantId,
         EffectiveAuthMode = Cli.Models.AuthMode.S2s,
         AgentIdentityS2SOutcome = Cli.Models.GrantOutcome.Failed,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+    };
+
+    // ── "already granted" idempotency wording (CR-001) ────────────────────────
+
+    /// <summary>
+    /// Locks in the contract: when consent existed before this run (TenantWideConsentAlreadyExisted=true)
+    /// the Blueprint Permission Grants row must render "already granted" instead of "granted". This is
+    /// the only signal the user gets that a re-run did no work — without it idempotent re-runs are
+    /// visually indistinguishable from first-time setup.
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_TenantConsentAlreadyExisted_RendersAlreadyGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildVerifiedTenantConsentResults();
+        results.TenantWideConsentAlreadyExisted = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("already granted  tenant-wide delegated",
+            because: "the row must distinguish idempotent re-runs from a freshly-captured grant — this is the user-visible idempotency signal");
+        logger.AllOutput.Should().NotContain("PENDING",
+            because: "consent was verified before this run; the row must not regress to PENDING");
+    }
+
+    /// <summary>
+    /// Control case for the previous test: same shape but TenantWideConsentAlreadyExisted=false.
+    /// The row must render "granted" (not "already granted") so the user can tell that consent was
+    /// actually captured in this run via the browser.
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_TenantConsentNewlyGranted_RendersGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildVerifiedTenantConsentResults();
+        results.TenantWideConsentAlreadyExisted = false;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("granted  tenant-wide delegated",
+            because: "a first-time grant in this run must render plain 'granted'");
+        logger.AllOutput.Should().NotContain("already granted  tenant-wide delegated",
+            because: "the 'already granted' wording is reserved for runs that did no work — using it for first-time grants would mislead the user");
+    }
+
+    /// <summary>
+    /// S2S parity: when every S2S app role assignment was already in place
+    /// (BlueprintS2SAlreadyAssigned=true), the row must render "already granted  S2S app roles".
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_S2SAllAlreadyAssigned_RendersAlreadyGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SVerifiedResults();
+        results.BlueprintS2SAlreadyAssigned = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("already granted  S2S app roles",
+            because: "when every S2S role was already assigned the row must surface that — a future regression that drops the flag would silently report 'granted' on every idempotent re-run");
+    }
+
+    /// <summary>
+    /// CR-008: bothMode "already granted" must require the per-principal OBO grant to also have
+    /// pre-existed — not just S2S. Previously the code used <c>TenantWideConsentAlreadyExisted</c>
+    /// as a proxy, which is the wrong scope (tenant-wide vs per-principal). This test locks in the
+    /// correct contract: with S2S idempotent but OBO newly granted (AgentIdentityDelegatedAlreadyExisted=false),
+    /// the row must render "granted", NOT "already granted" — even though S2S alone was idempotent.
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_BothMode_S2SAlreadyButOboNewlyGranted_RendersGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildBothModeBothGrantedResults();
+        results.BlueprintS2SAlreadyAssigned = true;
+        results.AgentIdentityDelegatedAlreadyExisted = false;  // OBO was newly granted this run
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        // The combined label is "S2S app roles + developer-scoped delegated on agent identity".
+        // Even with S2S idempotent, OBO being new means the combined work was NOT idempotent.
+        logger.AllOutput.Should().Contain("granted  S2S app roles + developer-scoped delegated on agent identity",
+            because: "the combined bothMode row must reflect that at least one half (OBO) was newly granted");
+        logger.AllOutput.Should().NotContain("already granted  S2S app roles + developer-scoped delegated on agent identity",
+            because: "using 'already granted' when OBO was newly written would mislead the user about what this run actually did — the previous code used TenantWideConsentAlreadyExisted as a proxy, which is the wrong scope for the per-principal OBO grant");
+    }
+
+    /// <summary>
+    /// CR-008 control case: bothMode where BOTH halves (S2S and OBO) pre-existed must render
+    /// "already granted". Locks in that AgentIdentityDelegatedAlreadyExisted is the gate the
+    /// renderer reads — replacing the prior wrong TenantWideConsentAlreadyExisted proxy.
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_BothMode_S2SAndOboBothAlreadyExisted_RendersAlreadyGranted()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildBothModeBothGrantedResults();
+        results.BlueprintS2SAlreadyAssigned = true;
+        results.AgentIdentityDelegatedAlreadyExisted = true;  // OBO was already in place
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("already granted  S2S app roles + developer-scoped delegated on agent identity",
+            because: "when both halves of the bothMode label were already in place the row must say so — this is the load-bearing signal that distinguishes idempotent re-runs from real work");
+    }
+
+    /// <summary>
+    /// Builds a non-DW bothMode results object that reaches the combined S2S+OBO Blueprint
+    /// Permission Grants label. The label only renders when:
+    ///   - isS2SFlow = true (agentIdS2sGranted)
+    ///   - s2sOk = true (in non-DW, this maps to agentIdS2sGranted)
+    ///   - isBothMode = true
+    ///   - agentIdDelegatedGranted = true (drives the "+ developer-scoped delegated" suffix)
+    /// </summary>
+    private static SetupResults BuildBothModeBothGrantedResults() => new()
+    {
+        IsNonDwBlueprintFlow = true,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        AgentIdentityCreated = true,
+        AgentIdentityId = AgentSpId,
+        TenantId = TenantId,
+        EffectiveAuthMode = Cli.Models.AuthMode.Both,
+        AgentIdentityS2SOutcome = Cli.Models.GrantOutcome.Granted,
+        AgentIdentityDelegatedOutcome = Cli.Models.GrantOutcome.Granted,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+    };
+
+    // ── Messaging endpoint: deferred (NotConfigured) is not a failure ──────────
+
+    /// <summary>
+    /// A clean non-DW M365 run whose only outstanding item is an unset messaging endpoint.
+    /// The endpoint is a post-deploy artifact, so its absence must be rendered as deferred —
+    /// not a failure that raises Action Required or downgrades the overall status line.
+    /// </summary>
+    private static SetupResults BuildDeferredEndpointResults() => new()
+    {
+        IsNonDwBlueprintFlow = true,
+        BlueprintCreated = true,
+        BlueprintServicePrincipalCreated = true,
+        BlueprintId = BlueprintId,
+        AgentIdentityCreated = true,
+        AgentIdentityId = AgentSpId,
+        AgentInstanceRegistered = true,
+        TenantId = TenantId,
+        EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+        TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+        MessagingEndpointResult = Cli.Models.EndpointRegistrationResult.Failed,
+        MessagingEndpointFailureReason = MessagingEndpointFailureReasons.NotConfigured,
+    };
+
+    [Fact]
+    public void DisplaySetupSummary_M365EndpointNotConfigured_RowReadsDeferredNotWarning()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildDeferredEndpointResults(), logger);
+
+        var lines = logger.AllOutput.Split('\n');
+        var endpointRow = System.Array.Find(lines, l => l.Contains("Messaging endpoint"));
+        endpointRow.Should().NotBeNull(because: "the messaging endpoint row must still be emitted");
+        endpointRow!.Should().Contain("deferred",
+            because: "an unset endpoint is an expected pre-deploy state, not a failure");
+        endpointRow!.Should().NotContain("register manually",
+            because: "the old 'not configured — register manually' wording made a clean run look broken");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_M365EndpointNotConfigured_DoesNotRaiseActionRequired()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildDeferredEndpointResults(), logger);
+
+        logger.AllOutput.Should().NotContain("Action Required",
+            because: "a deferred endpoint is the only outstanding item and must not be framed as a required action");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_M365EndpointNotConfigured_StatusLineReportsSuccess()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildDeferredEndpointResults(), logger);
+
+        logger.AllOutput.Should().Contain("Setup completed successfully",
+            because: "everything the CLI can automate succeeded; a manual-only post-deploy step must not downgrade the status");
+        logger.AllOutput.Should().NotContain("action required before proceeding",
+            because: "the deferred endpoint must not trigger the action-required status line");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_M365EndpointNotConfigured_NextStepsHasSingleDeduplicatedPointer()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildDeferredEndpointResults(), logger);
+
+        logger.AllOutput.Should().Contain("Next steps:",
+            because: "the deferred endpoint guidance belongs under Next steps, where the row points");
+        logger.AllOutput.Should().Contain("--messaging-endpoint",
+            because: "the pointer must show how to supply the URL once the agent is deployed");
+        logger.AllOutput.Should().Contain(ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl,
+            because: "the manual Teams Developer Portal fallback must be offered exactly once");
+
+        var portalMentions = logger.AllOutput.Split('\n')
+            .Count(l => l.Contains(ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl));
+        portalMentions.Should().Be(1,
+            because: "the endpoint guidance must be stated once, not duplicated across the row, Action Required, and Next steps");
+    }
+
+    /// <summary>
+    /// Builds a results object that drives the delegated-consent "granted" path of the Blueprint
+    /// Permission Grants row. Used to exercise the TenantWideConsentAlreadyExisted toggle.
+    /// </summary>
+    private static SetupResults BuildVerifiedTenantConsentResults() => new()
+    {
+        // DW flow (non-NonDw) so the row renders via the delegated/tenant-wide branch rather than
+        // the S2S branch — that's the path TenantWideConsentAlreadyExisted gates.
+        IsNonDwBlueprintFlow = false,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        TenantId = TenantId,
+        TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+    };
+
+    /// <summary>
+    /// Row 3 ("Inheritable Permissions") must follow the same idempotency wording as rows 4 and 5:
+    /// "already configured" on a re-run where every entry was in place, "configured" on a first-
+    /// time write. Without this the summary made idempotent re-runs look identical to first-time
+    /// setup even when the per-resource log lines above said "already configured".
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_InheritablePermissionsAlreadyExisted_RendersAlreadyConfigured()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildInheritablePermissionsResults();
+        results.InheritablePermissionsAlreadyExisted = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Inheritable Permissions",
+            because: "the row label must be present in the summary");
+        logger.AllOutput.Should().Contain("already configured",
+            because: "when every inheritable-permissions entry was in place before this run the row must say 'already configured' so re-runs visibly indicate no work was needed");
+    }
+
+    /// <summary>
+    /// Control case for the previous test: when at least one inheritable-permissions entry was
+    /// newly written (InheritablePermissionsAlreadyExisted=false), the row must say "configured"
+    /// — not "already configured".
+    /// </summary>
+    [Fact]
+    public void DisplaySetupSummary_InheritablePermissionsNewlyConfigured_RendersConfigured()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildInheritablePermissionsResults();
+        results.InheritablePermissionsAlreadyExisted = false;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("configured",
+            because: "a first-time inheritable-permissions write must render plain 'configured'");
+        logger.AllOutput.Should().NotContain("already configured",
+            because: "'already configured' is reserved for runs that did no work — using it for first-time writes would mislead the user");
+    }
+
+    /// <summary>
+    /// Builds a results object that reaches the row-3 "Inheritable Permissions" rendering at
+    /// the BatchPermissionsPhase2Completed branch. Used to exercise the
+    /// <see cref="SetupResults.InheritablePermissionsAlreadyExisted"/> toggle.
+    /// </summary>
+    private static SetupResults BuildInheritablePermissionsResults() => new()
+    {
+        IsNonDwBlueprintFlow = false,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        TenantId = TenantId,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+        TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+    };
+
+    /// <summary>
+    /// Builds a DW-flow results object on the S2S-granted branch of the Blueprint Permission
+    /// Grants row. DW because the summary's <c>s2sOk</c> gate maps to <c>blueprintS2sGranted</c>
+    /// for DW and <c>agentIdS2sGranted</c> for non-DW — using DW keeps the flag's name aligned
+    /// with the field that drives <c>s2sOk</c> for this test, isolating the
+    /// <see cref="SetupResults.BlueprintS2SAlreadyAssigned"/> toggle from non-DW row mechanics.
+    /// </summary>
+    private static SetupResults BuildS2SVerifiedResults() => new()
+    {
+        // DW flow — no EffectiveAuthMode, no agent identity row.
+        IsNonDwBlueprintFlow = false,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        TenantId = TenantId,
+        BlueprintS2SOutcome = Cli.Models.GrantOutcome.Granted,
         BatchPermissionsPhase1Completed = true,
         BatchPermissionsPhase2Completed = true,
     };

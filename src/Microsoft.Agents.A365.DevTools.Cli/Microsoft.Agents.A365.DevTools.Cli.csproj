@@ -71,5 +71,6 @@
     <EmbeddedResource Include="Templates\agenticUserTemplateManifest.json" />
     <EmbeddedResource Include="Templates\color.png" />
     <EmbeddedResource Include="Templates\outline.png" />
+    <EmbeddedResource Include="Templates\SchemaEvalReport.html" />
   </ItemGroup>
 </Project>

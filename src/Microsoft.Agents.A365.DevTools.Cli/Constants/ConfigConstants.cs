@@ -81,10 +81,13 @@ public static class ConfigConstants
     public const string ObservabilityApiIdentifierUri = "api://9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
-    /// Messaging Bot API scope used for admin consent URL construction.
-    /// Note: the orchestrator grants "Authorization.ReadWrite" + "user_impersonation" via OAuth2
-    /// permission grants; this scope name is what the /adminconsent endpoint accepts for the
-    /// same resource and maps to the same effective consent.
+    /// Single source of truth for the Messaging Bot API delegated scope.
+    /// The resource SP (appId 5a807f24-c9de-44ee-a3a7-329e88a00ffc) exposes exactly
+    /// one delegated scope, "AgentData.ReadWrite". Both the per-resource and combined
+    /// /v2.0/adminconsent URL builders and the spec list consumed by
+    /// BatchPermissionsOrchestrator must reference this constant — a mismatch causes
+    /// the strict /v2.0/adminconsent endpoint to reject the entire URL with
+    /// AADSTS650053 (issue #429).
     /// </summary>
     public const string MessagingBotApiAdminConsentScope = "AgentData.ReadWrite";
 

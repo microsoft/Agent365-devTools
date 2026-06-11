@@ -196,10 +196,10 @@ public class CleanupCommand
 
         var m365Option = new Option<bool>(
             new[] { "--m365" },
-            description: "Only meaningful with --endpoint-only. When set, clears the messaging endpoint from " +
-                        "Teams Graph via MCP Platform. Default is false (opt-in). Ignored (with a warning) " +
-                        "for full blueprint cleanup, since deleting the blueprint application cascades to " +
-                        "the backend configuration on the server side.");
+            description: "Treat this agent as an M365 agent. Optional — --endpoint-only already clears the " +
+                        "messaging endpoint via Teams Graph automatically. Ignored (with a warning) for full " +
+                        "blueprint cleanup, since deleting the blueprint application removes the messaging " +
+                        "endpoint on the server side.");
 
         var dryRunOption = new Option<bool>("--dry-run", "Show what would be deleted without making any changes");
 
@@ -224,6 +224,10 @@ public class CleanupCommand
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var endpointOnly = context.ParseResult.GetValueForOption(endpointOnlyOption);
             var isM365 = context.ParseResult.GetValueForOption(m365Option);
+            // Endpoint clearing goes through Teams Graph (the M365 path), so infer --m365 for
+            // --endpoint-only — users shouldn't have to pass it (mirrors 'setup blueprint').
+            if (endpointOnly)
+                isM365 = true;
             var yes = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
@@ -276,16 +280,10 @@ public class CleanupCommand
                     agentBlueprintService.CustomClientAppId = config.ClientAppId;
                 }
 
-                // If endpoint-only mode, only delete the messaging endpoint — gated on --m365.
+                // Endpoint-only: clear just the messaging endpoint (--m365 is inferred above).
                 if (endpointOnly)
                 {
-                    if (!isM365)
-                    {
-                        SetupSubcommands.BlueprintSubcommand.LogNonM365EndpointGuidance(logger, "clear");
-                        return;
-                    }
-
-                    await ExecuteEndpointOnlyCleanupAsync(logger, config, backendConfigurator, correlationId: correlationId);
+                    await ExecuteEndpointOnlyCleanupAsync(logger, config, backendConfigurator, correlationId: correlationId, ct: ct);
                     return;
                 }
 
@@ -294,9 +292,9 @@ public class CleanupCommand
                 if (isM365)
                 {
                     logger.LogWarning(
-                        "--m365 has no effect on full blueprint cleanup. The Teams Graph backend " +
-                        "configuration is removed automatically when the blueprint is deleted. " +
-                        "Use 'a365 cleanup blueprint --endpoint-only --m365' to clear the endpoint " +
+                        "--m365 has no effect on full blueprint cleanup. The messaging endpoint is " +
+                        "removed automatically when the blueprint is deleted. " +
+                        "Use 'a365 cleanup blueprint --endpoint-only' to clear the endpoint " +
                         "while preserving the blueprint.");
                 }
 
@@ -529,10 +527,10 @@ public class CleanupCommand
 
                 logger.LogInformation("Agent blueprint application deleted successfully");
 
-                // Teams Graph backend configuration is a child resource of the blueprint and is
-                // removed on the server side when the blueprint is deleted. No separate clear
-                // call is needed here. Use `a365 cleanup blueprint --endpoint-only --m365` to
-                // clear just the backend configuration while preserving the blueprint.
+                // The messaging endpoint is a child resource of the blueprint and is removed on the
+                // server side when the blueprint is deleted. No separate clear call is needed here.
+                // Use `a365 cleanup blueprint --endpoint-only` to clear just the messaging endpoint
+                // while preserving the blueprint.
                 PrintOrphanSummary(logger, failedResources);
 
                 // Clear configuration after successful blueprint deletion
@@ -1215,28 +1213,30 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger,
         Agent365Config config,
         ITeamsGraphBackendConfigurator backendConfigurator,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(config.AgentBlueprintId))
         {
-            logger.LogError("Agent Blueprint ID not found. Agent Blueprint ID is required for clearing the backend configuration.");
+            logger.LogError("Agent Blueprint ID not found. It is required to remove the messaging endpoint.");
             return false;
         }
 
-        logger.LogInformation("Clearing backend configuration...");
-
-        var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
-            config.AgentBlueprintId,
-            correlationId: correlationId);
-
-        if (cleared)
+        logger.LogInformation("Removing messaging endpoint...");
+        using (logger.Indent())
         {
-            logger.LogInformation("Backend configuration cleared successfully");
-            return true;
-        }
+            // The service logs the "Removed successfully." / "already removed" outcome under this header.
+            var cleared = await backendConfigurator.ClearBackendConfigurationAsync(
+                config.AgentBlueprintId,
+                correlationId: correlationId,
+                ct: ct);
 
-        logger.LogWarning("Failed to clear backend configuration");
-        return false;
+            if (cleared)
+                return true;
+
+            logger.LogWarning("Failed to remove the messaging endpoint.");
+            return false;
+        }
     }
 
     /// <summary>
@@ -1247,7 +1247,8 @@ public class CleanupCommand
         ILogger<CleanupCommand> logger,
         Agent365Config config,
         ITeamsGraphBackendConfigurator backendConfigurator,
-        string? correlationId = null)
+        string? correlationId = null,
+        CancellationToken ct = default)
     {
         logger.LogInformation("Starting endpoint-only cleanup...");
 
@@ -1272,7 +1273,7 @@ public class CleanupCommand
             return;
         }
 
-        var deleted = await DeleteMessagingEndpointAsync(logger, config, backendConfigurator, correlationId: correlationId);
+        var deleted = await DeleteMessagingEndpointAsync(logger, config, backendConfigurator, correlationId: correlationId, ct: ct);
 
         if (!deleted)
         {

@@ -14,5 +14,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants
         public const string RetryExhausted = "RETRY_EXHAUSTED";
         public const string SetupValidationFailed = "SETUP_VALIDATION_FAILED";
         public const string ClientAppValidationFailed = "CLIENT_APP_VALIDATION_FAILED";
+        public const string EvaluationFailed = "EVALUATION_FAILED";
+        public const string SchemaDiscoveryFailed = "SCHEMA_DISCOVERY_FAILED";
     }
 }

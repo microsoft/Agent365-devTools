@@ -17,6 +17,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services
         /// <param name="agentBlueprintId">The Agent Blueprint ID (GUID).</param>
         /// <param name="messagingEndpoint">The HTTPS callback URL.</param>
         /// <param name="correlationId">Optional correlation ID for request tracing.</param>
+        /// <param name="ct">Cancellation token. Honored across the auth call, HTTP send, and retry backoff so Ctrl+C aborts promptly.</param>
         /// <returns>
         /// A tuple of (Result, FailureReason).
         /// Result is:
@@ -31,7 +32,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services
         Task<(Models.EndpointRegistrationResult Result, string? FailureReason)> SetBackendConfigurationAsync(
             string agentBlueprintId,
             string messagingEndpoint,
-            string? correlationId = null);
+            string? correlationId = null,
+            CancellationToken ct = default);
 
         /// <summary>
         /// Clears the backend configuration (messaging endpoint) for an Agent Blueprint via the
@@ -40,9 +42,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services
         /// </summary>
         /// <param name="agentBlueprintId">The Agent Blueprint ID (GUID).</param>
         /// <param name="correlationId">Optional correlation ID for request tracing.</param>
+        /// <param name="ct">Cancellation token. Honored across the auth call, HTTP send, and retry backoff so Ctrl+C aborts promptly.</param>
         /// <returns><c>true</c> on success or idempotent no-op; <c>false</c> on failure.</returns>
         Task<bool> ClearBackendConfigurationAsync(
             string agentBlueprintId,
-            string? correlationId = null);
+            string? correlationId = null,
+            CancellationToken ct = default);
     }
 }

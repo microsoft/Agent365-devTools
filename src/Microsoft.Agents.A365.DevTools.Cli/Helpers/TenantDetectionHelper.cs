@@ -26,8 +26,9 @@ public static class TenantDetectionHelper
             return config.TenantId;
         }
 
-        // When config is not available or tenant ID is missing, try to detect from Azure CLI
-        logger.LogInformation("No tenant ID in config. Attempting to detect from Azure CLI context...");
+        // When config is not available or tenant ID is missing, try to detect from Azure CLI.
+        // The "Detected tenant ID..." line below conveys the outcome; this is just a debug breadcrumb.
+        logger.LogDebug("No tenant ID in config. Attempting to detect from Azure CLI context...");
 
         try
         {

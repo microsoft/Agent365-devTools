@@ -182,12 +182,12 @@ All callers (GraphApiService, ArmApiService, TeamsGraphBackendConfigurator, ...)
         v
 AuthenticationService.GetAccessTokenAsync(resource, tenantId)
         |
-        +-- Check persistent disk cache (%LocalAppData%\Agent365\token-cache.json)
-        |       Cache key: {resource}[:tenant:{tenantId}][:user:{userId}]
+        +-- MsalBrowserCredential.GetTokenAsync(scopes) - silent-first against the
+        |       OS-protected MSAL cache (msal-token-cache: DPAPI/Keychain/owner-only file)
         |
-        +-- Cache hit + not expiring: return token immediately (0 prompts)
+        +-- Valid token in MSAL cache: returned silently (0 prompts)
         |
-        +-- Cache miss / expired: MsalBrowserCredential.GetTokenAsync(scopes)
+        +-- Miss / expired: interactive acquisition
                 |
                 +-- Windows:  WAM broker (no browser, SSO, CAP-compliant)
                 +-- macOS:    System browser → device code fallback if restricted
@@ -205,7 +205,7 @@ AuthenticationService.GetAccessTokenAsync(resource, tenantId)
 
 To prevent WAM from selecting a stale or wrong account, a login hint (UPN) is resolved before interactive auth:
 1. `AzCliHelper.ResolveLoginHintAsync()` — reads `az account show` if az CLI is present
-2. `AuthenticationService.ResolveLoginHintFromCacheAsync()` — decodes `upn`/`preferred_username` from a cached JWT if az CLI is unavailable
+2. `AuthenticationService.ResolveLoginHintFromCacheAsync()` — reads the first account's UPN from the OS-protected MSAL persistent cache if az CLI is unavailable
 
 ### IAuthenticationService Interface
 
@@ -215,7 +215,7 @@ Only `GetAccessTokenAsync` and `ResolveLoginHintFromCacheAsync` are on the inter
 
 ### Token Caching
 
-- **Persistent cache** (`AuthenticationService`): survives across CLI invocations, keyed by resource + tenant + user
+- **MSAL persistent cache** (`MsalBrowserCredential`): the sole token store - survives across CLI invocations, OS-protected at rest (DPAPI on Windows, Keychain on macOS, owner-only file on Linux). `AuthenticationService` no longer writes a separate cache.
 - **Process-level login hint cache** (`AzCliHelper`): caches the result of `az account show` for the process lifetime — invalidated after `az login` operations
 
 ### Platform Notes
@@ -366,7 +366,7 @@ The CLI configures two independent layers of permissions for agent blueprints:
 1. **Inheritable Permissions** — Blueprint-level permissions that agent instances inherit automatically. Set via the Agent Blueprint API (`/beta/applications/microsoft.graph.agentIdentityBlueprint/{id}/inheritablePermissions`). Requires Agent ID Administrator or Global Administrator role. Read back after writing to verify presence.
 2. **OAuth2 Grants** — Tenant-wide delegated consent via Graph API `/oauth2PermissionGrants` with `consentType=AllPrincipals`. Requires Global Administrator only.
 
-> **Technical limitation:** `oauth2PermissionGrant` creation via the API requires `DelegatedPermissionGrant.ReadWrite.All`, which is an admin-only scope. Additionally, Global Administrator bypasses entitlement validation and can grant any scope; non-admin users receive HTTP 403 (insufficient privileges) or HTTP 400 (entitlement not found) for all resource SPs. There is no self-service path for non-admin users.
+> **Technical limitation:** `oauth2PermissionGrant` creation via the API requires Global Administrator. GA bypasses entitlement validation and can grant any scope; non-admin users receive HTTP 403 (insufficient privileges) or HTTP 400 (entitlement not found) for all resource SPs. There is no self-service path for non-admin users.
 
 > **Note:** `requiredResourceAccess` (portal "API permissions") is **not** configured for Agent Blueprints — it is not supported by the Agent ID API.
 

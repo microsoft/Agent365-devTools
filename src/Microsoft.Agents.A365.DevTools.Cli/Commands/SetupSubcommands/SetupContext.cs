@@ -64,14 +64,41 @@ internal sealed class SetupContext
     /// </summary>
     public string? AuthMode { get; }
 
+    /// <summary>
+    /// Messaging endpoint URL from <c>--messaging-endpoint</c>; takes precedence over the init-only
+    /// config value. Null when the flag was omitted (the step then uses config or an interactive prompt).
+    /// </summary>
+    public string? MessagingEndpointOverride { get; }
+
     /// <summary>Null or "obo" — principal-scoped delegated grants; no admin consent needed.</summary>
     public bool IsOboMode => AuthMode is null || string.Equals(AuthMode, "obo", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>"s2s" — app role assignments on agent identity; Global Admin needed or PowerShell fallback.</summary>
+    /// <summary>"s2s" — app role assignments on agent identity; Global Admin needed or az rest fallback.</summary>
     public bool IsS2sMode => string.Equals(AuthMode, "s2s", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>"both" — delegated grants (OBO) and app role assignments (S2S).</summary>
     public bool IsBothMode => string.Equals(AuthMode, "both", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// When true, skip the interactive in-line provisioning of missing resource service
+    /// principals (issue #429). The default flow prompts per-resource and shells out to
+    /// <c>az ad sp create --id &lt;appId&gt;</c> via the operator's existing az login
+    /// (Global Administrator's directory role carries the required
+    /// <c>Application.ReadWrite.All</c>). With this set, missing SPs are excluded from the
+    /// unified admin-consent URL and recorded on <see cref="SetupResults.MissingSpActions"/>
+    /// so the setup summary's Action Required block renders them as numbered items, each
+    /// with the <c>az ad sp create</c> command and a per-SP <c>/v2.0/adminconsent</c> URL.
+    /// Set explicitly via <c>--skip-sp-provisioning</c> or implicitly when stdin is
+    /// redirected (CI / coding-agent / pipe scenarios).
+    /// </summary>
+    public bool SkipSpProvisioning { get; }
+
+    /// <summary>
+    /// True when the run is non-interactive: prompts are skipped and the step defers instead of
+    /// blocking on console input. Set from <c>Console.IsInputRedirected</c> in production; tests pass
+    /// <c>true</c> so prompt-bearing steps stay deterministic (the VS test host doesn't redirect stdin).
+    /// </summary>
+    public bool NonInteractive { get; }
 
     /// <summary>
     /// Overrides the az CLI login hint resolver used during blueprint creation.
@@ -124,7 +151,10 @@ internal sealed class SetupContext
         bool isM365 = false,
         string? authMode = null,
         Func<Task<string?>>? loginHintResolver = null,
-        IConfirmationProvider? confirmationProvider = null)
+        IConfirmationProvider? confirmationProvider = null,
+        bool skipSpProvisioning = false,
+        string? messagingEndpointOverride = null,
+        bool nonInteractive = false)
     {
         Config = config;
         Results = results;
@@ -139,6 +169,9 @@ internal sealed class SetupContext
         IsBootstrap = isBootstrap;
         IsM365 = isM365;
         AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.ToLowerInvariant();
+        MessagingEndpointOverride = string.IsNullOrWhiteSpace(messagingEndpointOverride) ? null : messagingEndpointOverride.Trim();
+        SkipSpProvisioning = skipSpProvisioning;
+        NonInteractive = nonInteractive;
         ConfigService = configService;
         Executor = executor;
         BackendConfigurator = backendConfigurator;

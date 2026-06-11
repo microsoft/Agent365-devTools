@@ -20,8 +20,7 @@ The Microsoft Agent 365 DevTools CLI can be used through the developer journey o
 - **develop-mcp**: Manage MCP servers in Dataverse environments
 - **setup**: Set up your Agent 365 environment by creating Azure resources, configuring permissions, and registering your agent blueprint for deployment
 - **publish**: Update agent manifest IDs and package the manifest for upload to the Microsoft 365 Admin Center. After uploading, hire your agent through Teams to complete onboarding.
-- **deploy**: Deploy Agent 365 application binaries to the configured Azure App Service and update Agent 365 Tool permissions
-- **config**: Configure Azure subscription, resource settings, and deployment options for Agent 365 CLI commands
+- **logs**: Export redacted CLI diagnostic logs safe to share with Microsoft support
 - **query-entra**: Query Microsoft Entra ID for agent information (scopes, permissions, consent status)
 - **cleanup**: Clean up ALL resources (blueprint, instance, other Azure resources)
 

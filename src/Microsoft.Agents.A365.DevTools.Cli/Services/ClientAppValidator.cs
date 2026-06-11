@@ -434,12 +434,6 @@ public sealed class ClientAppValidator : IClientAppValidator
     }
 
     /// <summary>
-    /// Ensures the app registration has "Allow public client flows" enabled.
-    /// This setting is required for MSAL device code authentication fallback on non-Windows
-    /// platforms where interactive browser auth is unavailable (macOS headless, Linux, WSL).
-    /// Automatically enables it if disabled (self-healing).
-    /// </summary>
-    /// <summary>
     /// Ensures the client app's <c>optionalClaims.accessToken</c> includes the <c>wids</c> claim.
     /// Preserves any existing optional claims and appends <c>wids</c> when absent. Without this
     /// claim on the access token, role detection (<see cref="GraphApiService.IsCurrentUserAdminAsync"/>)
@@ -531,7 +525,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             // HasRole instead of Unknown.
             await _graphApiService.ClearTokenCacheAsync();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Error ensuring 'wids' optional claim is configured (non-fatal)");
         }
@@ -575,13 +569,19 @@ public sealed class ClientAppValidator : IClientAppValidator
             _logger.LogInformation("Admin authority NOT confirmed: wids PATCH did not land. Treating caller as non-admin.");
             return ProbeResult.NotAdmin;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "wids PATCH probe failed with an unexpected error — admin status is inconclusive: {Message}", ex.Message);
             return ProbeResult.Inconclusive;
         }
     }
 
+    /// <summary>
+    /// Ensures the app registration has "Allow public client flows" enabled.
+    /// This setting is required for MSAL device code authentication fallback on non-Windows
+    /// platforms where interactive browser auth is unavailable (macOS headless, Linux, WSL).
+    /// Automatically enables it if disabled (self-healing).
+    /// </summary>
     private async Task EnsurePublicClientFlowsEnabledAsync(
         string clientAppId,
         string tenantId,

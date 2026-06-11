@@ -127,4 +127,50 @@ public class CommandStringHelperTests
         // The command string is now safe - the injected code will be treated as literal text
         // because single quotes within PowerShell single-quoted strings are escaped as ''
     }
+
+    [Fact]
+    public void FormatForDisplay_IdpClientSecretSeparateValue_RedactsSecret()
+    {
+        var result = CommandStringHelper.FormatForDisplay(
+            "a365",
+            ["develop-mcp", "register-external-mcp-server", "--idp-client-secret", "super-secret"]);
+
+        result.Should().Contain("--idp-client-secret <redacted>",
+            because: "diagnostic command echoes must not expose a client secret passed as a separate CLI argument");
+        result.Should().NotContain("super-secret",
+            because: "the original secret value must not survive in diagnostic output");
+    }
+
+    [Fact]
+    public void FormatForDisplay_IdpClientSecretEqualsValue_RedactsSecret()
+    {
+        var result = CommandStringHelper.FormatForDisplay(
+            "a365",
+            ["develop-mcp", "register-external-mcp-server", "--idp-client-secret=super-secret"]);
+
+        result.Should().Contain("--idp-client-secret=<redacted>",
+            because: "diagnostic command echoes must redact inline secret option values");
+        result.Should().NotContain("super-secret",
+            because: "the original secret value must not survive in diagnostic output");
+    }
+
+    [Fact]
+    public void FormatForDisplay_SecretLifetimeMonths_IsNotRedacted()
+    {
+        var result = CommandStringHelper.FormatForDisplay(
+            "a365",
+            ["develop-mcp", "register-external-mcp-server", "--secret-lifetime-months", "3"]);
+
+        result.Should().Contain("--secret-lifetime-months 3",
+            because: "secret lifetime is a numeric policy value, not a secret-bearing option");
+    }
+
+    [Fact]
+    public void FormatForDisplay_NoArguments_ReturnsExecutableOnly()
+    {
+        var result = CommandStringHelper.FormatForDisplay("a365", []);
+
+        result.Should().Be("a365",
+            because: "the diagnostic command line should not include a trailing space when no arguments were supplied");
+    }
 }

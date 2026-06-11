@@ -29,6 +29,7 @@ internal record RawRegisterArgs(
     string? RemoteScopes,
     string? TenantId,
     string? ServiceTreeId,
+    int? SecretLifetimeMonths,
     string? PublisherName,
     string? Description,
     bool DryRun);
@@ -46,12 +47,14 @@ internal class RegisterCommandExecutor
     internal RegisterCommandExecutor(
         ILogger logger,
         IAgent365ToolingService toolingService,
-        GraphApiService? graphApiService)
+        GraphApiService? graphApiService,
+        RetryHelper? retryHelper = null)
     {
         _logger = logger;
         _toolingService = toolingService;
         _graphApiService = graphApiService;
-        _retryHelper = new RetryHelper(logger, maxRetries: 5, baseDelaySeconds: 3);
+        // Injectable so tests can supply a zero-delay RetryHelper (mirrors GraphApiService / ArmApiService).
+        _retryHelper = retryHelper ?? new RetryHelper(logger, maxRetries: 5, baseDelaySeconds: 3);
     }
 
     private sealed record ResolvedInput
@@ -71,6 +74,7 @@ internal class RegisterCommandExecutor
         public string? RemoteScopes { get; init; }
         public string? TenantId { get; init; }
         public string? ServiceTreeId { get; init; }
+        public int? SecretLifetimeMonths { get; init; }
         public string? IdpAuthUrl { get; init; }
         public string? IdpTokenUrl { get; init; }
         public string? IdpScopes { get; init; }
@@ -93,10 +97,10 @@ internal class RegisterCommandExecutor
         string? PublicClientsObjectId,
         string PublicClientsAppName);
 
-    internal async Task ExecuteAsync(RawRegisterArgs args, CancellationToken ct = default)
+    internal async Task<bool> ExecuteAsync(RawRegisterArgs args, CancellationToken ct = default)
     {
         var input = await ResolveInputsAsync(args);
-        if (input is null) return;
+        if (input is null) return false;
 
         DisplayRegistrationSummary(input);
 
@@ -106,7 +110,7 @@ internal class RegisterCommandExecutor
             _logger.LogInformation("[DRY RUN] Auth type: {AuthType}", input.AuthType);
             _logger.LogInformation("[DRY RUN] Tools to register: {ToolCount} ({Tools})", input.ToolList.Count, string.Join(", ", input.ToolList));
             _logger.LogInformation("[DRY RUN] Would call AddMcpServer API and configure redirect URIs");
-            return;
+            return true;
         }
 
         Console.Write("Proceed with registration? (y/N): ");
@@ -114,7 +118,7 @@ internal class RegisterCommandExecutor
         if (confirmation != "y" && confirmation != "yes")
         {
             Console.WriteLine("Registration cancelled.");
-            return;
+            return true;
         }
 
         Console.WriteLine();
@@ -125,17 +129,17 @@ internal class RegisterCommandExecutor
         Console.WriteLine($"Registering MCP server '{input.ServerName}'...");
 
         var tenantId = await DetectTenantIdAsync(input.TenantId);
-        if (tenantId is null) return;
+        if (tenantId is null) return false;
 
         if (_graphApiService is null)
         {
             _logger.LogError("Graph API service is not available. Cannot create Entra applications.");
-            return;
+            return false;
         }
 
         var warnings = new List<string>();
         var apps = await CreateEntraAppsAsync(input, tenantId, warnings);
-        if (apps is null) return;
+        if (apps is null) return false;
 
         ct.ThrowIfCancellationRequested();
 
@@ -151,7 +155,7 @@ internal class RegisterCommandExecutor
             _logger.LogError("Failed to register MCP server '{ServerName}': {Error}", input.ServerName, ex.Message);
             _logger.LogDebug("Exception details: {Exception}", ex.ToString());
             _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
-            return;
+            return false;
         }
 
         if (addResponse is null || !addResponse.IsSuccess)
@@ -176,7 +180,7 @@ internal class RegisterCommandExecutor
 
             _logger.LogWarning("Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
             Console.WriteLine($"Entra app registrations were NOT rolled back. Delete them manually in the Azure portal if needed.");
-            return;
+            return false;
         }
 
         _logger.LogDebug("Successfully added MCP server {ServerName}", input.ServerName);
@@ -184,6 +188,7 @@ internal class RegisterCommandExecutor
         await ConfigureEntraAppsAsync(input, apps, addResponse, tenantId, warnings, ct);
 
         DisplayResults(input, addResponse.Server?.RemoteMCPServerProxyRedirectUri, warnings);
+        return true;
     }
 
     private async Task<ResolvedInput?> ResolveInputsAsync(RawRegisterArgs args)
@@ -202,6 +207,7 @@ internal class RegisterCommandExecutor
         var remoteScopes = args.RemoteScopes;
         var userTenantId = args.TenantId;
         var serviceTreeId = args.ServiceTreeId;
+        var secretLifetimeMonths = args.SecretLifetimeMonths;
         var publisherName = args.PublisherName;
         var serverDescription = args.Description;
 
@@ -235,6 +241,7 @@ internal class RegisterCommandExecutor
                 remoteScopes ??= inputFileData.RemoteScopes;
                 userTenantId ??= inputFileData.TenantId;
                 serviceTreeId ??= inputFileData.ServiceTreeId;
+                secretLifetimeMonths ??= inputFileData.SecretLifetimeMonths;
                 publisherName ??= inputFileData.PublisherName;
                 serverDescription ??= inputFileData.Description;
 
@@ -295,6 +302,12 @@ internal class RegisterCommandExecutor
                 (parsedUri.Scheme != "https" && parsedUri.Scheme != "http"))
             {
                 _logger.LogError("Server URL '{ServerUrl}' is not a valid HTTP/HTTPS URL", serverUrl);
+                return null;
+            }
+
+            if (secretLifetimeMonths is { } lifetime && (lifetime < 1 || lifetime > 24))
+            {
+                _logger.LogError("--secret-lifetime-months must be between 1 and 24 (Graph's maximum is ~2 years). Got: {Value}", lifetime);
                 return null;
             }
 
@@ -486,6 +499,7 @@ internal class RegisterCommandExecutor
             RemoteScopes = remoteScopes,
             TenantId = userTenantId,
             ServiceTreeId = serviceTreeId,
+            SecretLifetimeMonths = secretLifetimeMonths,
             IdpAuthUrl = idpAuthUrl,
             IdpTokenUrl = idpTokenUrl,
             IdpScopes = idpScopes,
@@ -520,6 +534,11 @@ internal class RegisterCommandExecutor
         if (!input.IsNoAuth && !input.IsApiKey && !string.IsNullOrWhiteSpace(input.RemoteScopes))
         {
             DevelopMcpCommand.WriteLabel("  Remote Scopes:  "); Console.WriteLine(input.RemoteScopes);
+        }
+
+        if (input.SecretLifetimeMonths is { } lifetime)
+        {
+            DevelopMcpCommand.WriteLabel("  Secret Lifetime: "); Console.WriteLine($"{lifetime} month(s)");
         }
 
         if (input.IsExternalIdp)
@@ -565,127 +584,46 @@ internal class RegisterCommandExecutor
     private async Task<EntraAppSet?> CreateEntraAppsAsync(
         ResolvedInput input, string tenantId, List<string> warnings)
     {
-        var a365AppName = $"{input.ServerName}-A365Proxy";
-        var remoteProxyAppName = $"{input.ServerName}-RemoteProxy";
-        var publicClientsAppName = $"{input.ServerName}-PublicClients";
+        var provisioner = new EntraAppProvisioner(_logger, _graphApiService!, _retryHelper);
 
-        _logger.LogDebug("Creating Entra application for A365 Proxy...");
-        var a365App = await _graphApiService!.CreateEntraAppAsync(tenantId, a365AppName, serviceTreeId: input.ServiceTreeId);
-        if (a365App == null)
-        {
-            _logger.LogError("Failed to create Entra application '{AppName}'. Ensure you have Application.ReadWrite.All permission in the target tenant. Run with -v for details.", a365AppName);
-            return null;
-        }
-        _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", a365AppName, a365App.Value.ClientId);
-
-        var a365Secret = await _graphApiService.AddAppPasswordAsync(tenantId, a365App.Value.ObjectId);
-        if (string.IsNullOrWhiteSpace(a365Secret))
-        {
-            _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", a365AppName);
-            return null;
-        }
-
-        if (string.IsNullOrWhiteSpace(a365App.Value.ClientId))
-        {
-            _logger.LogError("A365 Proxy Entra application was created but returned an empty client ID");
-            return null;
-        }
-
-        _logger.LogDebug("Created A365 Proxy app: {ClientId}", a365App.Value.ClientId);
+        var a365ProxyApp = await provisioner.CreateProxyAppAsync(
+            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy",
+            serviceTreeId: input.ServiceTreeId, lifetimeMonths: input.SecretLifetimeMonths);
+        if (a365ProxyApp == null) return null;
 
         string? remoteProxyClientId = null;
         string? remoteProxySecret = null;
         string? remoteProxyObjectId = null;
+        var remoteProxyAppName = $"{input.ServerName}-RemoteProxy";
 
         if (input.IsEntra)
         {
-            _logger.LogDebug("Creating Entra application for Remote Proxy...");
-            var remoteApp = await _graphApiService.CreateEntraAppAsync(tenantId, remoteProxyAppName, serviceTreeId: input.ServiceTreeId);
-            if (remoteApp == null)
-            {
-                _logger.LogError("Failed to create Entra application '{AppName}'. Ensure you have Application.ReadWrite.All permission in the target tenant. Run with -v for details.", remoteProxyAppName);
-                return null;
-            }
-            _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", remoteProxyAppName, remoteApp.Value.ClientId);
+            var remoteProxyApp = await provisioner.CreateProxyAppAsync(
+                input.ServerName, tenantId, suffix: "RemoteProxy", roleDisplay: "Remote Proxy",
+                serviceTreeId: input.ServiceTreeId, lifetimeMonths: input.SecretLifetimeMonths);
+            if (remoteProxyApp == null) return null;
 
-            remoteProxySecret = await _graphApiService.AddAppPasswordAsync(tenantId, remoteApp.Value.ObjectId);
-            if (string.IsNullOrWhiteSpace(remoteProxySecret))
-            {
-                _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", remoteProxyAppName);
-                return null;
-            }
-
-            if (string.IsNullOrWhiteSpace(remoteApp.Value.ClientId))
-            {
-                _logger.LogError("Remote Proxy Entra application was created but returned an empty client ID");
-                return null;
-            }
-
-            _logger.LogDebug("Created Remote Proxy app: {ClientId}", remoteApp.Value.ClientId);
-            remoteProxyClientId = remoteApp.Value.ClientId;
-            remoteProxyObjectId = remoteApp.Value.ObjectId;
+            remoteProxyClientId = remoteProxyApp.ClientId;
+            remoteProxySecret = remoteProxyApp.Secret;
+            remoteProxyObjectId = remoteProxyApp.ObjectId;
+            remoteProxyAppName = remoteProxyApp.AppName;
         }
 
-        string? publicClientsClientId = null;
-        string? publicClientsObjectId = null;
-
-        _logger.LogDebug("Creating Entra application for Public Clients...");
-        var copilotApp = await _graphApiService.CreateEntraAppAsync(tenantId, publicClientsAppName, serviceTreeId: input.ServiceTreeId);
-        if (copilotApp != null)
-        {
-            publicClientsClientId = copilotApp.Value.ClientId;
-            publicClientsObjectId = copilotApp.Value.ObjectId;
-            _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", publicClientsAppName, publicClientsClientId);
-
-            var copilotRedirectUri = $"ms-appx-web://Microsoft.AAD.BrokerPlugin/{publicClientsClientId}";
-            var publicClientUris = new[] { copilotRedirectUri, "http://localhost:8080/callback", "https://vscode.dev/redirect", "http://localhost" };
-            try
-            {
-                var success = await _retryHelper.ExecuteWithRetryAsync(
-                    async ct => await _graphApiService.UpdateAppPublicClientRedirectUrisAsync(tenantId, publicClientsObjectId, publicClientUris, ct),
-                    result => !result);
-                if (!success)
-                {
-                    var msg = $"Failed to set redirect URIs on Public Clients app '{publicClientsAppName}' after retries.";
-                    _logger.LogError(msg);
-                    warnings.Add(msg);
-                }
-                else
-                {
-                    _logger.LogDebug(
-                        "Set {RedirectUriCount} redirect URIs on '{AppName}' ({ObjectId}): {RedirectUris}",
-                        publicClientUris.Length,
-                        publicClientsAppName,
-                        publicClientsObjectId,
-                        string.Join(", ", publicClientUris));
-                }
-            }
-            catch (Exception ex)
-            {
-                var msg = $"Failed to set redirect URIs on Public Clients app: {ex.Message}";
-                _logger.LogError(msg);
-                warnings.Add(msg);
-            }
-        }
-        else
-        {
-            var msg = "Failed to create Public Clients Entra app. Continuing without it.";
-            _logger.LogWarning(msg);
-            warnings.Add(msg);
-        }
+        var publicClients = await provisioner.CreatePublicClientsAppAsync(
+            input.ServerName, tenantId, serviceTreeId: input.ServiceTreeId, warnings);
 
         return new EntraAppSet(
-            A365AppClientId: a365App.Value.ClientId,
-            A365AppSecret: a365Secret,
-            A365AppObjectId: a365App.Value.ObjectId,
-            A365AppName: a365AppName,
+            A365AppClientId: a365ProxyApp.ClientId,
+            A365AppSecret: a365ProxyApp.Secret,
+            A365AppObjectId: a365ProxyApp.ObjectId,
+            A365AppName: a365ProxyApp.AppName,
             RemoteProxyClientId: remoteProxyClientId,
             RemoteProxySecret: remoteProxySecret,
             RemoteProxyObjectId: remoteProxyObjectId,
             RemoteProxyAppName: remoteProxyAppName,
-            PublicClientsClientId: publicClientsClientId,
-            PublicClientsObjectId: publicClientsObjectId,
-            PublicClientsAppName: publicClientsAppName);
+            PublicClientsClientId: publicClients.ClientId,
+            PublicClientsObjectId: publicClients.ObjectId,
+            PublicClientsAppName: publicClients.AppName);
     }
 
     private static AddMcpServerRequest BuildRequest(ResolvedInput input, EntraAppSet apps)
@@ -767,20 +705,25 @@ internal class RegisterCommandExecutor
         }
         else
         {
-            var msg = "A365 Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
+            var msg = "A365 Proxy redirect URI was not returned by the server. Setting consent redirect URIs only.";
             _logger.LogWarning(msg);
             concurrentWarnings.Add(msg);
+            tasks.Add(SetConsentOnlyRedirectUrisAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, concurrentWarnings, ct));
         }
 
         if (input.IsEntra && !string.IsNullOrWhiteSpace(remoteRedirectUri) && apps.RemoteProxyObjectId != null)
         {
             tasks.Add(UpdateRemoteProxyRedirectUrisAsync(tenantId, apps, remoteRedirectUri, concurrentWarnings, ct));
         }
-        else if (input.IsEntra && string.IsNullOrWhiteSpace(remoteRedirectUri))
+        else if (input.IsEntra && apps.RemoteProxyObjectId != null)
         {
-            var msg = "Remote MCP Proxy redirect URI was not returned by the server. Redirect URI configuration skipped.";
-            _logger.LogWarning(msg);
-            concurrentWarnings.Add(msg);
+            if (string.IsNullOrWhiteSpace(remoteRedirectUri))
+            {
+                var msg = "Remote MCP Proxy redirect URI was not returned by the server. Setting consent redirect URIs only.";
+                _logger.LogWarning(msg);
+                concurrentWarnings.Add(msg);
+            }
+            tasks.Add(SetConsentOnlyRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId, apps.RemoteProxyAppName, concurrentWarnings, ct));
         }
         else if (input.IsEntra && apps.RemoteProxyObjectId == null)
         {
@@ -847,7 +790,10 @@ internal class RegisterCommandExecutor
         {
             var a365TcUri = DevelopMcpCommand.AddTcPrefix(a365RedirectUri);
             var a365NonTcUri = DevelopMcpCommand.RemoveTcPrefix(a365RedirectUri);
-            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
+            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri)
+                .Concat(EntraAppProvisioner.GetConsentRedirectUris())
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, retryCt),
@@ -881,7 +827,10 @@ internal class RegisterCommandExecutor
         {
             var remoteTcUri = DevelopMcpCommand.AddTcPrefix(remoteRedirectUri);
             var remoteNonTcUri = DevelopMcpCommand.RemoveTcPrefix(remoteRedirectUri);
-            var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri);
+            var remoteUris = DevelopMcpCommand.BuildRedirectUriList(remoteRedirectUri, remoteTcUri, remoteNonTcUri)
+                .Concat(EntraAppProvisioner.GetConsentRedirectUris())
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
             _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.RemoteProxyAppName, apps.RemoteProxyObjectId);
             var success = await _retryHelper.ExecuteWithRetryAsync(
                 async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.RemoteProxyObjectId!, remoteUris, retryCt),
@@ -901,6 +850,37 @@ internal class RegisterCommandExecutor
         catch (Exception ex)
         {
             var msg = $"Failed to update redirect URIs on Remote Proxy app: {ex.Message}";
+            _logger.LogError(msg);
+            concurrentWarnings.Add(msg);
+        }
+    }
+
+    private async Task SetConsentOnlyRedirectUrisAsync(
+        string tenantId, string objectId, string appName,
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var consentUris = EntraAppProvisioner.GetConsentRedirectUris();
+            var success = await _retryHelper.ExecuteWithRetryAsync(
+                async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, objectId, consentUris, retryCt),
+                result => !result,
+                cancellationToken: ct);
+            if (!success)
+            {
+                var msg = $"Failed to set web redirect URIs on '{appName}' after retries.";
+                _logger.LogError(msg);
+                concurrentWarnings.Add(msg);
+            }
+            else
+            {
+                _logger.LogDebug("Set {Count} web redirect URIs on '{AppName}'", consentUris.Length, appName);
+            }
+        }
+        catch (Exception ex)
+        {
+            var msg = $"Failed to set web redirect URIs on '{appName}': {ex.Message}";
             _logger.LogError(msg);
             concurrentWarnings.Add(msg);
         }

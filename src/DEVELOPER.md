@@ -89,10 +89,6 @@ The CLI provides a `develop-mcp` command for managing Model Context Protocol (MC
 - `a365 develop-mcp publish -e <environment-id> -s <server-name>` — Publish an MCP server to a Dataverse environment
 - `a365 develop-mcp unpublish -e <environment-id> -s <server-name>` — Unpublish an MCP server from a Dataverse environment
 
-**Server Approval (Global Operations):**
-- `a365 develop-mcp approve -s <server-name>` — Approve an MCP server
-- `a365 develop-mcp block -s <server-name>` — Block an MCP server
-
 **Key Features:**
 - **Azure CLI Style Parameters:** Uses named options (`--environment-id/-e`, `--server-name/-s`) for better UX
 - **Dry Run Support:** All commands support `--dry-run` for safe testing
@@ -125,9 +121,6 @@ a365 develop-mcp publish \
 
 # Quick unpublish with short aliases
 a365 develop-mcp unpublish -e "Default-12345678-1234-1234-1234-123456789abc" -s "msdyn_MyMcpServer"
-
-# Approve a server (global operation)
-a365 develop-mcp approve --server-name "msdyn_MyMcpServer"
 
 # Test commands safely with dry-run
 a365 develop-mcp publish -e "myenv" -s "myserver" --dry-run

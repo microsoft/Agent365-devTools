@@ -101,9 +101,10 @@ public class TenantDetectionHelperTests
         // Act
         await TenantDetectionHelper.DetectTenantIdAsync(null, _mockLogger, mockExecutor);
 
-        // Assert
+        // Assert: the "Attempting to detect..." line is a Debug breadcrumb — the user-facing
+        // outcome is the "Detected tenant ID..." line, so this must not appear on the normal console.
         _mockLogger.Received(1).Log(
-            LogLevel.Information,
+            LogLevel.Debug,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("No tenant ID in config")),
             Arg.Any<Exception>(),

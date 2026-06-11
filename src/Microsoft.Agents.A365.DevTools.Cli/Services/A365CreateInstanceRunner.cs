@@ -196,7 +196,8 @@ public sealed class A365CreateInstanceRunner
                     _logger.LogError("Agent identity ID is null or empty after creation");
                     return false;
                 }
-                
+
+                _logger.LogInformation("Agent identity created (ID: {Id})", agenticAppId);
                 _logger.LogInformation("Waiting for Agent Identity to propagate in Azure AD...");
                 _logger.LogInformation("This may take 30-60 seconds for full propagation.");
                 

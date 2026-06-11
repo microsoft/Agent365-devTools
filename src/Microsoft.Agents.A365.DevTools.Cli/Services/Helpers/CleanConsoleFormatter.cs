@@ -19,6 +19,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 /// </summary>
 public sealed class CleanConsoleFormatter : ConsoleFormatter
 {
+    // Tracks whether the previously written line was blank, so consecutive blank lines collapse
+    // to a single one. CLI output is sequential and single-threaded, so a simple field is sufficient.
+    private bool _lastWasBlank;
+
     public CleanConsoleFormatter()
         : base("clean")
     {
@@ -51,12 +55,19 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
         // ordering issues where the blank line appears after the next message instead of before it.
         if (message.Length == 0)
         {
+            // Collapse consecutive blank lines to one. Multiple LogInformation("") calls across
+            // step boundaries otherwise stack up. The file logger drops blanks entirely, so this
+            // is console-only.
+            if (_lastWasBlank)
+                return;
+            _lastWasBlank = true;
             if (isConsole)
                 Console.WriteLine();
             else
                 textWriter.WriteLine();
             return;
         }
+        _lastWasBlank = false;
 
         // Compute indent prefix from LogIndentScope instances in the scope stack.
         // ForEachScope is synchronous — safe to capture a local variable in the callback.

@@ -39,38 +39,58 @@ public interface IAuthenticationService
 ///
 /// AUTHENTICATION STRATEGY:
 /// - Uses interactive authentication by default (no device code flow)
-/// - Implements comprehensive token caching to minimize authentication prompts
 /// - Typical user experience: 1-2 authentication prompts for entire CLI workflow
 ///
 /// TOKEN CACHING:
-/// - Cache Location: %LocalApplicationData%\Agent365\token-cache.json (Windows)
-/// - Cache Key Format: {resourceUrl}:tenant:{tenantId}[:user:{userId}]
-/// - Cache Expiration: Validated with 5-minute buffer before token expiry
-/// - Reuse Across Commands: All CLI commands share the same token cache
+/// - This service does NOT persist access tokens to disk itself.
+/// - All token persistence is delegated to the OS-protected MSAL persistent cache
+///   (<c>msal-token-cache</c>) managed by <see cref="MsalBrowserCredential"/>:
+///   DPAPI-encrypted on Windows, Keychain on macOS, and a 0600 owner-only file on Linux.
+/// - Cache Location: %LocalApplicationData%\Microsoft.Agents.A365.DevTools.Cli\msal-token-cache
+/// - Silent re-acquisition (no prompt) is performed by MSAL using the cached refresh token.
 ///
 /// AUTHENTICATION FLOW:
-/// 1. Check cache for valid token (tenant-specific)
-/// 2. If cache miss or expired: Prompt for interactive authentication
-/// 3. Cache new token for future CLI command invocations
-/// 4. Token persists across CLI sessions until expiration
+/// 1. Call into MSAL, which acquires silently from its persistent cache when possible.
+/// 2. If silent acquisition is not possible: prompt for interactive authentication.
+/// 3. MSAL persists the resulting refresh token in its OS-protected cache.
 ///
 /// MULTI-COMMAND WORKFLOW:
-/// - First command (e.g., 'setup all'): 1-2 authentication prompts
-/// - Subsequent commands: 0 prompts (uses cached tokens)
-/// - Token refresh: Automatic when within 5 minutes of expiration
+/// - First command (e.g., 'setup all'): 1-2 authentication prompts.
+/// - Subsequent commands: 0 prompts (MSAL acquires silently from its persistent cache).
 /// </summary>
 public class AuthenticationService : IAuthenticationService
 {
     private readonly ILogger<AuthenticationService> _logger;
-    private readonly string _tokenCachePath;
+    // Stored so cache-clearing helpers can compute the MSAL cache path (and the legacy
+    // auth-token.json path for migration cleanup) without a cross-class dependency on
+    // MsalBrowserCredential's private static field.
+    private readonly string _cacheDir;
+
+    /// <summary>
+    /// Legacy plaintext access-token cache file name. The CLI no longer writes this file —
+    /// access tokens are now persisted only by the OS-protected MSAL cache. The name is
+    /// retained solely so cache-clearing paths can best-effort delete any file left behind
+    /// by an older CLI version (migration cleanup).
+    /// </summary>
+    private const string LegacyTokenCacheFileName = "auth-token.json";
+
+    // Deduplicates the "Authentication context" audit line so it only logs when the
+    // resolved user or tenant changes between token acquisitions.
+    private readonly object _authContextLogLock = new();
+    private string? _lastLoggedUser;
+    private string? _lastLoggedTenant;
 
     public AuthenticationService(ILogger<AuthenticationService> logger)
     {
         _logger = logger;
         var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var cacheDir = Path.Combine(appDataPath, AuthenticationConstants.ApplicationName);
-        Directory.CreateDirectory(cacheDir);
-        _tokenCachePath = Path.Combine(cacheDir, AuthenticationConstants.TokenCacheFileName);
+        _cacheDir = Path.Combine(appDataPath, AuthenticationConstants.ApplicationName);
+        Directory.CreateDirectory(_cacheDir);
+
+        // One-time migration cleanup: delete any plaintext auth-token.json written by an older CLI
+        // version. Runs once per process. TEMPORARY — this call and DeleteLegacyTokenCache can be
+        // removed a couple of releases after this ships, once upgraded installs have all run once.
+        DeleteLegacyTokenCache();
     }
 
     /// <summary>
@@ -80,24 +100,7 @@ public class AuthenticationService : IAuthenticationService
     /// to be re-issued. Silent re-acquisition on the next call (via WAM on Windows or refresh-token
     /// flow elsewhere) typically completes without re-prompting the user.
     /// </summary>
-    public Task ClearTokenCacheAsync()
-    {
-        try
-        {
-            if (File.Exists(_tokenCachePath))
-            {
-                File.Delete(_tokenCachePath);
-                _logger.LogDebug("Token cache cleared at {Path}", _tokenCachePath);
-            }
-        }
-        catch (Exception ex)
-        {
-            // Non-fatal: a stale cache only means the user re-acquires sooner than expected,
-            // not that anything breaks. Surface at debug so the operator can see why if needed.
-            _logger.LogDebug(ex, "Failed to clear token cache at {Path}: {Message}", _tokenCachePath, ex.Message);
-        }
-        return Task.CompletedTask;
-    }
+    public Task ClearTokenCacheAsync() => ClearMsalCacheAsync();
 
     /// <summary>
     /// Gets an access token for Agent 365, using cached token if valid or prompting for authentication
@@ -117,92 +120,49 @@ public class AuthenticationService : IAuthenticationService
         string? userId = null,
         CancellationToken ct = default)
     {
-        // Build cache key based on resource, tenant, and user identity.
-        // Including userId ensures that cached tokens are not shared across different users
-        // (e.g., a developer's cached token is not reused when an admin runs cleanup).
-        // Azure AD returns tokens with all consented scopes regardless of which scopes are requested,
-        // so we don't include scopes in the cache key to avoid duplicate cache entries for the same token.
-        // The scopes parameter is still passed to Azure AD for incremental consent and validation.
-        string cacheKey = string.IsNullOrWhiteSpace(tenantId)
-            ? resourceUrl
-            : $"{resourceUrl}:tenant:{tenantId}";
-        if (!string.IsNullOrWhiteSpace(userId))
-            cacheKey = $"{cacheKey}:user:{userId}";
-        _logger.LogDebug("ATG cache key: {CacheKey}", cacheKey);
+        // Access tokens are no longer cached to disk by this service. Token persistence and
+        // silent re-acquisition are delegated entirely to the OS-protected MSAL persistent cache
+        // (managed by MsalBrowserCredential). When forceRefresh is requested, the underlying
+        // credential is configured to bypass MSAL's silent cache and acquire a fresh token.
+        _logger.LogDebug("Authentication required for Agent 365 Tools");
+        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, forceRefresh: forceRefresh, ct: ct);
 
-        // Try to load cached token for this cache key
-        if (!forceRefresh && File.Exists(_tokenCachePath))
+        // Self-heal: validate the tid claim in the returned JWT against the requested tenant.
+        // WAM may silently select a cached work account from a different tenant when multiple
+        // Windows accounts are present (issue #430). On mismatch, clear the MSAL persistent cache
+        // (and any legacy plaintext cache) to reset WAM's account selection, then retry once.
+        // Only compare tid when the requested tenantId is a GUID — JWT tid claims are always
+        // GUIDs, so comparison against a domain-form tenantId (e.g. contoso.onmicrosoft.com)
+        // would always appear as a mismatch, causing unnecessary cache clears and retry loops.
+        if (!string.IsNullOrWhiteSpace(tenantId) && Guid.TryParse(tenantId, out _))
         {
-            try
+            var returnedTid = JwtHelper.TryDecodeClaim(token.AccessToken, "tid");
+            if (!string.IsNullOrWhiteSpace(returnedTid) &&
+                !string.Equals(returnedTid, tenantId, StringComparison.OrdinalIgnoreCase))
             {
-                var cachedToken = await LoadCachedTokenAsync(cacheKey);
-                if (cachedToken != null && !IsTokenExpired(cachedToken))
+                _logger.LogWarning(
+                    "Authentication returned token for tenant {ReturnedTenant} but {RequestedTenant} is required. " +
+                    "Clearing cached credentials and retrying...",
+                    returnedTid, tenantId);
+                await ClearMsalCacheAsync();
+                // Retry once with the same parameters — MSAL disk cache is now empty so WAM
+                // gets a clean slate and will either pick the correct account or prompt.
+                token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, forceRefresh: forceRefresh, ct: ct);
+                var retryTid = JwtHelper.TryDecodeClaim(token.AccessToken, "tid");
+                if (!string.IsNullOrWhiteSpace(retryTid) &&
+                    !string.Equals(retryTid, tenantId, StringComparison.OrdinalIgnoreCase))
                 {
-                    // If tenant ID is specified, validate that cached token is for the correct tenant
-                    if (!string.IsNullOrWhiteSpace(tenantId))
-                    {
-                        if (string.IsNullOrWhiteSpace(cachedToken.TenantId))
-                        {
-                            _logger.LogWarning("Cached token does not have tenant information. Re-authenticating with tenant {TenantId}...", tenantId);
-                            // Fall through to re-authenticate
-                        }
-                        else if (!string.Equals(cachedToken.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
-                        {
-                            _logger.LogWarning("Cached token is for tenant {CachedTenant} but requested tenant is {RequestedTenant}. Re-authenticating...",
-                                cachedToken.TenantId, tenantId);
-                            // Fall through to re-authenticate
-                        }
-                        else
-                        {
-                            // Validate UPN: cached token must be for the same user identity as the cache key.
-                            if (!string.IsNullOrWhiteSpace(userId))
-                            {
-                                var tokenUpn = TryExtractUpnFromJwt(cachedToken.AccessToken);
-                                if (!string.IsNullOrWhiteSpace(tokenUpn) &&
-                                    !string.Equals(tokenUpn, userId, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    _logger.LogDebug(
-                                        "Cached token is for user {TokenUser} but requested user is {RequestedUser}. Re-authenticating...",
-                                        tokenUpn, userId);
-                                    // Fall through to re-authenticate
-                                }
-                                else
-                                {
-                                    _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
-                                        resourceUrl, tenantId);
-                                    return cachedToken.AccessToken;
-                                }
-                            }
-                            else
-                            {
-                                _logger.LogDebug("Using cached authentication token for {ResourceUrl} (tenant: {TenantId})",
-                                    resourceUrl, tenantId);
-                                return cachedToken.AccessToken;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogDebug("Using cached authentication token for {ResourceUrl}", resourceUrl);
-                        return cachedToken.AccessToken;
-                    }
+                    throw new AzureAuthenticationException(
+                        $"The account selected does not match the configured tenant ({tenantId}). " +
+                        $"Ensure 'az login' targets the correct tenant, or select the correct account when prompted.");
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to load cached token, will re-authenticate");
             }
         }
 
-        // Authenticate interactively with specific tenant and scopes
-        _logger.LogDebug("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, ct: ct);
-
-        // Validate the token identity before caching: if a userId was requested,
-        // ensure the returned token is actually for that user. WAM may return a
-        // guest/cross-app token for an account it considers "equivalent" (same Microsoft
-        // account in a different tenant). Caching the wrong token would cause silent
-        // failures on the next run.
+        // Validate the token identity: if a userId was requested, ensure the returned token is
+        // actually for that user. WAM may return a guest/cross-app token for an account it
+        // considers "equivalent" (same Microsoft account in a different tenant). We log the
+        // mismatch for diagnostics but still return the token — it may be valid for this call.
         if (!string.IsNullOrWhiteSpace(userId))
         {
             var returnedUpn = TryExtractUpnFromJwt(token.AccessToken);
@@ -210,17 +170,12 @@ public class AuthenticationService : IAuthenticationService
                 !string.Equals(returnedUpn, userId, StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogDebug(
-                    "Authentication returned token for {ReturnedUser} but {RequestedUser} was requested. Not caching.",
+                    "Authentication returned token for {ReturnedUser} but {RequestedUser} was requested.",
                     returnedUpn, userId);
-                // Return the token as-is — it may still be valid for this call.
-                // Do not write it to cache under the userId key.
-                return token.AccessToken;
             }
         }
 
-        // Cache the token with the appropriate cache key
-        await CacheTokenAsync(cacheKey, token);
-
+        LogAuthenticationContext(token.AccessToken, token.TenantId, userId, resourceUrl);
         return token.AccessToken;
     }
 
@@ -239,6 +194,7 @@ public class AuthenticationService : IAuthenticationService
         IEnumerable<string>? explicitScopes = null,
         bool useInteractiveBrowser = false,
         string? loginHint = null,
+        bool forceRefresh = false,
         CancellationToken ct = default)
     {
         // Declare variables outside try block so they're available in catch for logging
@@ -318,7 +274,7 @@ public class AuthenticationService : IAuthenticationService
                 // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
                 _logger.LogDebug("Using interactive authentication (browser/WAM)...");
 
-                credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId, loginHint: loginHint);
+                credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId, loginHint: loginHint, forceRefresh: forceRefresh);
             }
             else
             {
@@ -348,7 +304,13 @@ public class AuthenticationService : IAuthenticationService
             {
                 AccessToken = tokenResult.Token,
                 ExpiresOn = tokenResult.ExpiresOn.UtcDateTime,
-                TenantId = effectiveTenantId
+                // Store the decoded JWT tid only when the requested tenantId is also a GUID.
+                // If callers pass a domain name (e.g. contoso.onmicrosoft.com), storing the
+                // GUID tid would cause the next cache-read comparison to always fail, forcing
+                // re-authentication on every run.
+                TenantId = Guid.TryParse(effectiveTenantId, out _)
+                    ? JwtHelper.TryDecodeClaim(tokenResult.Token, "tid") ?? effectiveTenantId
+                    : effectiveTenantId
             };
         }
         catch (MsalAuthenticationFailedException ex) when (ex.Message.Contains("code_expired") || ex.InnerException?.Message.Contains("code_expired") == true)
@@ -374,6 +336,13 @@ public class AuthenticationService : IAuthenticationService
             
             throw new AzureAuthenticationException($"Authentication failed: {ex.Message}");
         }
+        catch (OperationCanceledException)
+        {
+            // Honor cancellation — never wrap into AzureAuthenticationException. Otherwise
+            // Ctrl+C is silently converted to an auth failure and callers either return null
+            // or fall through to interactive prompts.
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError("Unexpected authentication error: {Message}", ex.Message);
@@ -386,50 +355,6 @@ public class AuthenticationService : IAuthenticationService
             
             throw new AzureAuthenticationException($"Unexpected authentication error: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Loads cached token for a specific resourceUrl from disk
-    /// </summary>
-    private async Task<TokenInfo?> LoadCachedTokenAsync(string resourceUrl)
-    {
-        if (!File.Exists(_tokenCachePath))
-            return null;
-
-        var json = await File.ReadAllTextAsync(_tokenCachePath);
-        var cache = JsonSerializer.Deserialize<TokenCache>(json) ?? new TokenCache();
-        cache.Tokens.TryGetValue(resourceUrl, out var token);
-        return token;
-    }
-
-    /// <summary>
-    /// Caches token for a specific resourceUrl to disk
-    /// </summary>
-    private async Task CacheTokenAsync(string resourceUrl, TokenInfo token)
-    {
-        TokenCache cache;
-        if (File.Exists(_tokenCachePath))
-        {
-            var json = await File.ReadAllTextAsync(_tokenCachePath);
-            cache = JsonSerializer.Deserialize<TokenCache>(json) ?? new TokenCache();
-        }
-        else
-        {
-            cache = new TokenCache();
-        }
-
-        cache.Tokens[resourceUrl] = token;
-        var updatedJson = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(_tokenCachePath, updatedJson);
-        _logger.LogDebug("Authentication token cached for {ResourceUrl} at: {Path}", resourceUrl, _tokenCachePath);
-    }
-
-    /// <summary>
-    /// Checks if token is expired (with buffer to prevent using tokens that expire during a request)
-    /// </summary>
-    private bool IsTokenExpired(TokenInfo token)
-    {
-        return token.ExpiresOn <= DateTime.UtcNow.AddMinutes(AuthenticationConstants.TokenExpirationBufferMinutes);
     }
 
     /// <summary>
@@ -614,8 +539,11 @@ public class AuthenticationService : IAuthenticationService
     /// Creates a browser credential for interactive authentication.
     /// Protected virtual to allow substitution in tests.
     /// </summary>
-    protected virtual TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null)
-        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, loginHint: loginHint);
+    /// <param name="forceRefresh">When true, the credential bypasses MSAL's silent cache and
+    /// acquires a fresh access token (used to honor the public forceRefresh contract now that
+    /// the plaintext app-level cache has been removed).</param>
+    protected virtual TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null, bool forceRefresh = false)
+        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, loginHint: loginHint, forceRefresh: forceRefresh);
 
     /// <summary>
     /// Creates a DeviceCodeCredential configured for interactive device code authentication.
@@ -650,79 +578,129 @@ public class AuthenticationService : IAuthenticationService
     }
 
     /// <summary>
-    /// Resolves the login hint (UPN) from the persistent token cache by decoding a cached JWT.
-    /// Used to pre-select the correct account for WAM/MSAL when az CLI is not available.
-    /// Returns null if no cached token exists or the UPN claim cannot be read.
+    /// Resolves the login hint (UPN) from the OS-protected MSAL persistent cache by reading the
+    /// first cached account's username. Used to pre-select the correct account for WAM/MSAL when
+    /// the Azure CLI is not available. Returns null if no account is cached or the lookup fails.
     /// </summary>
-    public async Task<string?> ResolveLoginHintFromCacheAsync()
+    public Task<string?> ResolveLoginHintFromCacheAsync()
+        => MsalBrowserCredential.TryGetCachedAccountUsernameAsync(
+            AuthenticationConstants.PowershellClientId, _logger);
+
+    private static string? TryExtractUpnFromJwt(string? jwt)
     {
-        if (!File.Exists(_tokenCachePath))
-            return null;
+        // Try the UPN claim variants in order of specificity.
+        // Delegates to JwtHelper.TryDecodeClaim for the shared Base64Url decode.
+        return JwtHelper.TryDecodeClaim(jwt, "upn")
+            ?? JwtHelper.TryDecodeClaim(jwt, "preferred_username")
+            ?? JwtHelper.TryDecodeClaim(jwt, "unique_name");
+    }
+
+    /// <summary>
+    /// Deletes the OS-protected MSAL persistent cache so the next acquisition starts from a clean
+    /// account list. Non-fatal; errors are logged at Debug level. (Legacy plaintext-cache cleanup
+    /// runs once at construction and is not repeated here.)
+    /// </summary>
+    private Task ClearMsalCacheAsync()
+    {
+        // MSAL persistent cache (WAM/browser) — the active token store.
+        var msalCachePath = Path.Combine(_cacheDir, AuthenticationConstants.MsalCacheFileName);
         try
         {
-            var json = await File.ReadAllTextAsync(_tokenCachePath);
-            var cache = JsonSerializer.Deserialize<TokenCache>(json);
-            if (cache?.Tokens == null) return null;
-            foreach (var entry in cache.Tokens.Values)
+            if (File.Exists(msalCachePath))
             {
-                var upn = TryExtractUpnFromJwt(entry.AccessToken);
-                if (!string.IsNullOrWhiteSpace(upn))
-                    return upn;
+                File.Delete(msalCachePath);
+                _logger.LogDebug("Cleared MSAL token cache at {Path}", msalCachePath);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to resolve login hint from token cache");
+            // Non-fatal: a stale cache only means the user re-acquires sooner than expected,
+            // not that anything breaks. Surface at Debug so the operator can see why if needed.
+            _logger.LogDebug(ex, "Failed to clear MSAL token cache at {Path}: {Message}", msalCachePath, ex.Message);
         }
-        return null;
+
+
+        return Task.CompletedTask;
     }
 
-    private static string? TryExtractUpnFromJwt(string? jwt)
+    private void LogAuthenticationContext(
+        string accessToken,
+        string? fallbackTenantId,
+        string? fallbackUserId,
+        string resourceUrl)
     {
-        if (string.IsNullOrWhiteSpace(jwt)) return null;
-        try
+        var user = TryExtractUpnFromJwt(accessToken) ?? fallbackUserId ?? "(unknown)";
+        var tenant = JwtHelper.TryDecodeClaim(accessToken, "tid") ?? fallbackTenantId ?? "(unknown)";
+
+        if (TryClaimContextChange(user, tenant))
         {
-            var parts = jwt.Split('.');
-            if (parts.Length < 2) return null;
-            var payload = parts[1];
-            // JWT uses Base64Url encoding: replace URL-safe chars before standard Base64 decode.
-            payload = payload.Replace('-', '+').Replace('_', '/');
-            // Restore Base64 padding stripped by JWT encoding.
-            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-            var bytes = Convert.FromBase64String(payload);
-            using var doc = JsonDocument.Parse(bytes);
-            if (doc.RootElement.TryGetProperty("upn", out var upn) && !string.IsNullOrWhiteSpace(upn.GetString()))
-                return upn.GetString();
-            if (doc.RootElement.TryGetProperty("preferred_username", out var pref) && !string.IsNullOrWhiteSpace(pref.GetString()))
-                return pref.GetString();
-            if (doc.RootElement.TryGetProperty("unique_name", out var uniqueName) && !string.IsNullOrWhiteSpace(uniqueName.GetString()))
-                return uniqueName.GetString();
+            _logger.LogInformation(
+                "Authentication context: API calls will use user {User} in tenant {TenantId}",
+                user,
+                tenant);
         }
-        catch { } // Static helper — no logger access. Caller logs via ResolveLoginHintFromCacheAsync.
-        return null;
+
+        _logger.LogDebug(
+            "Resolved access token for {ResourceUrl} using user {User} in tenant {TenantId}",
+            resourceUrl,
+            user,
+            tenant);
     }
 
     /// <summary>
-    /// Clears cached authentication token(s)
+    /// Records the current authentication user/tenant and returns whether it changed
+    /// since the last logged context. Thread-safe.
     /// </summary>
-    public void ClearCache()
+    private bool TryClaimContextChange(string user, string tenant)
     {
-        if (File.Exists(_tokenCachePath))
+        lock (_authContextLogLock)
         {
-            File.Delete(_tokenCachePath);
-            _logger.LogDebug("Authentication cache cleared");
+            var changed = !string.Equals(_lastLoggedUser, user, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(_lastLoggedTenant, tenant, StringComparison.OrdinalIgnoreCase);
+
+            if (changed)
+            {
+                _lastLoggedUser = user;
+                _lastLoggedTenant = tenant;
+            }
+
+            return changed;
         }
     }
+
+    /// <summary>
+    /// Best-effort deletion of the legacy plaintext <c>auth-token.json</c> cache. The current CLI
+    /// never writes this file; this exists solely to clean up artifacts from older versions.
+    /// </summary>
+    private void DeleteLegacyTokenCache()
+    {
+        var legacyPath = Path.Combine(_cacheDir, LegacyTokenCacheFileName);
+        try
+        {
+            if (File.Exists(legacyPath))
+            {
+                File.Delete(legacyPath);
+                _logger.LogDebug("Removed legacy plaintext token cache at {Path}", legacyPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to remove legacy token cache at {Path}: {Message}", legacyPath, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort removal of the legacy plaintext token cache file. Retained as a public hook so
+    /// callers (and tests) can clean up artifacts from older CLI versions. The current CLI never
+    /// writes a plaintext token file — token persistence is owned by the MSAL persistent cache.
+    /// </summary>
+    public void ClearCache() => DeleteLegacyTokenCache();
+
 
     private class TokenInfo
     {
         public string AccessToken { get; set; } = string.Empty;
         public DateTime ExpiresOn { get; set; }
         public string? TenantId { get; set; }
-    }
-
-    private class TokenCache
-    {
-        public Dictionary<string, TokenInfo> Tokens { get; set; } = new();
     }
 }

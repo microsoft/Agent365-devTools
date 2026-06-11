@@ -20,9 +20,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 /// authorization check fails much later. The three real-FS branches below pin the
 /// contract: cache exists / cache missing / delete blocked.
 ///
-/// CACHE PATH NOTE: The production code builds the path from
-/// <c>Environment.SpecialFolder.LocalApplicationData</c> + <see cref="AuthenticationConstants.ApplicationName"/>
-/// + <see cref="AuthenticationConstants.TokenCacheFileName"/> in the constructor. The path is NOT
+/// CACHE PATH NOTE: <c>ClearTokenCacheAsync</c> now deletes the OS-protected MSAL persistent cache
+/// (<see cref="AuthenticationConstants.MsalCacheFileName"/>) under
+/// <c>Environment.SpecialFolder.LocalApplicationData</c> + <see cref="AuthenticationConstants.ApplicationName"/>,
+/// plus a best-effort cleanup of any legacy plaintext <c>auth-token.json</c>. The path is NOT
 /// overridable via env var on Windows (LocalApplicationData resolves through SHGetFolderPath
 /// and is anchored to the user profile, not the LOCALAPPDATA env var). These tests therefore
 /// drive the real path and back up any pre-existing developer cache file so the developer's
@@ -49,7 +50,7 @@ public class AuthenticationServiceTokenCacheTests : IDisposable
         _cachePath = Path.Combine(
             appDataPath,
             AuthenticationConstants.ApplicationName,
-            AuthenticationConstants.TokenCacheFileName);
+            AuthenticationConstants.MsalCacheFileName);
 
         // Preserve the developer's real cache (if any) so the test run is non-destructive.
         // We will restore this in Dispose.
@@ -84,7 +85,7 @@ public class AuthenticationServiceTokenCacheTests : IDisposable
         // Arrange — pre-create a fake cache file at the path the service computes.
         var cacheDir = Path.GetDirectoryName(_cachePath)!;
         Directory.CreateDirectory(cacheDir);
-        File.WriteAllText(_cachePath, "{\"Tokens\":{}}");
+        File.WriteAllText(_cachePath, "msal-cache-bytes");
         File.Exists(_cachePath).Should().BeTrue(
             because: "the test setup must successfully place a cache file before the SUT acts on it");
 
@@ -145,7 +146,7 @@ public class AuthenticationServiceTokenCacheTests : IDisposable
         // Arrange — pre-create the file and hold an exclusive handle so File.Delete fails.
         var cacheDir = Path.GetDirectoryName(_cachePath)!;
         Directory.CreateDirectory(cacheDir);
-        File.WriteAllText(_cachePath, "{\"Tokens\":{}}");
+        File.WriteAllText(_cachePath, "msal-cache-bytes");
 
         using (var locker = new FileStream(
             _cachePath,

@@ -751,7 +751,7 @@ public class AgentBlueprintService
                     {
                         _logger.LogError("Failed to delete existing oauth2PermissionGrant {Id} for client {ClientId} and resource {ResourceId}. " +
                                        "This may indicate insufficient permissions or the grant is protected. " +
-                                       "Required permissions: DelegatedPermissionGrant.ReadWrite.All or Application.ReadWrite.All", 
+                                       "The signed-in account must be an Application Administrator or Global Administrator to delete oauth2PermissionGrants.",
                                        id, clientSpObjectId, resourceSpObjectId);
                         _logger.LogError("Troubleshooting steps:");
                         _logger.LogError("  1. Verify your account has sufficient Azure AD permissions");
@@ -1126,8 +1126,13 @@ public class AgentBlueprintService
     /// <param name="appRoleNames">Names of the app roles to assign (e.g. "Agent365.Observability.OtelWrite").</param>
     /// <param name="requiredScopes">Graph scopes required to perform the operation.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>True when all assignments succeeded or already existed; false if any failed.</returns>
-    public virtual async Task<bool> GrantAppRoleAssignmentAsync(
+    /// <returns>
+    /// An <see cref="AppRoleGrantResult"/> describing the outcome. <c>AllSucceeded</c> is true when
+    /// every role was either successfully assigned or already in place; <c>AllAlreadyAssigned</c>
+    /// is true when no POST was issued because every role was already assigned before this call —
+    /// useful for distinguishing "newly granted" from "already granted" in setup summaries.
+    /// </returns>
+    public virtual async Task<AppRoleGrantResult> GrantAppRoleAssignmentAsync(
         string tenantId,
         string blueprintSpObjectId,
         string resourceAppId,
@@ -1140,7 +1145,7 @@ public class AgentBlueprintService
             .Where(n => !string.IsNullOrWhiteSpace(n))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? new List<string>();
-        if (roleNames.Count == 0) return true;
+        if (roleNames.Count == 0) return new AppRoleGrantResult(AllSucceeded: true, AllAlreadyAssigned: true);
 
         try
         {
@@ -1150,7 +1155,7 @@ public class AgentBlueprintService
             if (string.IsNullOrWhiteSpace(resourceSpId))
             {
                 _logger.LogWarning("Resource SP not found for app ID {ResourceAppId} — S2S app role assignment skipped.", resourceAppId);
-                return false;
+                return new AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false);
             }
 
             // Fetch the resource SP's app roles to map names -> IDs.
@@ -1160,7 +1165,7 @@ public class AgentBlueprintService
             if (resourceSpDoc == null)
             {
                 _logger.LogError("Failed to retrieve app roles for resource SP {ResourceSpId}.", resourceSpId);
-                return false;
+                return new AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false);
             }
 
             // Build a name -> id map from the resource SP's appRoles array.
@@ -1204,6 +1209,7 @@ public class AgentBlueprintService
             }
 
             var allOk = true;
+            var anyNewlyCreated = false;
             foreach (var roleName in roleNames)
             {
                 if (!roleIdByName.TryGetValue(roleName, out var appRoleId))
@@ -1242,22 +1248,23 @@ public class AgentBlueprintService
                 {
                     _logger.LogDebug("App role '{RoleName}' assigned to blueprint SP {BpSpId}.", roleName, blueprintSpObjectId);
                     existingRoleIds.Add(appRoleId); // prevent duplicate POST if same ID appears again
+                    anyNewlyCreated = true;
                 }
                 else
                 {
-                    _logger.LogWarning(
+                    _logger.LogDebug(
                         "Failed to assign app role '{RoleName}': HTTP {Status} {Reason} — {Body}",
                         roleName, (int)resp.StatusCode, resp.ReasonPhrase, resp.Body);
                     allOk = false;
                 }
             }
 
-            return allOk;
+            return new AppRoleGrantResult(AllSucceeded: allOk, AllAlreadyAssigned: allOk && !anyNewlyCreated);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Exception granting app role assignments on {ResourceAppId}: {Message}", resourceAppId, ex.Message);
-            return false;
+            return new AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false);
         }
     }
 

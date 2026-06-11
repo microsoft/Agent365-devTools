@@ -119,6 +119,43 @@ public class SetupResults
     public bool CustomPermissionsAlreadyExisted { get; set; }
 
     /// <summary>
+    /// True when the tenant-wide admin consent for the blueprint already existed before this run.
+    /// Set alongside <see cref="TenantWideConsentOutcome"/> = <see cref="GrantOutcome.Granted"/>
+    /// when the consent pre-check observed an existing grant covering all required scopes, so
+    /// the browser was not opened and nothing was newly granted. Drives "already granted" vs
+    /// "granted" wording in the Blueprint Permission Grants row of the setup summary.
+    /// </summary>
+    public bool TenantWideConsentAlreadyExisted { get; set; }
+
+    /// <summary>
+    /// True when every S2S app role assignment on the blueprint SP already existed before this
+    /// run. Set alongside <see cref="BlueprintS2SOutcome"/> = <see cref="GrantOutcome.Granted"/>
+    /// when the S2S pre-check observed all required (resource, role) pairs already assigned, so
+    /// the assignment loop was skipped and nothing was newly created. Drives "already granted"
+    /// vs "granted" wording in the Blueprint Permission Grants row of the setup summary.
+    /// </summary>
+    public bool BlueprintS2SAlreadyAssigned { get; set; }
+
+    /// <summary>
+    /// True when the principal-scoped delegated grant on the agent identity SP already existed
+    /// before this run. Set alongside <see cref="AgentIdentityDelegatedOutcome"/> =
+    /// <see cref="GrantOutcome.Granted"/> by the non-DW OBO/Both code path when the per-principal
+    /// oauth2PermissionGrant was found already in place. Drives "already granted" vs "granted"
+    /// wording in the Blueprint Permission Grants row for the bothMode label
+    /// "S2S app roles + developer-scoped delegated on agent identity" — without it the row could
+    /// not tell whether the OBO half of the bothMode result was idempotent.
+    /// </summary>
+    /// <remarks>
+    /// No writer exists in production code as of this commit: the non-DW OBO grant path relies on
+    /// blueprint-inheritance + tenant-wide admin consent rather than a per-principal grant call
+    /// (see <c>NonDwBlueprintSetupOrchestrator.cs</c> step 5a comment). When that design is
+    /// revisited and an explicit per-principal grant call is introduced, callers must populate
+    /// this flag so the bothMode "already granted" wording renders correctly. The renderer in
+    /// <c>SetupHelpers.DisplaySetupSummary</c> already consumes the flag.
+    /// </remarks>
+    public bool AgentIdentityDelegatedAlreadyExisted { get; set; }
+
+    /// <summary>
     /// Consent URL to present when admin consent was not granted because the user lacks an admin role.
     /// Non-null indicates a tenant administrator needs to complete consent at this URL.
     /// </summary>
@@ -148,6 +185,18 @@ public class SetupResults
     /// Used in the summary display to show the correct recovery actions.
     /// </summary>
     public bool IsNonDwBlueprintFlow { get; set; }
+
+    /// <summary>
+    /// True for standalone `setup blueprint`: scopes the summary to the rows that command runs,
+    /// suppressing the agent identity / registration / endpoint / project-settings rows.
+    /// </summary>
+    public bool IsBlueprintOnlyFlow { get; set; }
+
+    /// <summary>
+    /// Whether the agent is an M365 AI Teammate. Used only to tailor the "Next steps" wording
+    /// (naming the Bot API explicitly). Does not change which steps run.
+    /// </summary>
+    public bool IsM365 { get; set; }
 
     /// <summary>
     /// The effective --authmode value used during the non-DW grant step.
@@ -240,6 +289,36 @@ public class SetupResults
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
 
+    /// <summary>
+    /// Resources whose service principal could not be provisioned in-line during setup
+    /// (operator declined the per-SP prompt, az ad sp create failed, or
+    /// <c>--skip-sp-provisioning</c> was set). Each entry is a fully-actionable pair: the
+    /// <c>az ad sp create</c> command to provision the SP plus the per-SP unified-consent
+    /// URL that grants the blueprint consent for this resource's scopes. The setup
+    /// summary's "Action Required" block renders these as numbered items so the operator
+    /// can complete provisioning without re-running setup.
+    /// </summary>
+    public List<MissingSpAction> MissingSpActions { get; } = new();
+
     public bool HasErrors => Errors.Count > 0;
     public bool HasWarnings => Warnings.Count > 0;
 }
+
+/// <summary>
+/// One entry in <see cref="SetupResults.MissingSpActions"/>. Resource identity plus the
+/// two concrete commands/URLs the operator needs to complete provisioning manually:
+/// (1) the <c>az ad sp create</c> command that creates the SP in the tenant, and
+/// (2) the per-SP <c>/v2.0/adminconsent</c> URL that grants the blueprint consent for
+/// this resource's delegated scopes once the SP exists.
+/// </summary>
+/// <param name="ResourceName">Human-readable display name (e.g. "Work IQ Teams MCP").</param>
+/// <param name="ResourceAppId">Application ID of the resource (the GUID).</param>
+/// <param name="Scopes">Delegated scopes the blueprint needs on this resource.</param>
+/// <param name="AzCreateCommand">Copy-paste-able <c>az ad sp create --id ...</c>.</param>
+/// <param name="PerSpConsentUrl">Per-SP unified-consent URL keyed to the blueprint as client and the resource scopes as the request.</param>
+public sealed record MissingSpAction(
+    string ResourceName,
+    string ResourceAppId,
+    string[] Scopes,
+    string AzCreateCommand,
+    string PerSpConsentUrl);

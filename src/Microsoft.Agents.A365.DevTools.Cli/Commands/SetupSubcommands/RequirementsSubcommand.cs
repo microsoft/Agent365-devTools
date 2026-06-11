@@ -5,6 +5,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 using Microsoft.Extensions.Logging;
@@ -195,41 +196,43 @@ internal static class RequirementsSubcommand
         // Group checks by category for organized output (categories not printed yet)
         var checksByCategory = requirementChecks.GroupBy(c => c.Category).ToList();
 
-        var totalChecks = requirementChecks.Count;
         var passedChecks = 0;
         var warningChecks = 0;
         var failedChecks = 0;
 
         logger.LogInformation("Checking requirements...");
 
-        // Execute all checks (grouped by category but headers not shown)
-        foreach (var categoryGroup in checksByCategory)
+        // Execute all checks (grouped by category but headers not shown). Each check logs its
+        // own Pass/Warn/Fail line; indent them one level under the "Checking requirements..." header.
+        using (logger.Indent())
         {
-            foreach (var check in categoryGroup)
+            foreach (var categoryGroup in checksByCategory)
             {
-                var result = await check.CheckAsync(setupConfig, logger, ct);
-
-                if (result.Passed)
+                foreach (var check in categoryGroup)
                 {
-                    if (result.IsWarning)
+                    var result = await check.CheckAsync(setupConfig, logger, ct);
+
+                    if (result.Passed)
                     {
-                        warningChecks++;
+                        if (result.IsWarning)
+                        {
+                            warningChecks++;
+                        }
+                        else
+                        {
+                            passedChecks++;
+                        }
                     }
                     else
                     {
-                        passedChecks++;
+                        failedChecks++;
                     }
                 }
-                else
-                {
-                    failedChecks++;
-                }
             }
-        }
 
-        Console.WriteLine();
-        logger.LogInformation("Requirements: {Passed} passed, {Warning} warnings, {Failed} failed",
-            passedChecks, warningChecks, failedChecks);
+            logger.LogInformation("Requirements: {Passed} passed, {Warning} warnings, {Failed} failed",
+                passedChecks, warningChecks, failedChecks);
+        }
 
         return failedChecks == 0;
     }

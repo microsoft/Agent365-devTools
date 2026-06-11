@@ -146,6 +146,24 @@ internal static class AllSubcommand
                          "  both — delegated grants (OBO) and app permissions (S2S).\n" +
                          "Not supported with --aiteammate true.");
 
+        var skipSpProvisioningOption = new Option<bool>(
+            "--skip-sp-provisioning",
+            description: "Skip the interactive in-line provisioning of missing resource service principals.\n" +
+                        "Default: setup detects resources (e.g. V2 MCP per-server audiences) whose SP is missing\n" +
+                        "from this tenant, prompts per-resource, and shells out to 'az ad sp create --id <appId>'\n" +
+                        "using the operator's existing az login. With --skip-sp-provisioning, missing SPs are\n" +
+                        "excluded from the unified admin-consent URL and surfaced as numbered items in the Action\n" +
+                        "Required block, each with the az command and a per-SP consent URL.\n" +
+                        "Implicitly enabled when stdin is redirected (CI / coding-agent / pipe scenarios).");
+
+        var messagingEndpointOption = new Option<string?>(
+            "--messaging-endpoint",
+            description: "HTTPS URL where the deployed M365 agent receives messages (--m365 only).\n" +
+                        "When supplied, the endpoint is registered as part of setup. When omitted, an\n" +
+                        "interactive run prompts for it and a non-interactive run defers it — the endpoint\n" +
+                        "is a post-deploy artifact, so it can be set later with\n" +
+                        "'a365 setup blueprint --endpoint-only --messaging-endpoint <url>'.");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -156,6 +174,8 @@ internal static class AllSubcommand
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(authModeOption);
+        command.AddOption(skipSpProvisioningOption);
+        command.AddOption(messagingEndpointOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -163,6 +183,11 @@ internal static class AllSubcommand
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var skipInfrastructure = context.ParseResult.GetValueForOption(skipInfrastructureOption);
             var skipRequirements = context.ParseResult.GetValueForOption(skipRequirementsOption);
+            // --skip-sp-provisioning flag (off by default). Also auto-on when stdin is
+            // redirected so CI / coding-agent / pipe scenarios don't hang on the per-SP
+            // prompt loop.
+            var skipSpProvisioningFlag = context.ParseResult.GetValueForOption(skipSpProvisioningOption);
+            var skipSpProvisioning = skipSpProvisioningFlag || Console.IsInputRedirected;
             // Tri-state: null = not specified (respect config), true/false = explicit override.
             // Option<bool> means bare --aiteammate sets it to true without requiring "true" as a value.
             bool? aiTeammateFlag = context.ParseResult.CommandResult.FindResultFor(aiTeammateOption) != null
@@ -173,7 +198,28 @@ internal static class AllSubcommand
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             bool isM365 = context.ParseResult.GetValueForOption(m365Option);
             var authMode = context.ParseResult.GetValueForOption(authModeOption)?.ToLowerInvariant();
+            // Distinguish "option omitted" from "option explicitly passed empty" — the latter must be a
+            // hard error, not silently treated as omitted (which would prompt/defer instead).
+            var messagingEndpointSpecified = context.ParseResult.CommandResult.FindResultFor(messagingEndpointOption) != null;
+            var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
             var ct = context.GetCancellationToken();
+
+            if (messagingEndpointSpecified && string.IsNullOrWhiteSpace(messagingEndpointFlag))
+            {
+                logger.LogError("--messaging-endpoint requires an HTTPS URL value (e.g. https://my-agent.example.com/api/messages).");
+                context.ExitCode = 1;
+                return;
+            }
+
+            // --messaging-endpoint validation: must be a well-formed HTTPS URL when supplied.
+            if (!string.IsNullOrWhiteSpace(messagingEndpointFlag) &&
+                (!Uri.TryCreate(messagingEndpointFlag, UriKind.Absolute, out var msgEndpointUri) ||
+                 msgEndpointUri.Scheme != Uri.UriSchemeHttps))
+            {
+                logger.LogError("Invalid --messaging-endpoint value '{Value}'. Provide a valid HTTPS URL (e.g. https://my-agent.example.com/api/messages).", messagingEndpointFlag);
+                context.ExitCode = 1;
+                return;
+            }
 
             // --authmode validation
             if (authMode is not null && authMode is not ("obo" or "s2s" or "both"))
@@ -341,13 +387,22 @@ internal static class AllSubcommand
             if (nonDwConfig is null)
                 isM365 = true;
 
+            // --messaging-endpoint only takes effect for M365 agents (the messaging endpoint step is
+            // skipped otherwise). Fail fast rather than silently ignoring the supplied value.
+            if (messagingEndpointSpecified && !isM365)
+            {
+                logger.LogError("--messaging-endpoint applies only to M365 agents. Add --m365 (or use --aiteammate).");
+                context.ExitCode = 1;
+                return;
+            }
+
             if (nonDwConfig is not null)
             {
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
                     var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag);
                     return;
                 }
 
@@ -383,7 +438,10 @@ internal static class AllSubcommand
                     isBootstrap: isBootstrap,
                     isM365: isM365,
                     authMode: authMode ?? nonDwConfig.AuthMode,
-                    confirmationProvider: confirmationProvider);
+                    confirmationProvider: confirmationProvider,
+                    skipSpProvisioning: skipSpProvisioning,
+                    messagingEndpointOverride: messagingEndpointFlag,
+                    nonInteractive: Console.IsInputRedirected);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -403,7 +461,7 @@ internal static class AllSubcommand
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { /* config is optional for dry-run display */ }
-                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365);
+                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365, messagingEndpointFlag);
                 return;
             }
 
@@ -530,7 +588,10 @@ internal static class AllSubcommand
                     blueprintLookupService: blueprintLookupService,
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
-                    isM365: isM365);
+                    isM365: isM365,
+                    skipSpProvisioning: skipSpProvisioning,
+                    messagingEndpointOverride: messagingEndpointFlag,
+                    nonInteractive: Console.IsInputRedirected);
 
                 // Step 1: Infrastructure (optional, DW only)
                 await ExecuteInfrastructureStepAsync(ctx);
@@ -539,18 +600,24 @@ internal static class AllSubcommand
                 await ExecuteBlueprintStepAsync(ctx);
 
                 // Step 3: Configure all permissions in a batch.
-                var (specs, mcpResourceAppId, mcpScopes) = await BuildPermissionSpecsAsync(ctx);
+                var (specs, mcpResourceAppId, mcpScopes, mcpScopesByAudience, mcpServerNamesByAudience) = await BuildPermissionSpecsAsync(ctx);
 
                 await ExecuteBatchPermissionsStepAsync(
-                    ctx, specs,
+                    ctx, specs, mcpScopesByAudience,
                     knownBlueprintSpObjectId: ctx.Config.AgentBlueprintServicePrincipalObjectId);
 
-                SetupHelpers.ApplyConsentUrlsIfNeeded(ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes, isM365: ctx.IsM365);
+                SetupHelpers.ApplyConsentUrlsIfNeeded(
+                    ctx, mcpResourceAppId, ctx.Config.AgentApplicationScopes, mcpScopes,
+                    isM365: ctx.IsM365,
+                    mcpScopesByAudience: mcpScopesByAudience,
+                    mcpAudienceDisplayNames: mcpServerNamesByAudience);
 
                 await ctx.ConfigService.SaveStateAsync(ctx.Config, ctx.GeneratedConfigPath);
 
                 // Step 4: Messaging endpoint registration — --m365 gated; no-op for non-M365 agents.
                 await ExecuteMessagingEndpointStepAsync(ctx);
+
+                logger.LogInformation("");
 
                 // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
                 setupResults.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
@@ -578,6 +645,12 @@ internal static class AllSubcommand
                 logger.LogInformation("");
                 SetupHelpers.DisplaySetupSummary(setupResults, logger);
                 ExceptionHandler.ExitWithCleanup(1);
+            }
+            catch (OperationCanceledException)
+            {
+                // Must sit before the catch-all below so Ctrl+C bypasses DisplaySetupSummary,
+                // which would render not-yet-attempted phases as "failed".
+                throw;
             }
             catch (Exception ex)
             {
@@ -743,8 +816,15 @@ internal static class AllSubcommand
     internal static async Task ExecuteBatchPermissionsStepAsync(
         SetupContext ctx,
         List<ResourcePermissionSpec> specs,
+        IReadOnlyDictionary<string, string[]> mcpScopesByAudience,
         string? knownBlueprintSpObjectId = null)
     {
+        // Required parameter — every caller must thread the loaded ToolingManifest
+        // audience map through. Forgetting it would route V2 MCP per-server audiences
+        // to api://{appId} and trigger AADSTS500011 (see commit 7a1e317's incomplete
+        // wiring of the non-DW path).
+        var knownMcpAudienceAppIds = mcpScopesByAudience.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         try
         {
             var (blueprintPermissionsUpdated, inheritedPermissionsConfigured, consentGranted, adminConsentUrl) =
@@ -752,11 +832,18 @@ internal static class AllSubcommand
                     ctx.GraphApiService, ctx.BlueprintService, ctx.Config,
                     ctx.Config.AgentBlueprintId!, ctx.Config.TenantId!,
                     specs, ctx.Logger, ctx.Results, ctx.CancellationToken,
-                    knownBlueprintSpObjectId: knownBlueprintSpObjectId);
+                    knownBlueprintSpObjectId: knownBlueprintSpObjectId,
+                    confirmationProvider: ctx.ConfirmationProvider,
+                    commandExecutor: ctx.Executor,
+                    skipSpProvisioning: ctx.SkipSpProvisioning,
+                    knownMcpAudienceAppIds: knownMcpAudienceAppIds);
 
             ctx.Results.BatchPermissionsPhase1Completed = blueprintPermissionsUpdated;
             ctx.Results.BatchPermissionsPhase2Completed = inheritedPermissionsConfigured;
-            ctx.Results.TenantWideConsentOutcome = consentGranted ? Models.GrantOutcome.Granted : Models.GrantOutcome.Failed;
+            ctx.Results.TenantWideConsentOutcome =
+                consentGranted && adminConsentUrl == null ? Models.GrantOutcome.Granted :
+                consentGranted ? Models.GrantOutcome.Unverified :
+                Models.GrantOutcome.Failed;
             ctx.Results.AdminConsentUrl = adminConsentUrl;
         }
         catch (OperationCanceledException)
@@ -787,6 +874,10 @@ internal static class AllSubcommand
         if (!ctx.IsM365)
             return;
 
+        // Phase separator: emit only after the non-M365 early-return so the non-M365 run
+        // does not get a stray blank line followed by silent no-op output.
+        ctx.Logger.LogInformation("");
+
         // Blueprint step failed; there is no blueprint to attach an endpoint to. Record this as
         // a distinct Failed + "BlueprintMissing" so the summary doesn't mislead the user with the
         // "non-M365 agent" wording reserved for null.
@@ -796,42 +887,104 @@ internal static class AllSubcommand
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
             ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.BlueprintMissing;
             ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
-            ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only --m365'.");
+            ctx.Results.Warnings.Add("Messaging endpoint: agent blueprint ID is missing, so endpoint registration was not attempted. Resolve the blueprint creation failure first, then re-run 'a365 setup blueprint --endpoint-only'.");
             return;
         }
 
-        try
-        {
-            var (result, failureReason) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
-                ctx.Config,
-                ctx.Logger,
-                ctx.BackendConfigurator,
-                correlationId: ctx.CorrelationId);
+        // Endpoint: --messaging-endpoint flag wins, else the init-only config value. Absent = deferred.
+        var endpoint = !string.IsNullOrWhiteSpace(ctx.MessagingEndpointOverride)
+            ? ctx.MessagingEndpointOverride
+            : ctx.Config.MessagingEndpoint;
 
-            ctx.Results.MessagingEndpointResult = result;
-            ctx.Results.MessagingEndpoint = ctx.Config.BotMessagingEndpoint ?? ctx.Config.MessagingEndpoint;
-
-            if (result == Models.EndpointRegistrationResult.Created ||
-                result == Models.EndpointRegistrationResult.AlreadyExists)
-            {
-                ctx.Results.MessagingEndpointRegistered = true;
-                ctx.Results.EndpointAlreadyExisted = result == Models.EndpointRegistrationResult.AlreadyExists;
-            }
-            else if (result == Models.EndpointRegistrationResult.Failed)
-            {
-                ctx.Results.MessagingEndpointFailureReason = failureReason;
-            }
-        }
-        catch (SetupValidationException ex)
+        // No endpoint and non-interactive (CI / coding agent): defer silently, before the header.
+        if (string.IsNullOrWhiteSpace(endpoint) && ctx.NonInteractive)
         {
-            // Configuration problem (e.g. invalid HTTPS URL, missing endpoint). Don't rethrow —
-            // setup should continue; surface the failure in the summary as a warning.
-            ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
             ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
-            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.Other;
-            ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
-            ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
+            ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.NotConfigured;
+            ctx.Results.MessagingEndpoint = null;
+            return;
         }
+
+        // Single section header; the prompt (if any) and registration both render beneath it.
+        ctx.Logger.LogInformation("Configuring messaging endpoint...");
+        using (ctx.Logger.Indent())
+        {
+            if (string.IsNullOrWhiteSpace(endpoint))
+                endpoint = await PromptForMessagingEndpointAsync(ctx);
+
+            if (string.IsNullOrWhiteSpace(endpoint))
+            {
+                // Deferred (blank prompt): summary renders "configure after you deploy", not a failure.
+                ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
+                ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.NotConfigured;
+                ctx.Results.MessagingEndpoint = null;
+                return;
+            }
+
+            try
+            {
+                var (result, failureReason) = await SetupHelpers.RegisterBlueprintMessagingEndpointAsync(
+                    ctx.Config,
+                    ctx.Logger,
+                    ctx.BackendConfigurator,
+                    overrideEndpointUrl: endpoint,
+                    correlationId: ctx.CorrelationId,
+                    ct: ctx.CancellationToken);
+
+                ctx.Results.MessagingEndpointResult = result;
+                ctx.Results.MessagingEndpoint = ctx.Config.BotMessagingEndpoint ?? endpoint;
+
+                if (result == Models.EndpointRegistrationResult.Created ||
+                    result == Models.EndpointRegistrationResult.AlreadyExists)
+                {
+                    ctx.Results.MessagingEndpointRegistered = true;
+                    ctx.Results.EndpointAlreadyExisted = result == Models.EndpointRegistrationResult.AlreadyExists;
+                }
+                else if (result == Models.EndpointRegistrationResult.Failed)
+                {
+                    ctx.Results.MessagingEndpointFailureReason = failureReason;
+                }
+            }
+            catch (SetupValidationException ex)
+            {
+                // Config problem (e.g. invalid URL) — don't rethrow; surface as a summary warning.
+                ctx.Logger.LogWarning("Messaging endpoint registration skipped: {Message}", ex.Message);
+                ctx.Results.MessagingEndpointResult = Models.EndpointRegistrationResult.Failed;
+                ctx.Results.MessagingEndpointFailureReason = MessagingEndpointFailureReasons.Other;
+                ctx.Results.MessagingEndpoint = ctx.Config.MessagingEndpoint;
+                ctx.Results.Warnings.Add($"Messaging endpoint: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Prompts for the messaging endpoint URL. Returns the entered HTTPS URL, or null to defer
+    /// (blank entry). The caller prints the section header and opens the indent scope.
+    /// </summary>
+    private static Task<string?> PromptForMessagingEndpointAsync(SetupContext ctx)
+    {
+        if (ctx.NonInteractive)
+            return Task.FromResult<string?>(null);
+
+        ctx.Logger.LogInformation("The HTTPS URL where your deployed agent receives messages.");
+        ctx.Logger.LogInformation("Leave blank to configure it later, after you deploy the agent.");
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            // Console.Write bypasses the log formatter's indent scope, so prepend the level-1 indent.
+            Console.Write("    Messaging endpoint URL: ");
+            var entered = ConsoleHelper.ReadLineCancellable(ctx.CancellationToken)?.Trim();
+
+            if (string.IsNullOrWhiteSpace(entered))
+                return Task.FromResult<string?>(null);
+
+            if (Uri.TryCreate(entered, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
+                return Task.FromResult<string?>(entered);
+
+            ctx.Logger.LogWarning("Enter a valid HTTPS URL (e.g. https://my-agent.example.com/api/messages), or leave blank to skip.");
+        }
+
+        return Task.FromResult<string?>(null);
     }
 
     /// <summary>
@@ -840,7 +993,7 @@ internal static class AllSubcommand
     /// Shared by both DW and non-DW flows so permissions are always consistent — the only difference
     /// is that non-M365 agents exclude Messaging Bot API.
     /// </summary>
-    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes)> BuildPermissionSpecsAsync(SetupContext ctx)
+    internal static async Task<(List<ResourcePermissionSpec> specs, string mcpResourceAppId, string[] mcpScopes, Dictionary<string, string[]> scopesByAudience, Dictionary<string, List<string>> serverNamesByAudience)> BuildPermissionSpecsAsync(SetupContext ctx)
     {
         var desiredCustomIds = new HashSet<string>(
             (ctx.Config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
@@ -854,16 +1007,27 @@ internal static class AllSubcommand
             McpConstants.ToolingManifestFileName);
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ctx.Config.Environment);
         var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(mcpManifestPath, excludeLegacyAtg: false, resolvedAtgAppId: mcpResourceAppId);
+        var serverNamesByAudience = await ManifestHelper.GetServerNamesByAudienceAsync(mcpManifestPath, mcpResourceAppId);
         // V1-compatible: extract ATG scopes for consent URL helpers (empty for V2-only manifests)
         var mcpScopes = scopesByAudience.TryGetValue(mcpResourceAppId, out var atgScopes) ? atgScopes : Array.Empty<string>();
 
-        // Pass the already-computed scopesByAudience to avoid reading the MCP manifest twice.
-        // BuildConfiguredPermissionSpecsAsync stamps Graph + manifest MCP audiences + fixed APIs
-        // (Bot only when isM365) + custom permissions for both DW and non-DW agents.
+        // Pass the already-computed scopesByAudience and serverNamesByAudience to avoid
+        // reading the MCP manifest a second time. BuildConfiguredPermissionSpecsAsync stamps
+        // Graph + manifest MCP audiences + fixed APIs (Bot only when isM365) + custom permissions
+        // for both DW and non-DW agents; serverNamesByAudience drives the per-server display
+        // names so V2 audiences read as e.g. "mcp_MailTools" rather than "Agent 365 Tools".
         var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
-            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience);
+            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience);
 
-        return (specs, mcpResourceAppId, mcpScopes);
+        // Return the full scopesByAudience map alongside the V1-compat mcpScopes so V2
+        // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to the bare
+        // appId GUID resource identifier instead of collapsing them onto the WorkIQ Tools
+        // URI (issue #429). api://{appId} is NOT used — per-server SPs have identifierUris
+        // null and only the bare appId GUID is in servicePrincipalNames, so api:// triggers
+        // AADSTS500011. serverNamesByAudience flows through to ApplyConsentUrlsIfNeeded so
+        // the Action Required block's per-audience consent URLs display the same per-server
+        // names the spec list uses.
+        return (specs, mcpResourceAppId, mcpScopes, scopesByAudience, serverNamesByAudience);
     }
 
     /// <summary>
