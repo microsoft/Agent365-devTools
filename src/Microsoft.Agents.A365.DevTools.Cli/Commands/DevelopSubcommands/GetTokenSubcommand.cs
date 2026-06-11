@@ -60,9 +60,10 @@ internal static class GetTokenSubcommand
 
         var deviceCodeOption = new Option<bool>(
             ["--device-code"],
-            description: "Use device code authentication flow instead of browser/WAM. " +
-                         "Required for Exchange-specific Graph scopes (e.g. MailboxSettings.ReadWrite, " +
-                         "ExchangeMessageTrace.Read.All) that WAM does not support. " +
+            description: "Use device code authentication instead of browser/WAM. " +
+                         "Use when browser/WAM authentication is rejected for the requested Microsoft Graph " +
+                         "scopes (commonly Exchange-specific scopes such as MailboxSettings.ReadWrite, " +
+                         "ExchangeMessageTrace.Read.All). " +
                          "Opens https://microsoft.com/devicelogin in your browser instead of a WAM popup.");
 
         var resourceOption = new Option<string?>(

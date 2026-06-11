@@ -391,12 +391,15 @@ public static class AuthenticationConstants
     ///
     /// This is a distinct failure mode from <see cref="WamConsentRequiredError"/>:
     /// - WamConsentRequiredError (0xcaa90019): consent has NOT been granted — admin must grant it.
-    /// - WamDeclinedScopesError: consent HAS been granted, but WAM's internal scope validator
-    ///   does not recognise the scope set (e.g. Exchange-specific delegated Graph scopes such as
-    ///   MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All, Mail.ReadWrite).
-    ///   Device code flow bypasses the WAM broker and succeeds for these scopes.
+    /// - WamDeclinedScopesError: the WAM broker rejects the request with ApiContractViolation,
+    ///   reporting that declined scopes are present. Observed with Exchange-specific delegated Graph
+    ///   scopes (e.g. MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All). The scopes
+    ///   themselves are valid and grantable; the failure is known broker behavior rather than
+    ///   a consent or scope-validity problem. Device code flow does not go through the WAM broker
+    ///   and succeeds for these scopes. The precise broker-side trigger is not publicly documented;
+    ///   see https://github.com/AzureAD/microsoft-authentication-library-for-dotnet/issues/5232.
     ///
-    /// The WAM internal error code for this condition is 0x236496A2 (593742242 decimal), which
+    /// The WAM internal error code for this condition is 0x236496A2 (593794722 decimal), which
     /// does NOT match <see cref="WamErrorPrefix"/> ("0xcaa"), so a separate check is required.
     /// </summary>
     public const string WamDeclinedScopesError = "declined scopes are present";

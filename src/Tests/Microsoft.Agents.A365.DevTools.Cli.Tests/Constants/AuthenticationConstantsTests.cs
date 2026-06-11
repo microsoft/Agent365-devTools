@@ -69,7 +69,8 @@ public class AuthenticationConstantsTests
     public void WamApiContractViolation_ShouldMatchKnownWamErrorClassification()
     {
         // WAM surfaces this as "Error Message: ApiContractViolation" in the MSAL exception message
-        // when its internal scope validator rejects a scope set it does not recognise.
+        // when the broker rejects the request reporting declined scopes (known broker behavior;
+        // the precise root cause is not publicly documented).
         // Used alongside WamDeclinedScopesError to trigger device code fallback.
         AuthenticationConstants.WamApiContractViolation.Should().Be("ApiContractViolation");
     }
@@ -79,8 +80,8 @@ public class AuthenticationConstantsTests
     {
         // These are two distinct failure modes:
         // - WamConsentRequiredError (0xcaa90019): admin consent NOT granted — do not fall back to device code
-        // - WamDeclinedScopesError (ApiContractViolation + declined scopes): consent granted, WAM
-        //   cannot process the scope — fall back to device code
+        // - WamDeclinedScopesError (ApiContractViolation + declined scopes): scopes are valid and
+        //   consent is in place, but the broker still refuses — fall back to device code
         AuthenticationConstants.WamDeclinedScopesError.Should()
             .NotBe(AuthenticationConstants.WamConsentRequiredError);
         AuthenticationConstants.WamDeclinedScopesError.Should()

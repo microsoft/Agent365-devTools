@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Identity.Client;
 using NSubstitute;
 using System.Runtime.InteropServices;
 using Xunit;
@@ -350,6 +352,67 @@ public class MsalBrowserCredentialTests
         
         // Assert
         Assert.IsAssignableFrom<Exception>(exception);
+    }
+
+    #endregion
+
+    #region WAM Declined-Scopes Detection Tests
+
+    // The real WAM error message captured from live MSAL output when requesting Exchange-specific
+    // Graph scopes (MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All) through the broker.
+    // IsWamDeclinedScopesError must match ONLY when BOTH signatures are present:
+    // the "ApiContractViolation" classification AND the "declined scopes are present" text.
+    private const string RealWamDeclinedScopesMessage =
+        "WAM Error  \n Error Code: 0 \n Error Message: ApiContractViolation \n" +
+        " WAM Error Message: Token response failed because declined scopes are present:'(pii)' \n" +
+        " Internal Error Code: 593794722 \n See troubleshooting: https://aka.ms/msal-net-wam";
+
+    [Fact]
+    public void IsWamDeclinedScopesError_WithRealWamMessage_ReturnsTrue()
+    {
+        var ex = new MsalServiceException("WAM_provider_error_0", RealWamDeclinedScopesMessage);
+
+        Assert.True(MsalBrowserCredential.IsWamDeclinedScopesError(ex));
+    }
+
+    [Fact]
+    public void IsWamDeclinedScopesError_WithApiContractViolationOnly_ReturnsFalse()
+    {
+        // ApiContractViolation can occur for reasons unrelated to declined scopes; without the
+        // "declined scopes are present" text we must NOT treat it as fallback-eligible.
+        var ex = new MsalServiceException("WAM_provider_error_0",
+            "WAM Error \n Error Message: ApiContractViolation \n Internal Error Code: 12345");
+
+        Assert.False(MsalBrowserCredential.IsWamDeclinedScopesError(ex));
+    }
+
+    [Fact]
+    public void IsWamDeclinedScopesError_WithDeclinedScopesTextOnly_ReturnsFalse()
+    {
+        var ex = new MsalServiceException("some_error",
+            "Token response failed because declined scopes are present");
+
+        Assert.False(MsalBrowserCredential.IsWamDeclinedScopesError(ex));
+    }
+
+    [Fact]
+    public void IsWamDeclinedScopesError_WithConsentRequiredError_ReturnsFalse()
+    {
+        // 0xcaa90019 is the admin-consent-required path and must never be misclassified as
+        // declined-scopes (it is handled by LogConsentRequiredAndThrow, not device-code fallback).
+        var ex = new MsalServiceException("WAM_provider_error",
+            $"WAM Error {AuthenticationConstants.WamConsentRequiredError} Need admin approval");
+
+        Assert.False(MsalBrowserCredential.IsWamDeclinedScopesError(ex));
+    }
+
+    [Fact]
+    public void IsWamDeclinedScopesError_IsCaseInsensitive()
+    {
+        var ex = new MsalServiceException("err",
+            "error message: apicontractviolation ... token response failed because declined scopes are present");
+
+        Assert.True(MsalBrowserCredential.IsWamDeclinedScopesError(ex));
     }
 
     #endregion

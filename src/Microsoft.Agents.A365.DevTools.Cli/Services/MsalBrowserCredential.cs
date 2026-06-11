@@ -467,17 +467,18 @@ public sealed class MsalBrowserCredential : TokenCredential
             if (ex.Message.Contains(AuthenticationConstants.WamConsentRequiredError, StringComparison.OrdinalIgnoreCase))
                 LogConsentRequiredAndThrow(ex);
 
-            // "Declined scopes" (ApiContractViolation): WAM's internal scope validator rejected one
-            // or more scopes — typically Exchange-specific Graph delegated scopes such as
-            // MailboxSettings.ReadWrite or ExchangeMessageTrace.Read.All. Consent HAS been granted;
-            // WAM simply does not recognise those scope strings. Device code flow bypasses the WAM
-            // broker entirely and succeeds for these scopes.
+            // "Declined scopes" (ApiContractViolation): the WAM broker rejects the request, reporting
+            // declined scopes. Observed with Exchange-specific Graph delegated scopes such as
+            // MailboxSettings.ReadWrite or ExchangeMessageTrace.Read.All. The scopes are valid and
+            // grantable, and consent is in place — this is known broker behavior, not a consent
+            // or scope-validity problem. Device code flow does not go through the WAM broker and
+            // succeeds for these scopes.
             if (IsWamDeclinedScopesError(ex))
             {
                 _logger?.LogWarning(
-                    "WAM declined one or more requested scopes (ApiContractViolation). " +
-                    "This is expected for Exchange-specific Graph scopes (e.g. MailboxSettings.ReadWrite, " +
-                    "ExchangeMessageTrace.Read.All). Falling back to device code authentication.");
+                    "WAM could not complete authentication for the requested scopes " +
+                    "(ApiContractViolation: declined scopes are present). Falling back to device code " +
+                    "authentication, which does not use the broker.");
                 return await AcquireTokenWithDeviceCodeFallbackAsync(scopes, cancellationToken);
             }
 
@@ -506,12 +507,12 @@ public sealed class MsalBrowserCredential : TokenCredential
 
     /// <summary>
     /// Returns true when the MSAL exception represents WAM's "declined scopes" failure:
-    /// the WAM broker rejected one or more scopes with ApiContractViolation because its internal
-    /// scope validator does not recognise them (common for Exchange-specific Graph delegated scopes).
-    /// This is distinct from a consent-not-granted failure (0xcaa90019): consent HAS been granted,
-    /// but WAM cannot process the scope. Device code flow bypasses WAM and succeeds.
+    /// the WAM broker rejects the request with ApiContractViolation, reporting declined scopes
+    /// (observed with Exchange-specific Graph delegated scopes). This is distinct from a
+    /// consent-not-granted failure (0xcaa90019): the scopes are valid and consent is in place,
+    /// but the broker still refuses. Device code flow does not go through WAM and succeeds.
     /// </summary>
-    private static bool IsWamDeclinedScopesError(MsalException ex)
+    internal static bool IsWamDeclinedScopesError(MsalException ex)
         => ex.Message.Contains(AuthenticationConstants.WamApiContractViolation, StringComparison.OrdinalIgnoreCase)
         && ex.Message.Contains(AuthenticationConstants.WamDeclinedScopesError, StringComparison.OrdinalIgnoreCase);
 
@@ -570,6 +571,15 @@ public sealed class MsalBrowserCredential : TokenCredential
             catch (MsalUiRequiredException)
             {
                 _logger?.LogDebug("Silent acquisition failed, proceeding with device code.");
+            }
+            catch (MsalException ex)
+            {
+                // The pre-device-code silent attempt reuses the broker-enabled client, so it can
+                // re-hit the very failure that triggered this fallback (e.g. WAM ApiContractViolation
+                // / declined scopes). The silent attempt is only an optimization — on ANY MSAL failure
+                // fall through to the device code flow (which does not use the broker) rather than
+                // letting the exception escape and abort the fallback.
+                _logger?.LogDebug(ex, "Silent acquisition failed ({ErrorCode}); proceeding with device code.", ex.ErrorCode);
             }
         }
 
