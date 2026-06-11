@@ -60,11 +60,11 @@ internal static class GetTokenSubcommand
 
         var deviceCodeOption = new Option<bool>(
             ["--device-code"],
-            description: "Use device code authentication instead of browser/WAM. " +
-                         "Use when browser/WAM authentication is rejected for the requested Microsoft Graph " +
-                         "scopes (commonly Exchange-specific scopes such as MailboxSettings.ReadWrite, " +
-                         "ExchangeMessageTrace.Read.All). " +
-                         "Opens https://microsoft.com/devicelogin in your browser instead of a WAM popup.");
+            description: "Use device code authentication instead of the interactive browser flow " +
+                         "(the WAM broker on Windows). Use when interactive authentication is rejected for " +
+                         "the requested Microsoft Graph scopes (commonly Exchange-specific scopes such as " +
+                         "MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All; this rejection is specific " +
+                         "to the Windows WAM broker). Opens https://microsoft.com/devicelogin in your browser.");
 
         var resourceOption = new Option<string?>(
             ["--resource"],
@@ -183,8 +183,6 @@ internal static class GetTokenSubcommand
                 {
                     // Explicit scopes — single token against the resolved resource
                     logger.LogInformation("Using user-specified scopes: {Scopes}", string.Join(", ", scopes));
-                    if (deviceCode)
-                        logger.LogInformation("Authentication mode: device code (WAM bypassed)");
                     logger.LogInformation("");
                     logger.LogInformation("Resource App ID: {AppId}", resourceAppId);
                     logger.LogInformation("Requesting scopes: {Scopes}", string.Join(", ", scopes));
@@ -272,6 +270,12 @@ internal static class GetTokenSubcommand
 
         try
         {
+            // Logged here (not per-branch) so it fires for both explicit-scope and manifest token
+            // acquisition. Platform-neutral wording: device code replaces the interactive
+            // browser flow (and the WAM broker on Windows).
+            if (useDeviceCode)
+                logger.LogInformation("Authentication mode: device code");
+
             var token = await authService.GetAccessTokenWithScopesAsync(
                 resourceAppId,
                 requestedScopes,

@@ -148,14 +148,18 @@ public class GetTokenSubcommandTests
     public void CreateCommand_DeviceCodeOption_DescriptionShouldMentionExchangeScopes()
     {
         // The description must explain WHY this option exists — Exchange-specific Graph scopes
-        // that WAM does not support. This prevents the option from being misunderstood as
-        // a general "headless mode" flag.
+        // that the Windows WAM broker rejects. This prevents the option from being misunderstood
+        // as a general "headless mode" flag.
         var command = GetTokenSubcommand.CreateCommand(_mockLogger, _mockConfigService, _mockAuthService);
 
         var deviceCodeOption = command.Options.FirstOrDefault(o => o.Name == "device-code");
         deviceCodeOption.Should().NotBeNull();
-        deviceCodeOption!.Description.Should().Contain("Exchange");
-        deviceCodeOption.Description.Should().Contain("WAM");
+        deviceCodeOption!.Description.Should().Contain("Exchange",
+            because: "the help text must name the concrete scope family that motivates the flag, " +
+                     "so users know when to reach for it rather than treating it as a generic mode switch");
+        deviceCodeOption.Description.Should().Contain("WAM",
+            because: "the help text must name the broker whose rejection the flag works around, " +
+                     "so the Windows-specific rationale is discoverable from --help");
     }
 
     [Fact]

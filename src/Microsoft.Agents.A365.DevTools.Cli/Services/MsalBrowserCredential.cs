@@ -524,9 +524,12 @@ public sealed class MsalBrowserCredential : TokenCredential
             // grantable, and consent is in place — this is known broker behavior, not a consent
             // or scope-validity problem. Device code flow does not go through the WAM broker and
             // succeeds for these scopes.
-            if (IsWamDeclinedScopesError(ex))
+            bool isDeclinedScopes = IsWamDeclinedScopesError(ex);
+            if (isDeclinedScopes)
             {
-                _logger?.LogWarning(
+                // Informational, not a warning: this is a successful auto-recovery on the
+                // intended fallback path, not a failure the user needs to act on.
+                _logger?.LogInformation(
                     "WAM could not complete authentication for the requested scopes " +
                     "(ApiContractViolation: declined scopes are present). Falling back to device code " +
                     "authentication, which does not use the broker.");

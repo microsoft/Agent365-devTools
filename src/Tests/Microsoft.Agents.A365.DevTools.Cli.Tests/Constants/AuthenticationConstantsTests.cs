@@ -62,7 +62,9 @@ public class AuthenticationConstantsTests
         // "Token response failed because declined scopes are present:'(pii)'"
         // Verified against live WAM output when requesting Exchange-specific Graph scopes
         // (MailboxSettings.ReadWrite, ExchangeMessageTrace.Read.All) through the a365 CLI.
-        AuthenticationConstants.WamDeclinedScopesError.Should().Be("declined scopes are present");
+        AuthenticationConstants.WamDeclinedScopesError.Should().Be("declined scopes are present",
+            because: "this exact substring is matched against the live WAM error message to gate the " +
+                     "device-code fallback; changing it silently disables the fallback");
     }
 
     [Fact]
@@ -72,7 +74,9 @@ public class AuthenticationConstantsTests
         // when the broker rejects the request reporting declined scopes (known broker behavior;
         // the precise root cause is not publicly documented).
         // Used alongside WamDeclinedScopesError to trigger device code fallback.
-        AuthenticationConstants.WamApiContractViolation.Should().Be("ApiContractViolation");
+        AuthenticationConstants.WamApiContractViolation.Should().Be("ApiContractViolation",
+            because: "this classification string is matched together with WamDeclinedScopesError to " +
+                     "distinguish the fallback-eligible failure from other WAM errors; it must remain stable");
     }
 
     [Fact]
@@ -83,8 +87,12 @@ public class AuthenticationConstantsTests
         // - WamDeclinedScopesError (ApiContractViolation + declined scopes): scopes are valid and
         //   consent is in place, but the broker still refuses — fall back to device code
         AuthenticationConstants.WamDeclinedScopesError.Should()
-            .NotBe(AuthenticationConstants.WamConsentRequiredError);
+            .NotBe(AuthenticationConstants.WamConsentRequiredError,
+                because: "declined-scopes and consent-required are handled differently — the former " +
+                         "falls back to device code, the latter must not — so the two signatures must stay distinct");
         AuthenticationConstants.WamDeclinedScopesError.Should()
-            .NotContain("0xcaa");
+            .NotContain("0xcaa",
+                because: "the consent-required path keys on the 0xcaa prefix; the declined-scopes signature " +
+                         "must not overlap with it or the fallback would trigger on consent errors");
     }
 }
