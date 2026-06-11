@@ -188,7 +188,10 @@ public static class McpConstants
                 ["MeMCPServer"] = ("McpServers.Me.All", "api://mcp-meserver"),
 
                 // Admin servers
-                ["mcp_Admin365_GraphTools"] = ("McpServers.Admin365.All", "api://mcp-admin365graphtools")
+                ["mcp_Admin365_GraphTools"] = ("McpServers.Admin365.All", "api://mcp-admin365graphtools"),
+
+                // Copilot servers
+                ["mcp_M365Copilot"] = ("McpServers.CopilotMCP.All", "api://mcp-m365copilot")
             };
 
         /// <summary>

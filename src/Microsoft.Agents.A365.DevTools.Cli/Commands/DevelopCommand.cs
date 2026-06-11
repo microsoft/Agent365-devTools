@@ -827,6 +827,14 @@ public static class DevelopCommand
                         var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
                         var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
 
+                        // Override catalog scope/audience with static mapping when available.
+                        var (mappedScope, mappedAudience) = McpConstants.ServerScopeMappings.GetScopeAndAudience(existingServerName);
+                        if (!string.IsNullOrWhiteSpace(mappedScope))
+                        {
+                            scope = mappedScope;
+                            audience = McpConstants.WorkIQToolsProdAppId;
+                        }
+
                         var updatedServerObject = ManifestHelper.CreateCompleteServerObject(existingServerName, existingServerName, url, scope, audience, publisher);
                         updatedServers.Add(updatedServerObject);
                         updatedCount++;
@@ -896,6 +904,16 @@ public static class DevelopCommand
             var scope = string.Equals(scopeRaw, "null", StringComparison.OrdinalIgnoreCase) ? null : scopeRaw;
             var audience = catalogEntry.TryGetProperty("audience", out var audienceElement) ? audienceElement.GetString() : null;
             var publisher = catalogEntry.TryGetProperty("publisher", out var publisherElement) ? publisherElement.GetString() : null;
+
+            // Override catalog scope/audience with static mapping when available.
+            // This protects against stale catalog data where the catalog advertises V2
+            // scope/audience but the server still enforces a V1 scope.
+            var (mappedScope, mappedAudience) = McpConstants.ServerScopeMappings.GetScopeAndAudience(serverName);
+            if (!string.IsNullOrWhiteSpace(mappedScope))
+            {
+                scope = mappedScope;
+                audience = McpConstants.WorkIQToolsProdAppId;
+            }
 
             var serverObject = ManifestHelper.CreateCompleteServerObject(serverName, serverName, url, scope, audience, publisher);
             updatedServers.Add(serverObject);
