@@ -140,16 +140,12 @@ public class BlueprintConsentDelegationTests : IDisposable
     }
 
     /// <summary>
-    /// #452-adjacent: standalone `setup blueprint` renders no batch summary, so when consent isn't granted
-    /// the consent URL must be surfaced inline. Phase-1 auth failure drives the not-granted path; a spy
-    /// logger captures the handoff (it's a log side-effect, not a return value).
+    /// #452-adjacent: when consent isn't granted, EnsureAdminConsentAsync returns consentSuccess=false and a
+    /// consent URL referencing the blueprint, which the setup summary's Action Required block surfaces.
     /// </summary>
     [Fact]
-    public async Task EnsureAdminConsent_WhenConsentNotGranted_SurfacesConsentUrlHandoff()
+    public async Task EnsureAdminConsent_WhenConsentNotGranted_ReturnsConsentUrlForHandoff()
     {
-        var spyLogger = Substitute.For<ILogger>();
-        spyLogger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
-
         // GraphGetAsync returns null → orchestrator Phase 1 fails → consent not granted, hand-off URL returned.
         _graph.GraphGetAsync(
             Arg.Any<string>(), Arg.Any<string>(),
@@ -162,18 +158,12 @@ public class BlueprintConsentDelegationTests : IDisposable
 
         var (consentSuccess, consentUrl, _, _) =
             await BlueprintSubcommand.EnsureAdminConsentAsync(
-                spyLogger, _executor, _graph, _blueprintService,
+                _logger, _executor, _graph, _blueprintService,
                 TenantId, BlueprintAppId, BlueprintSpObjectId, config,
                 ct: default, deferConsent: false);
 
         consentSuccess.Should().BeFalse(because: "consent could not be granted/verified");
         consentUrl.Should().Contain(BlueprintAppId, because: "the hand-off URL must reference the blueprint application");
-        spyLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Ask a tenant administrator to open this URL")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
     }
 
     /// <summary>Phase 1 (auth + resource SP resolution) succeeds, so the orchestrator reaches Phase 2a/3.</summary>

@@ -462,6 +462,11 @@ internal static class SetupHelpers
     public static void DisplaySetupSummary(SetupResults results, ILogger logger)
     {
         var isNonDw = results.IsNonDwBlueprintFlow;
+        var isBlueprintOnly = results.IsBlueprintOnlyFlow;
+        // Which row groups this run actually performs. Blueprint-only ('setup blueprint') stops after
+        // Graph consent + inheritable permissions, so it shows neither the agent rows nor endpoint/settings.
+        var showAgentIdentityAndRegistration = isNonDw && !isBlueprintOnly;
+        var showEndpointAndProjectSettings = !isBlueprintOnly;
         var notRun = "not run (previous step failed)";
 
         logger.LogInformation("");
@@ -662,7 +667,7 @@ internal static class SetupHelpers
         }
 
         // Non-DW only: Agent identity — step 5 (after blueprint rows are grouped together)
-        if (isNonDw)
+        if (showAgentIdentityAndRegistration)
         {
             if (results.BlueprintFailed)
                 logger.LogInformation(DryRunRow(5, "Agent identity") + notRun);
@@ -677,7 +682,7 @@ internal static class SetupHelpers
         }
 
         // Non-DW only: Agent Registration — step 6
-        if (isNonDw)
+        if (showAgentIdentityAndRegistration)
         {
             if (results.BlueprintFailed)
                 logger.LogInformation(DryRunRow(6, "Agent Registration") + notRun);
@@ -694,64 +699,68 @@ internal static class SetupHelpers
             }
         }
 
-        // Messaging endpoint: step 6 for DW (after Permission Grants at 5),
-        // step 7 for non-DW (after Agent Registration at 6).
-        var endpointStep = isNonDw ? 7 : 6;
-        if (results.BlueprintFailed)
+        // Endpoint + project-settings rows are not part of standalone 'setup blueprint'.
+        if (showEndpointAndProjectSettings)
         {
-            logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + notRun);
-        }
-        else
-        {
-            switch (results.MessagingEndpointResult)
+            // Messaging endpoint: step 6 for DW (after Permission Grants at 5),
+            // step 7 for non-DW (after Agent Registration at 6).
+            var endpointStep = isNonDw ? 7 : 6;
+            if (results.BlueprintFailed)
             {
-                case null:
-                    logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "skipped (non-M365 agent)");
-                    break;
-                case Models.EndpointRegistrationResult.Created:
-                    logger.LogInformation(
-                        DryRunRow(endpointStep, "Messaging endpoint") + "registered   '{Endpoint}'",
-                        results.MessagingEndpoint ?? "unknown");
-                    break;
-                case Models.EndpointRegistrationResult.AlreadyExists:
-                    logger.LogInformation(
-                        DryRunRow(endpointStep, "Messaging endpoint") + "reused       '{Endpoint}'",
-                        results.MessagingEndpoint ?? "unknown");
-                    break;
-                case Models.EndpointRegistrationResult.SkippedContractMismatch:
-                    logger.LogWarning(
-                        DryRunRow(endpointStep, "Messaging endpoint") + "manual config required — see Action Required");
-                    break;
-                case Models.EndpointRegistrationResult.Failed:
-                default:
-                    if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotOwner, StringComparison.Ordinal))
-                    {
-                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed (not blueprint owner) — see Action Required");
-                    }
-                    else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.BlueprintMissing, StringComparison.Ordinal))
-                    {
-                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not attempted (blueprint creation failed) — see Action Required");
-                    }
-                    else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotConfigured, StringComparison.Ordinal))
-                    {
-                        // Deferred, not failed: the endpoint is a post-deploy artifact. Render it as an
-                        // expected pending step (informational, not a warning) with a single pointer below.
-                        logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "deferred — configure after you deploy (see Next steps)");
-                    }
-                    else
-                    {
-                        logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed — see Action Required");
-                    }
-                    break;
+                logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + notRun);
             }
-        }
+            else
+            {
+                switch (results.MessagingEndpointResult)
+                {
+                    case null:
+                        logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "skipped (non-M365 agent)");
+                        break;
+                    case Models.EndpointRegistrationResult.Created:
+                        logger.LogInformation(
+                            DryRunRow(endpointStep, "Messaging endpoint") + "registered   '{Endpoint}'",
+                            results.MessagingEndpoint ?? "unknown");
+                        break;
+                    case Models.EndpointRegistrationResult.AlreadyExists:
+                        logger.LogInformation(
+                            DryRunRow(endpointStep, "Messaging endpoint") + "reused       '{Endpoint}'",
+                            results.MessagingEndpoint ?? "unknown");
+                        break;
+                    case Models.EndpointRegistrationResult.SkippedContractMismatch:
+                        logger.LogWarning(
+                            DryRunRow(endpointStep, "Messaging endpoint") + "manual config required — see Action Required");
+                        break;
+                    case Models.EndpointRegistrationResult.Failed:
+                    default:
+                        if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotOwner, StringComparison.Ordinal))
+                        {
+                            logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed (not blueprint owner) — see Action Required");
+                        }
+                        else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.BlueprintMissing, StringComparison.Ordinal))
+                        {
+                            logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "not attempted (blueprint creation failed) — see Action Required");
+                        }
+                        else if (string.Equals(results.MessagingEndpointFailureReason, MessagingEndpointFailureReasons.NotConfigured, StringComparison.Ordinal))
+                        {
+                            // Deferred, not failed: the endpoint is a post-deploy artifact. Render it as an
+                            // expected pending step (informational, not a warning) with a single pointer below.
+                            logger.LogInformation(DryRunRow(endpointStep, "Messaging endpoint") + "deferred — configure after you deploy (see Next steps)");
+                        }
+                        else
+                        {
+                            logger.LogWarning(DryRunRow(endpointStep, "Messaging endpoint") + "failed — see Action Required");
+                        }
+                        break;
+                }
+            }
 
-        // Project settings: step 8 for non-DW, step 7 for DW (pushed down by the messaging endpoint row).
-        var settingsStep = isNonDw ? 8 : 7;
-        if (results.BlueprintFailed)
-            logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
-        else if (results.ProjectSettingsWritten)
-            logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
+            // Project settings: step 8 for non-DW, step 7 for DW (pushed down by the messaging endpoint row).
+            var settingsStep = isNonDw ? 8 : 7;
+            if (results.BlueprintFailed)
+                logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
+            else if (results.ProjectSettingsWritten)
+                logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
+        }
 
         } // end full step table
 
@@ -794,13 +803,13 @@ internal static class SetupHelpers
                 // can still complete the hand-off manually.
                 if (isNonDw && string.IsNullOrWhiteSpace(consentUrl))
                 {
-                    logger.LogInformation("  {N}. Permission Grants — an {Roles} must grant admin consent in the Entra portal:", actionCount, AuthenticationConstants.DelegatedGrantRequiredRoles);
+                    logger.LogInformation("  {N}. Permission Grants — must be granted by {Roles} in the Entra portal:", actionCount, AuthenticationConstants.DelegatedGrantRequiredRoles);
                     LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, tenantId: results.TenantId);
                 }
                 else
                 {
                     // Standard hand-off block — used for DW (always) and for non-DW when Slice 5a produced a URL.
-                    logger.LogInformation("  {N}. Permission Grants — forward the following to an {Roles}:", actionCount, AuthenticationConstants.DelegatedGrantRequiredRoles);
+                    logger.LogInformation("  {N}. Permission Grants — forward the following to {Roles}:", actionCount, AuthenticationConstants.DelegatedGrantRequiredRoles);
                     logger.LogInformation("");
                     logger.LogInformation("     Blueprint : {BlueprintId}", adminCmdBlueprintId);
                     if (!string.IsNullOrWhiteSpace(results.TenantId))
@@ -976,7 +985,8 @@ internal static class SetupHelpers
             || !string.IsNullOrEmpty(results.GraphInheritablePermissionsError)
             || !string.IsNullOrEmpty(results.FederatedCredentialError)
             || results.AgentRegistrationFailed
-            || messagingEndpointDeferred;
+            || messagingEndpointDeferred
+            || isBlueprintOnly;
 
         if (hasNextSteps)
         {
@@ -1012,6 +1022,15 @@ internal static class SetupHelpers
 
             if (results.AgentRegistrationFailed)
                 nextStepLines.Add(() => logger.LogInformation("  To retry agent registration: a365 setup all --agent-registration-only"));
+
+            // Standalone blueprint: point to the remaining permission steps.
+            if (isBlueprintOnly)
+            {
+                nextStepLines.Add(() => logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions"));
+                nextStepLines.Add(() => logger.LogInformation(results.IsM365
+                    ? "  2. Run 'a365 setup permissions bot' to configure Bot API, Observability, and Power Platform permissions"
+                    : "  2. Run 'a365 setup permissions bot' to configure Observability and Power Platform permissions"));
+            }
 
             if (nextStepLines.Count > 0)
             {

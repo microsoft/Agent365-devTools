@@ -753,13 +753,30 @@ internal static class BlueprintSubcommand
 
         if (!isSetupAll)
         {
-            logger.LogInformation("Next steps:");
-            logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions");
-            // 'setup permissions bot' also covers Observability + Power Platform (needed by all agents),
-            // so always show it; name the M365-only Bot API explicitly only when --m365.
-            logger.LogInformation(isM365
-                ? "  2. Run 'a365 setup permissions bot' to configure Bot API, Observability, and Power Platform permissions"
-                : "  2. Run 'a365 setup permissions bot' to configure Observability and Power Platform permissions");
+            // Blueprint-only summary: scopes the shared renderer to the steps this command runs and
+            // surfaces the consent-URL / client-secret hand-offs in its Action Required block.
+            var summary = new SetupResults
+            {
+                IsNonDwBlueprintFlow = true,
+                IsBlueprintOnlyFlow = true,
+                IsM365 = isM365,
+                TenantId = setupConfig.TenantId,
+                BlueprintCreated = true,
+                BlueprintAlreadyExisted = blueprintAlreadyExisted,
+                BlueprintId = blueprintResult.appId,
+                BlueprintDisplayName = setupConfig.AgentBlueprintDisplayName,
+                BlueprintServicePrincipalCreated = !string.IsNullOrWhiteSpace(blueprintResult.servicePrincipalId),
+                BatchPermissionsPhase1Completed = true,
+                BatchPermissionsPhase2Completed = !blueprintResult.graphInheritablePermissionsFailed,
+                TenantWideConsentOutcome = blueprintResult.adminConsentUrl is null
+                    ? Models.GrantOutcome.Granted
+                    : Models.GrantOutcome.Failed,
+                AdminConsentUrl = blueprintResult.adminConsentUrl,
+                ClientSecretManualActionRequired = clientSecretManualActionRequired,
+                GraphInheritablePermissionsError = blueprintResult.graphInheritablePermissionsError,
+                FederatedCredentialError = blueprintResult.ficError,
+            };
+            SetupHelpers.DisplaySetupSummary(summary, logger);
         }
 
         return new BlueprintCreationResult
@@ -1931,16 +1948,7 @@ internal static class BlueprintSubcommand
                     graphInheritablePermissionsConfigured: false, graphInheritablePermissionsError: ex.Message);
         }
 
-        if (!consentSuccess)
-        {
-            // Surface the consent URL inline — standalone 'setup blueprint' renders no batch summary, so
-            // without this a non-admin gets no handoff and the granted scopes never land.
-            logger.LogWarning("Tenant-wide admin consent is needed for the agent blueprint's delegated Microsoft Graph scopes.");
-            logger.LogWarning("  Reason: granting tenant-wide consent for these scopes requires a tenant administrator.");
-            logger.LogWarning("  Ask a tenant administrator to open this URL to grant consent:");
-            logger.LogWarning("    {ConsentUrl}", consentUrlGraph);
-        }
-
+        // The consent-URL hand-off for non-admins is surfaced in the setup summary's Action Required block.
         var graphInheritablePermissionsError = inheritedConfigured
             ? null
             : "Inheritable permissions for Microsoft Graph were not configured. Ensure you have the Agent ID Administrator (or Global Administrator) role, then re-run 'a365 setup blueprint'.";

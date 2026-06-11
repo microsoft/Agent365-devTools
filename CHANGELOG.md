@@ -57,7 +57,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `--yes` / `-y` option on `develop-mcp publish` — skips the interactive "Proceed with publish? (y/N)" confirmation.
 
 ### Fixed
-- `setup blueprint` now configures the blueprint's inheritable Microsoft Graph permissions even when the signed-in user is not a Global Administrator, and no longer aborts with a misleading "Failed to configure inheritable permissions" error when the tenant-wide consent grant cannot be made programmatically; non-admins are shown the admin-consent URL to hand off (#452).
+- `setup blueprint` now configures the blueprint's inheritable Microsoft Graph permissions even when the signed-in user is not a Global Administrator, no longer aborts with a misleading "Failed to configure inheritable permissions" error when the tenant-wide consent grant cannot be made programmatically, and ends with a setup summary whose Action Required block surfaces the admin-consent URL for non-admins to hand off (#452).
 - Messaging endpoint registration and removal now retry on transient network errors instead of failing on a momentary DNS or connection blip.
 - Commands requiring authentication no longer return misleading Graph 403 errors when Windows has multiple cached work accounts. The CLI detects a wrong-tenant token (`tid` claim mismatch), clears the MSAL token cache, and retries automatically (#430).
 - `setup all` now exits silently on Ctrl+C instead of printing `ERROR: Setup failed: A task was canceled.` followed by a misleading partial summary.

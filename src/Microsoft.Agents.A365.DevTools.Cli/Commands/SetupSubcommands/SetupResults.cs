@@ -187,6 +187,18 @@ public class SetupResults
     public bool IsNonDwBlueprintFlow { get; set; }
 
     /// <summary>
+    /// True for standalone `setup blueprint`: scopes the summary to the rows that command runs,
+    /// suppressing the agent identity / registration / endpoint / project-settings rows.
+    /// </summary>
+    public bool IsBlueprintOnlyFlow { get; set; }
+
+    /// <summary>
+    /// Whether the agent is an M365 AI Teammate. Used only to tailor the "Next steps" wording
+    /// (naming the Bot API explicitly). Does not change which steps run.
+    /// </summary>
+    public bool IsM365 { get; set; }
+
+    /// <summary>
     /// The effective --authmode value used during the non-DW grant step.
     /// Null when the non-DW grant step was not reached (e.g. agent identity creation failed) or
     /// when the run is a DW (AI Teammate) flow — DW does not use --authmode.
