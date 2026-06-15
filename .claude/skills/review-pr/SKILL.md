@@ -101,7 +101,7 @@ You can edit this file to:
 The skill uses **Claude Code directly** for semantic code analysis (inspired by Agent365-dotnet). No separate API key required!
 
 **Generate mode** (default):
-1. Claude Code reads `.claude/agents/pr-code-reviewer.md` for review process guidelines
+1. Claude Code reads `.claude/agents/pr-code-reviewer.md` for review process guidelines. Read the **working-tree (PR) version** of this file and of `.github/copilot-instructions.md` and `CLAUDE.md` — not the base-branch copy. When the PR under review *adds or changes a review rule* (as PR #461 did with rules #30/#31), the new rule must be applied to that same PR in the same run; reading the base copy would skip it.
 2. Claude Code reads `.github/copilot-instructions.md` for coding standards
 3. Claude Code fetches PR details: `gh pr view <number> --json ...`
 4. Claude Code analyzes actual code changes: `gh pr diff <number>`
