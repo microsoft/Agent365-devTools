@@ -766,32 +766,208 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// When GrantAppRoleAssignmentAsync returns false (caller lacks Global Admin),
-    /// AgentIdentityS2SOutcome is Failed, a warning is added, and PowerShell instructions are logged.
+    /// When both the programmatic Graph grant AND the az rest fallback fail, AgentIdentityS2SOutcome
+    /// is Failed, a warning is added, and PowerShell instructions are logged. Uses real GUIDs so the
+    /// az rest fallback actually runs (it validates GUIDs up front) and stubs the resource-SP lookup
+    /// to return an empty set so the fallback deterministically fails at "resource SP not found".
+    /// Issue #460.
     /// </summary>
     [Fact]
-    public async Task GrantOrInstructAgentIdentityAppPermissions_GrantFails_SetsGrantedFalse_AddsWarning()
+    public async Task GrantOrInstructAgentIdentityAppPermissions_GraphAndAzRestBothFail_PrintsPowerShell_AddsWarning()
     {
-        var (ctx, graph, blueprintService) = BuildS2SGrantTestContext();
+        var (ctx, _, blueprintService) = BuildS2SGrantTestContext();
 
-        graph.EnsureServicePrincipalForAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
-            .Returns("agent-sp-object-id");
+        const string agentSpId = "11111111-1111-1111-1111-111111111111";
+        const string resourceAppId = "22222222-2222-2222-2222-222222222222";
+        ctx.Config.AgenticAppId = agentSpId;
+        var specs = new List<ResourcePermissionSpec>
+        {
+            new(resourceAppId, "Test Resource", [], false, AppRoleScopes: ["TestRole.ReadWrite"])
+        };
 
+        // Programmatic Graph path fails -> az rest fallback is reached.
         blueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(new Cli.Models.AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false)));
 
-        await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, OneS2SSpec());
+        // az rest resource-SP lookup returns an empty value array -> "resource SP not found" -> fallback fails.
+        ctx.Executor.ExecuteAsync(
+            "az", Arg.Is<string>(a => a.Contains("$filter=appId eq")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[]}", StandardError = string.Empty }));
 
+        await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, specs);
+
+        // Prove the az rest fallback was actually attempted before falling through to PowerShell.
+        await ctx.Executor.Received().ExecuteAsync(
+            "az", Arg.Is<string>(a => a.Contains("$filter=appId eq")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
-            because: "when app role assignments fail (non-admin path), AgentIdentityS2SOutcome must be Failed");
+            because: "when both the Graph grant and the az rest fallback fail, AgentIdentityS2SOutcome must be Failed");
         ctx.Results.HasWarnings.Should().BeTrue(
             because: "a failed S2S grant must add a warning so the setup summary shows Action Required");
         ctx.Results.Warnings.Should().ContainSingle()
             .Which.Should().Contain("PowerShell",
                 because: "the warning must reference the printed PowerShell instructions so the user knows where to look");
+    }
+
+    /// <summary>
+    /// When the programmatic Graph grant fails but the az rest fallback succeeds (a GA's az
+    /// token implicitly carries AppRoleAssignment.ReadWrite.All), the outcome is Granted with no
+    /// warning and no PowerShell hand-off — mirrors the blueprint SP fallback in
+    /// BatchPermissionsOrchestrator. Issue #460.
+    /// </summary>
+    [Fact]
+    public async Task GrantOrInstructAgentIdentityAppPermissions_GraphFailsAzRestSucceeds_SetsGranted_NoWarning()
+    {
+        var (ctx, _, blueprintService) = BuildS2SGrantTestContext();
+
+        // AzRestS2SRunner validates both the agent identity SP id and the resource app id as
+        // GUIDs before issuing any az call, so the fallback path requires real GUIDs here.
+        const string agentSpId = "11111111-1111-1111-1111-111111111111";
+        const string resourceAppId = "22222222-2222-2222-2222-222222222222";
+        ctx.Config.AgenticAppId = agentSpId;
+        var specs = new List<ResourcePermissionSpec>
+        {
+            new(resourceAppId, "Test Resource", [], false, AppRoleScopes: ["TestRole.ReadWrite"])
+        };
+
+        // Programmatic Graph path fails -> fallback is reached.
+        blueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Cli.Models.AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false)));
+
+        // Stub each az rest call explicitly so the test does not depend on BuildMockExecutor's default:
+        //   1. GET appRoleAssignments on the agent identity SP -> no existing assignments.
+        ctx.Executor.ExecuteAsync(
+            "az", Arg.Is<string>(a => a.Contains("appRoleAssignments") && a.Contains("--method GET")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[]}", StandardError = string.Empty }));
+        //   2. Resource-SP lookup -> SP id plus the role-value -> role-id map.
+        ctx.Executor.ExecuteAsync(
+            "az", Arg.Is<string>(a => a.Contains("$filter=appId eq")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput =
+                    "{\"value\":[{\"id\":\"33333333-3333-3333-3333-333333333333\"," +
+                    "\"appRoles\":[{\"value\":\"TestRole.ReadWrite\",\"id\":\"44444444-4444-4444-4444-444444444444\"}]}]}",
+                StandardError = string.Empty
+            }));
+        //   3. POST of the new appRoleAssignment -> success.
+        ctx.Executor.ExecuteAsync(
+            "az", Arg.Is<string>(a => a.Contains("--method POST")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = string.Empty, StandardError = string.Empty }));
+
+        await NonDwBlueprintSetupOrchestrator.GrantOrInstructAgentIdentityAppPermissionsAsync(ctx, specs);
+
+        // The outcome is Granted because the az rest fallback actually POSTed the assignment.
+        await ctx.Executor.Received(1).ExecuteAsync(
+            "az", Arg.Is<string>(a => a.Contains("--method POST")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
+            because: "when the az rest fallback assigns the app role, the agent identity S2S grant succeeded");
+        ctx.Results.HasWarnings.Should().BeFalse(
+            because: "a successful az rest fallback must not surface a PowerShell hand-off warning");
+    }
+
+    // -------------------------------------------------------------------------
+    // GrantAgentIdentityS2SPermissionsAsync wiring (issue #460 redundancy gate)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// When inheritable permissions were configured (Phase 2) AND the blueprint SP holds the app
+    /// roles, the agent identity inherits them — the direct grant must be SKIPPED (no
+    /// GrantAppRoleAssignmentAsync call) and the outcome reported as Granted. Issue #460.
+    /// </summary>
+    [Fact]
+    public async Task GrantAgentIdentityS2SPermissions_SkipsDirectGrant_WhenRolesInherited()
+    {
+        var (ctx, _, blueprintService) = BuildS2SGrantTestContext();
+        ctx.Results.BatchPermissionsPhase2Completed = true;
+        ctx.Results.BlueprintS2SOutcome = Cli.Models.GrantOutcome.Granted;
+
+        await NonDwBlueprintSetupOrchestrator.GrantAgentIdentityS2SPermissionsAsync(ctx, OneS2SSpec());
+
+        await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
+            because: "an inherited role is effectively granted on the agent identity, so the outcome must be Granted without a direct grant");
+    }
+
+    /// <summary>
+    /// When inheritance is NOT in force (Phase 2 not completed), the direct grant must run —
+    /// GrantAppRoleAssignmentAsync is called. This is the developer / non-inherited path. Issue #460.
+    /// </summary>
+    [Fact]
+    public async Task GrantAgentIdentityS2SPermissions_PerformsDirectGrant_WhenNotInherited()
+    {
+        var (ctx, _, blueprintService) = BuildS2SGrantTestContext();
+        // Defaults: BatchPermissionsPhase2Completed = false -> predicate false -> grant runs.
+        blueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Cli.Models.AppRoleGrantResult(AllSucceeded: true, AllAlreadyAssigned: false)));
+
+        await NonDwBlueprintSetupOrchestrator.GrantAgentIdentityS2SPermissionsAsync(ctx, OneS2SSpec());
+
+        await blueprintService.Received(1).GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
+            because: "without inheritance the direct grant runs and, when it succeeds, the outcome is Granted");
+    }
+
+    /// <summary>
+    /// The inheritance skip must not fire when there are no S2S specs: the outcome stays
+    /// NotApplicable (nothing was granted or inherited) rather than being falsely reported Granted.
+    /// Issue #460.
+    /// </summary>
+    [Fact]
+    public async Task GrantAgentIdentityS2SPermissions_DoesNotClaimGranted_WhenNoS2SSpecs_EvenIfInherited()
+    {
+        var (ctx, _, blueprintService) = BuildS2SGrantTestContext();
+        ctx.Results.BatchPermissionsPhase2Completed = true;
+        ctx.Results.BlueprintS2SOutcome = Cli.Models.GrantOutcome.Granted;
+        var specsWithNoAppRoles = new List<ResourcePermissionSpec>
+        {
+            new("resource-app-id", "Test Resource", ["user_impersonation"], false)
+        };
+
+        await NonDwBlueprintSetupOrchestrator.GrantAgentIdentityS2SPermissionsAsync(ctx, specsWithNoAppRoles);
+
+        await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+        ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.NotApplicable,
+            because: "with no S2S specs there is nothing to grant or inherit, so the outcome must remain NotApplicable");
+    }
+
+    // -------------------------------------------------------------------------
+    // AgentIdentityInheritsBlueprintAppRoles predicate (issue #460 redundancy gate)
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(true, Cli.Models.GrantOutcome.Granted, true)]    // inheritance + blueprint grant -> inherited
+    [InlineData(false, Cli.Models.GrantOutcome.Granted, false)]  // no inheritance -> must grant directly
+    [InlineData(true, Cli.Models.GrantOutcome.Failed, false)]    // blueprint SP lacks the role -> nothing to inherit
+    [InlineData(true, Cli.Models.GrantOutcome.NotApplicable, false)] // blueprint grant never ran
+    public void AgentIdentityInheritsBlueprintAppRoles_ReturnsTrue_OnlyWhenInheritanceAndBlueprintGrantBothSucceed(
+        bool phase2Completed, Cli.Models.GrantOutcome blueprintS2SOutcome, bool expected)
+    {
+        var results = new SetupResults
+        {
+            BatchPermissionsPhase2Completed = phase2Completed,
+            BlueprintS2SOutcome = blueprintS2SOutcome,
+        };
+
+        NonDwBlueprintSetupOrchestrator.AgentIdentityInheritsBlueprintAppRoles(results)
+            .Should().Be(expected,
+                because: "the agent identity inherits the blueprint's app roles only when inheritable permissions (allAllowed) were configured AND the blueprint SP was actually granted the roles");
     }
 }

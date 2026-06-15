@@ -63,6 +63,8 @@ This skill enforces the following principles:
 - **Function reuse**: Encourages reusing functions across commands
 - **No special characters**: Avoids emojis in logs/output (Windows compatibility)
 - **Self-documenting code**: Prefers clear code over excessive comments
+- **Crisp comments (pr-code-reviewer #30)**: Flags added comments that run past 1-2 lines, restate the code, or narrate design history — a comment says *why* in one line; long-form reasoning belongs in the commit/PR.
+- **Release-note-ready CHANGELOG (pr-code-reviewer #31)**: Flags `CHANGELOG.md` entries that name internals, explain mechanism, or run multiple sentences — each entry is one crisp consumer-facing sentence (it ships verbatim to nuget.org release notes).
 - **Minimal changes**: Makes only necessary changes to solve the problem
 
 ### Testing Standards

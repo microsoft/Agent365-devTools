@@ -21,7 +21,7 @@ This folder contains the workflow components for the `a365 setup` command. The s
 | **SetupHelpers** | `SetupHelpers.cs` | Shared helper methods; `EnsureResourcePermissionsAsync` used by standalone callers and `CopilotStudioSubcommand` |
 | **SetupResults** | `SetupResults.cs` | Result models for setup operations |
 | **SetupContext** | `SetupContext.cs` | Context bundle threaded through orchestrator steps; exposes `AuthMode`, `IsOboMode`, `IsS2sMode`, `IsBothMode` |
-| **NonDwBlueprintSetupOrchestrator** | `NonDwBlueprintSetupOrchestrator.cs` | Blueprint-based non-DW setup flow; skips Phase 2a/2b (inheritable permissions); gates agent identity grants by `authMode` |
+| **NonDwBlueprintSetupOrchestrator** | `NonDwBlueprintSetupOrchestrator.cs` | Blueprint-based non-DW setup flow; stamps inheritable permissions + S2S grants on the blueprint, then gates agent identity grants by `authMode` (skipping the per-identity S2S grant when the role is already inherited) |
 
 ---
 
@@ -74,12 +74,12 @@ The `--authmode` option controls how the agent identity service principal is gra
 | Value | Behaviour |
 |-------|-----------|
 | `obo` (default) | Principal-scoped delegated grants (`consentType: "Principal"`) on the agent identity SP — no Global Admin required |
-| `s2s` | Application role assignments on the agent identity SP — attempted programmatically; PowerShell instructions printed as fallback if the caller lacks Global Admin |
+| `s2s` | Application role assignments — when the blueprint already holds the roles and inheritable permissions are configured (`allAllowed`), the agent identity inherits them and no direct grant is made; otherwise the grant is attempted on the agent identity SP programmatically, then via `az rest`, with PowerShell instructions printed only if both fail |
 | `both` | Both OBO delegated grants and S2S app role assignments |
 
 `authMode` may also be persisted in `a365.config.json` so it takes effect on every run without the flag.
 
-Phase 2a (inheritable permissions on the blueprint) and Phase 2b (AllPrincipals grants) are **always skipped** for non-DW agents regardless of `authMode`, to avoid requiring a Global Admin role.
+Non-DW agents stamp the same permission spec set on the blueprint (inheritable permissions with `kind=allAllowed`, plus S2S app-role grants on the blueprint SP when the caller is a Global Admin). Because inheritance covers both scopes and roles, the agent identity inherits the blueprint's grants automatically — so the per-identity S2S grant (issue #460) is skipped when the blueprint grant and inheritance both succeeded, and the delegated (OBO) path never issues a per-identity grant at all.
 
 ```bash
 # Use OBO grants (default)

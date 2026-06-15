@@ -37,7 +37,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
   - `obo` (default): principal-scoped delegated grants (`consentType: "Principal"`); no Global Administrator required.
   - `s2s`: application role assignments on the agent identity SP; attempted programmatically, falls back to printed PowerShell instructions if the caller lacks Global Administrator.
   - `both`: applies both OBO delegated grants and S2S app role assignments.
-  - Inheritable permissions (Phase 2a) and AllPrincipals grants (Phase 2b) are always skipped for non-DW agents regardless of `authMode`, to avoid requiring a Global Administrator role.
+  - Non-DW agents stamp inheritable permissions and S2S grants on the blueprint (Global Administrator only); the agent identity inherits them, so a per-identity grant runs only when inheritance is not in force.
   - `authMode` can be persisted in `a365.config.json` to apply on every run without the flag.
 - `--project-path <path>` option on `develop list-configured`, `develop add-mcp-servers`, and `develop remove-mcp-servers` — specify the manifest location without requiring `a365.config.json`.
 - `setup requirements` runs without `a365.config.json` — system checks (PowerShell modules, Frontier enrollment) always run; client app checks run when a config file or Azure CLI session is available.
@@ -58,6 +58,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- `setup all --authmode s2s` no longer prints spurious "Action Required" PowerShell steps when the agent identity already inherits its app roles from the blueprint, and now retries the grant automatically before falling back to manual steps (#460).
 - `a365 develop get-token` now falls back to device code when the Windows WAM broker rejects Exchange Graph scopes with `ApiContractViolation`, instead of failing with an opaque MSAL error.
 - `setup blueprint` now configures the blueprint's inheritable Microsoft Graph permissions even when the signed-in user is not a Global Administrator, no longer aborts with a misleading "Failed to configure inheritable permissions" error when the tenant-wide consent grant cannot be made programmatically, and ends with a setup summary whose Action Required block surfaces the admin-consent URL for non-admins to hand off (#452).
 - Messaging endpoint registration and removal now retry on transient network errors instead of failing on a momentary DNS or connection blip.

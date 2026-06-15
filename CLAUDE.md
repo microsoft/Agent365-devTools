@@ -111,6 +111,27 @@ src/Microsoft.Agents.A365.DevTools.Cli/
 - All `IDisposable` objects must be disposed (especially `HttpResponseMessage`)
 - Cross-platform compatibility required (Windows, macOS, Linux)
 
+### Comments
+Comments are crisp: state *why* in one line, not *what* the code already shows. Do not write essays.
+- A code comment (`//` or `///` `<summary>`) is **one or two lines**. If you need a paragraph of rationale, it belongs in the commit message or PR description, not in source.
+- Keep an issue/PR reference (`(issue #460)`) but drop the surrounding narration.
+- Never narrate the change ("previously we did X, now Y because...") — that is commit-message content.
+- Trivial mechanical edits (log-level change, blank-line separator, `catch { throw; }`) get zero or one line, never a rationale block.
+
+```csharp
+// Bad: essay restating the change and its history
+// Issue #460: when inheritable permissions were configured with kind=allAllowed (covering both
+// scopes and roles) AND the blueprint SP was granted the app roles, the agent identity inherits
+// them automatically — the same basis the OBO branch relies on. A direct grant then only adds a
+// duplicate row and a spurious prompt, so we skip it and report the inherited grant as Granted.
+
+// Good: one-line why + reference
+// Skip the direct grant when the role is already inherited from the blueprint (issue #460).
+```
+
+### CHANGELOG entries
+`CHANGELOG.md` `[Unreleased]` ships verbatim to nuget.org release notes. Each entry is **one crisp consumer-facing sentence** about the user-visible change — no class/method names, no implementation mechanism, no multi-sentence rationale. Keep the `(#NNN)` reference. When a change makes a sibling entry stale, fix it in the same edit.
+
 ### Input Validation
 User-controlled input that reaches file system operations must be validated before use. This applies to CLI arguments, config values read from disk, and any value whose origin is outside this process.
 

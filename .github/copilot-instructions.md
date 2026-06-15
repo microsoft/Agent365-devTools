@@ -100,6 +100,13 @@
 - Keep user-facing messages clear and professional
 - Follow client-facing help text conventions
 
+### Comments
+- Comments are crisp: state *why* in one or two lines, never an essay. A `//` or `///` `<summary>` that runs to a paragraph, restates the code, or narrates the change ("previously X, now Y because...") belongs in the commit message / PR, not in source.
+- Keep an issue/PR reference (`(issue #460)`) but drop the surrounding narration. Trivial mechanical edits get zero or one comment line.
+
+### CHANGELOG
+- `CHANGELOG.md` `[Unreleased]` ships verbatim to nuget.org release notes. Each entry is one crisp consumer-facing sentence — no class/method names, no implementation mechanism, no multi-sentence rationale. Keep the `(#NNN)` reference; fix any sibling entry the change makes stale.
+
 ### Code Review Mindset
 - Be cautious about deleting code; avoid `git restore` without review
 - Do not create unnecessary documentation files
