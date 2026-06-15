@@ -766,11 +766,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// When both the programmatic Graph grant AND the az rest fallback fail, AgentIdentityS2SOutcome
-    /// is Failed, a warning is added, and PowerShell instructions are logged. Uses real GUIDs so the
-    /// az rest fallback actually runs (it validates GUIDs up front) and stubs the resource-SP lookup
-    /// to return an empty set so the fallback deterministically fails at "resource SP not found".
-    /// Issue #460.
+    /// Graph grant and az rest fallback both fail -> outcome Failed, warning added, PowerShell instructions logged (issue #460).
     /// </summary>
     [Fact]
     public async Task GrantOrInstructAgentIdentityAppPermissions_GraphAndAzRestBothFail_PrintsPowerShell_AddsWarning()
@@ -791,7 +787,13 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(new Cli.Models.AppRoleGrantResult(AllSucceeded: false, AllAlreadyAssigned: false)));
 
-        // az rest resource-SP lookup returns an empty value array -> "resource SP not found" -> fallback fails.
+        // Stub each az rest call explicitly so the test does not depend on BuildMockExecutor's default.
+        //   1. GET appRoleAssignments on the agent identity SP -> none existing.
+        ctx.Executor.ExecuteAsync(
+            "az", Arg.Is<string>(a => a.Contains("appRoleAssignments") && a.Contains("--method GET")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[]}", StandardError = string.Empty }));
+        //   2. Resource-SP lookup returns an empty value array -> "resource SP not found" -> fallback fails.
         ctx.Executor.ExecuteAsync(
             "az", Arg.Is<string>(a => a.Contains("$filter=appId eq")),
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -813,10 +815,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// When the programmatic Graph grant fails but the az rest fallback succeeds (a GA's az
-    /// token implicitly carries AppRoleAssignment.ReadWrite.All), the outcome is Granted with no
-    /// warning and no PowerShell hand-off — mirrors the blueprint SP fallback in
-    /// BatchPermissionsOrchestrator. Issue #460.
+    /// Graph grant fails but az rest fallback succeeds -> outcome Granted, no warning, no PowerShell hand-off (issue #460).
     /// </summary>
     [Fact]
     public async Task GrantOrInstructAgentIdentityAppPermissions_GraphFailsAzRestSucceeds_SetsGranted_NoWarning()
@@ -880,9 +879,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// When inheritable permissions were configured (Phase 2) AND the blueprint SP holds the app
-    /// roles, the agent identity inherits them — the direct grant must be SKIPPED (no
-    /// GrantAppRoleAssignmentAsync call) and the outcome reported as Granted. Issue #460.
+    /// Inherited roles (Phase 2 + blueprint grant) -> direct grant skipped, outcome Granted (issue #460).
     /// </summary>
     [Fact]
     public async Task GrantAgentIdentityS2SPermissions_SkipsDirectGrant_WhenRolesInherited()
@@ -901,8 +898,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// When inheritance is NOT in force (Phase 2 not completed), the direct grant must run —
-    /// GrantAppRoleAssignmentAsync is called. This is the developer / non-inherited path. Issue #460.
+    /// No inheritance -> the direct grant runs (developer / non-inherited path, issue #460).
     /// </summary>
     [Fact]
     public async Task GrantAgentIdentityS2SPermissions_PerformsDirectGrant_WhenNotInherited()
@@ -924,9 +920,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// The inheritance skip must not fire when there are no S2S specs: the outcome stays
-    /// NotApplicable (nothing was granted or inherited) rather than being falsely reported Granted.
-    /// Issue #460.
+    /// No S2S specs -> skip does not fire; outcome stays NotApplicable, not falsely Granted (issue #460).
     /// </summary>
     [Fact]
     public async Task GrantAgentIdentityS2SPermissions_DoesNotClaimGranted_WhenNoS2SSpecs_EvenIfInherited()

@@ -656,8 +656,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     }
 
     /// <summary>
-    /// Step 5a (S2S/Both): grants the agent identity's app roles, or skips the grant when they are
-    /// already inherited from the blueprint (issue #460, see <see cref="AgentIdentityInheritsBlueprintAppRoles"/>).
+    /// Grants the agent identity's S2S app roles, or skips when already inherited from the blueprint (issue #460).
     /// </summary>
     internal static async Task GrantAgentIdentityS2SPermissionsAsync(
         SetupContext ctx,
@@ -675,19 +674,15 @@ internal static class NonDwBlueprintSetupOrchestrator
     }
 
     /// <summary>
-    /// True when the agent identity already holds the blueprint's S2S app roles via inheritance —
-    /// inheritable permissions configured (allAllowed) and the blueprint SP granted the roles — so a
-    /// direct grant is redundant (issue #460). Both conditions are required.
+    /// True when the agent identity inherits the blueprint's S2S app roles, making a direct grant redundant (issue #460).
     /// </summary>
     internal static bool AgentIdentityInheritsBlueprintAppRoles(SetupResults results) =>
         results.BatchPermissionsPhase2Completed
         && results.BlueprintS2SOutcome == Models.GrantOutcome.Granted;
 
     /// <summary>
-    /// Attempts to grant app role assignments on the agent identity SP for S2S access.
-    /// Requires Agent ID Administrator, Application Administrator, or Global Administrator. When the
-    /// programmatic Graph path fails, retries via <c>az rest</c> against the operator's existing az
-    /// session before falling back to PowerShell instructions covering only the app permission section.
+    /// Grants S2S app role assignments on the agent identity SP; requires Agent ID, Application, or Global Administrator.
+    /// Falls back to az rest, then PowerShell instructions, when the Graph path lacks permission (issue #460).
     /// </summary>
     internal static async Task GrantOrInstructAgentIdentityAppPermissionsAsync(
         SetupContext ctx,
@@ -741,9 +736,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             return;
         }
 
-        // Issue #460: the Graph path failed (CLI token lacks AppRoleAssignment.ReadWrite.All). Retry
-        // via az rest before PowerShell — a GA's az token carries it via the directory role. Mirrors
-        // the blueprint SP fallback in BatchPermissionsOrchestrator.
+        // Issue #460: Graph token lacks AppRoleAssignment.ReadWrite.All; retry via az rest (a GA's az token carries it) before PowerShell.
         ctx.Logger.LogDebug("S2S app role assignments on the agent identity could not be completed via the Graph API; falling back to az rest.");
         var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
             ctx.Executor, agentIdentitySpObjectId, failedSpecs, ctx.Logger, ctx.CancellationToken);
