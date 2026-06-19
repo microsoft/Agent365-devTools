@@ -42,5 +42,5 @@ PyYAML==6.0.3
 aiohttp==3.14.1
 
 # Testing
-pytest==9.0.3
+pytest==9.1.1
 pytest-asyncio==1.4.0
