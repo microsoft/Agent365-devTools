@@ -1,11 +1,11 @@
 {
   "team_members": [
     {
-      "name": "Sellakumaran Kanagarathnam",
-      "role": "Tech Lead",
-      "login": "sellakumaran",
-      "contributions": 20,
-      "expertise": ["architecture", "code review", "backend", "API design", "mentoring", "system design", "security", "documentation"]
+      "name": "Alastair Fehr",
+      "role": "Engineering Manager / Tech Lead",
+      "login": "ajmfehr",
+      "contributions": 5,
+      "expertise": ["management", "planning", "coordination", "strategic planning", "architecture", "mentoring"]
     },
     {
       "name": "Grant Harris",
@@ -13,17 +13,10 @@
       "login": "gwharris7",
       "contributions": 10,
       "expertise": ["backend", "testing", "CLI", "dotnet", "csharp", "Azure"]
-    },
-    {
-      "name": "Alastair Fehr",
-      "role": "Engineering Manager",
-      "login": "ajmfehr",
-      "contributions": 5,
-      "expertise": ["management", "planning", "coordination", "strategic planning"]
     }
   ],
   "escalation_chain": {
-    "lead": ["sellakumaran"],
+    "lead": ["ajmfehr"],
     "manager": "ajmfehr"
   },
   "sla_hours": {
@@ -42,7 +35,7 @@
       "secrets exposed", "credential leak", "token leak", "API key exposed",
       "insecure", "unsafe", "malicious", "attack", "breach"
     ],
-    "assignee": "sellakumaran",
+    "assignee": "ajmfehr",
     "default_priority": "P1"
   }
 }

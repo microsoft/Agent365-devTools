@@ -170,16 +170,16 @@ AutoTriage is an AI-powered GitHub automation system that automatically triages 
 {
   "team_members": [
     {
-      "name": "Sellakumaran Kanagarathnam",
-      "role": "Tech Lead",
-      "login": "sellakumaran",
-      "contributions": 20,
-      "expertise": ["architecture", "backend", "API design", "security"]
+      "name": "Alastair Fehr",
+      "role": "Engineering Manager / Tech Lead",
+      "login": "ajmfehr",
+      "contributions": 5,
+      "expertise": ["management", "planning", "coordination", "strategic planning", "architecture", "mentoring"]
     }
   ],
   "escalation_chain": {
-    "lead": ["sellakumaran", "pontemonti"],
-    "manager": "tmlsousa"
+    "lead": ["ajmfehr"],
+    "manager": "ajmfehr"
   },
   "sla_hours": {
     "P0": 24,
