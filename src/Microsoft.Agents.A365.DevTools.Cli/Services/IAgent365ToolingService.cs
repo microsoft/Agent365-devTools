@@ -98,6 +98,17 @@ public interface IAgent365ToolingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Retrieves the PPMI application (client) ID for a BYO MCP server by name.
+    /// Calls GET /agents/mcpServers/appIds?serverName={serverName} on the MCP Platform.
+    /// </summary>
+    /// <param name="serverName">MCP server name</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Response containing the MCP server's PPMI app ID, or null on failure</returns>
+    Task<McpServerAppIdResponse?> GetMcpServerAppIdByNameAsync(
+        string serverName,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Deletes a BYO (Bring Your Own) MCP server and returns the associated app IDs for cleanup
     /// </summary>
     /// <param name="serverName">MCP server name to delete</param>

@@ -23,6 +23,8 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
+- `develop-mcp get-agent-instances` command lists agent instance service principals for a given blueprint ID.
+- `develop-mcp add-byo-scopes` command grants oauth2 delegated permissions for BYO MCP servers to agent instances.
 - Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.
 - Authentication context (tenant and user) is now logged at the `Information` level whenever the resolved sign-in identity changes, giving operators a clear audit trail in the log file of who the CLI is acting as, without exposing credentials.
 - `a365 develop-mcp evaluate` command for evaluating MCP server tool schema quality — runs deterministic and semantic checks (via GitHub Copilot or Claude Code CLIs), computes maturity scoring, and generates an interactive HTML report

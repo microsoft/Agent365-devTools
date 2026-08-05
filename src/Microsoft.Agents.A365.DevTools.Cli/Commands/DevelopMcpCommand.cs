@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands.DevelopSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
@@ -22,7 +23,8 @@ public static class DevelopMcpCommand
         ILogger logger,
         IAgent365ToolingService toolingService,
         IEvaluationPipelineService? evaluationPipelineService = null,
-        GraphApiService? graphApiService = null)
+        GraphApiService? graphApiService = null,
+        AgentBlueprintService? agentBlueprintService = null)
     {
         var developMcpCommand = new Command("develop-mcp", "Manage MCP servers in Dataverse environments");
 
@@ -39,6 +41,16 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService, graphApiService));
         developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
+
+        if (agentBlueprintService is not null)
+        {
+            developMcpCommand.AddCommand(CreateGetAgentInstancesSubcommand(logger, agentBlueprintService));
+
+            if (graphApiService is not null)
+            {
+                developMcpCommand.AddCommand(CreateAddByoScopesSubcommand(logger, toolingService, agentBlueprintService, graphApiService));
+            }
+        }
 
         if (evaluationPipelineService is not null)
         {
@@ -626,6 +638,108 @@ public static class DevelopMcpCommand
 
             var executor = new RegisterCommandExecutor(logger, toolingService, graphApiService);
             var success = await executor.ExecuteAsync(args, context.GetCancellationToken());
+            if (!success)
+            {
+                context.ExitCode = 1;
+            }
+        });
+
+        return command;
+    }
+
+    /// <summary>
+    /// Creates the get-agent-instances subcommand.
+    /// </summary>
+    private static Command CreateGetAgentInstancesSubcommand(
+        ILogger logger,
+        AgentBlueprintService agentBlueprintService)
+    {
+        var command = new Command("get-agent-instances", "List agent instance service principals for a given blueprint");
+
+        var blueprintIdOption = new Option<string>(
+            ["--blueprint-id", "-b"],
+            description: "Agent Identity Blueprint ID (GUID)")
+        {
+            IsRequired = true,
+        };
+        command.AddOption(blueprintIdOption);
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Auto-detected from 'az account show' if not provided.");
+        command.AddOption(tenantIdOption);
+
+        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
+
+        command.SetHandler(async (context) =>
+        {
+            var blueprintId = context.ParseResult.GetValueForOption(blueprintIdOption)!;
+            var tenantId = context.ParseResult.GetValueForOption(tenantIdOption);
+            var ct = context.GetCancellationToken();
+
+            var executor = new GetAgentInstancesExecutor(logger, agentBlueprintService);
+            var success = await executor.ExecuteAsync(blueprintId, tenantId, ct);
+            if (!success)
+            {
+                context.ExitCode = 1;
+            }
+        });
+
+        return command;
+    }
+
+    /// <summary>
+    /// Creates the add-byo-scopes subcommand.
+    /// </summary>
+    private static Command CreateAddByoScopesSubcommand(
+        ILogger logger,
+        IAgent365ToolingService toolingService,
+        AgentBlueprintService agentBlueprintService,
+        GraphApiService graphApiService)
+    {
+        var command = new Command("add-byo-scopes", "Grant oauth2 delegated permissions for BYO MCP servers to agent instances");
+
+        var serverNamesOption = new Option<string>(
+            ["--server-names", "-s"],
+            description: "Comma-separated list of BYO server names (e.g. ext_server1,ext_server2)")
+        {
+            IsRequired = true,
+        };
+        command.AddOption(serverNamesOption);
+
+        var blueprintIdOption = new Option<string?>(
+            ["--blueprint-id", "-b"],
+            description: "Blueprint ID to auto-resolve all agent instances");
+        command.AddOption(blueprintIdOption);
+
+        var agentInstancesOption = new Option<string?>(
+            ["--agent-instances", "-i"],
+            description: "Comma-separated list of agent instance SP IDs (alternative to --blueprint-id, or to filter within blueprint)");
+        command.AddOption(agentInstancesOption);
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Auto-detected from 'az account show' if not provided.");
+        command.AddOption(tenantIdOption);
+
+        var dryRunOption = new Option<bool>(
+            "--dry-run",
+            description: "Show what would be done without executing");
+        command.AddOption(dryRunOption);
+
+        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
+
+        command.SetHandler(async (context) =>
+        {
+            var serverNames = context.ParseResult.GetValueForOption(serverNamesOption)!;
+            var blueprintId = context.ParseResult.GetValueForOption(blueprintIdOption);
+            var agentInstances = context.ParseResult.GetValueForOption(agentInstancesOption);
+            var tenantId = context.ParseResult.GetValueForOption(tenantIdOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            var ct = context.GetCancellationToken();
+
+            var executor = new AddByoScopesExecutor(logger, toolingService, agentBlueprintService, graphApiService);
+            var success = await executor.ExecuteAsync(serverNames, blueprintId, agentInstances, tenantId, dryRun, ct);
             if (!success)
             {
                 context.ExitCode = 1;

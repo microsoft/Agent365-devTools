@@ -323,6 +323,12 @@ public class Agent365ToolingService : IAgent365ToolingService
         return $"{baseUrl}/agents/mcpServers/{Uri.EscapeDataString(serverName)}/provisionIdentity";
     }
 
+    private string BuildGetMcpServerAppIdsUrl(string environment, string serverName)
+    {
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        return $"{baseUrl}/agents/mcpServers/appIds?serverName={Uri.EscapeDataString(serverName)}";
+    }
+
     /// <inheritdoc />
     public async Task<DataverseEnvironmentsResponse?> ListEnvironmentsAsync(CancellationToken cancellationToken = default)
     {
@@ -842,6 +848,71 @@ public class Agent365ToolingService : IAgent365ToolingService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to provision identity for MCP server {ServerName}", serverName);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<McpServerAppIdResponse?> GetMcpServerAppIdByNameAsync(
+        string serverName,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(serverName))
+            throw new ArgumentException("Server name cannot be null or empty", nameof(serverName));
+
+        try
+        {
+            var endpointUrl = BuildGetMcpServerAppIdsUrl(_environment, serverName);
+
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogDebug("Getting app ID for MCP server {ServerName} (CorrelationId: {CorrelationId})", serverName, correlationId);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
+
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
+
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            if (string.IsNullOrWhiteSpace(authToken))
+            {
+                _logger.LogError("Failed to acquire authentication token");
+                return null;
+            }
+
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+            LogRequest("GET", endpointUrl);
+
+            using var response = await httpClient.GetAsync(endpointUrl, cancellationToken);
+
+            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "get MCP server app ID", cancellationToken);
+            if (!isSuccess)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(responseContent))
+            {
+                _logger.LogError("Get MCP server app ID returned empty response");
+                return null;
+            }
+
+            var appIdResponse = JsonDeserializationHelper.DeserializeWithDoubleSerialization<McpServerAppIdResponse>(
+                responseContent, _logger);
+
+            if (appIdResponse == null || string.IsNullOrWhiteSpace(appIdResponse.McpServerAppId))
+            {
+                _logger.LogError("Get MCP server app ID response is missing mcpServerAppId");
+                return null;
+            }
+
+            _logger.LogDebug("Successfully retrieved app ID {AppId} for MCP server {ServerName}", appIdResponse.McpServerAppId, serverName);
+            return appIdResponse;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get app ID for MCP server {ServerName}", serverName);
             return null;
         }
     }
