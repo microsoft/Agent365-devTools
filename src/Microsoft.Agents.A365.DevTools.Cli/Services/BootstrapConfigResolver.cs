@@ -71,17 +71,20 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
     private readonly IConfigService _configService;
     private readonly CommandExecutor _executor;
     private readonly GraphApiService? _graphApiService;
+    private readonly IServicePrincipalProvisioningService? _spProvisioningService;
     private readonly ILogger<BootstrapConfigResolver> _logger;
 
     public BootstrapConfigResolver(
         IConfigService configService,
         CommandExecutor executor,
         GraphApiService? graphApiService,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        IServicePrincipalProvisioningService? spProvisioningService = null)
     {
         _configService = configService;
         _executor = executor;
         _graphApiService = graphApiService;
+        _spProvisioningService = spProvisioningService;
         _logger = loggerFactory.CreateLogger<BootstrapConfigResolver>();
     }
 
@@ -92,6 +95,49 @@ internal sealed class BootstrapConfigResolver : IBootstrapConfigResolver
         FileInfo configFile,
         bool isCleanupMode = false,
         CancellationToken ct = default)
+    {
+        var config = await ResolveCoreAsync(agentName, tenantIdFlag, configFile, isCleanupMode, ct);
+
+        if (config != null)
+        {
+            await EnsureCliServicePrincipalAsync(config.TenantId, ct);
+        }
+
+        return config;
+    }
+
+    /// <summary>
+    /// The CLI is a public client and cannot provision its own service principal, so the Agent 365
+    /// service is
+    /// asked to do it once per tenant per process.
+    /// </summary>
+    private async Task EnsureCliServicePrincipalAsync(string? tenantId, CancellationToken ct)
+    {
+        if (_spProvisioningService == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _spProvisioningService.EnsureProvisionedAsync(tenantId, ct: ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Service principal provisioning check did not complete.");
+        }
+    }
+
+    private async Task<Agent365Config?> ResolveCoreAsync(
+        string? agentName,
+        string? tenantIdFlag,
+        FileInfo configFile,
+        bool isCleanupMode,
+        CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(agentName))
         {

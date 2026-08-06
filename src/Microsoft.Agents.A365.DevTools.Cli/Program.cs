@@ -384,6 +384,15 @@ class Program
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
         services.AddSingleton<ManifestTemplateService>(); // For publish command template extraction
 
+        // Provisions the CLI service principal via the Agent 365 service; the CLI is a public
+        // client and cannot
+        // provision it itself.
+        services.AddSingleton<IServicePrincipalProvisioningService>(sp =>
+            new ServicePrincipalProvisioningService(
+                sp.GetRequiredService<ILogger<ServicePrincipalProvisioningService>>(),
+                sp.GetRequiredService<IAuthenticationService>(),
+                sp.GetRequiredService<IConfigService>()));
+
         // Register ProcessService for cross-platform process launching
         services.AddSingleton<IProcessService, ProcessService>();
 

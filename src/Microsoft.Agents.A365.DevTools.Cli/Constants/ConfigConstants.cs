@@ -98,6 +98,19 @@ public static class ConfigConstants
     public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
 
     /// <summary>
+    /// Global Power Platform API host. Tenant-scoped Agent 365 provisioning routes are reachable
+    /// here and are proxied to the tenant's home cluster.
+    /// </summary>
+    public const string ProductionProvisioningBaseUrl = "https://api.powerplatform.com";
+
+    /// <summary>
+    /// Route that provisions the Agent 365 CLI service principal in the caller's tenant.
+    /// Format argument 0 is the tenant ID.
+    /// </summary>
+    public const string Agent365CliProvisionPathFormat =
+        "/maven/tenants/{0}/agent365/servicePrincipals/agent365Cli/provision?api-version=1";
+
+    /// <summary>
     /// Delegated scope value exposed on the blueprint app registration to enable
     /// OBO (On-Behalf-Of) callers to acquire tokens scoped to the agent.
     /// </summary>
@@ -176,4 +189,19 @@ public static string GetAgent365ToolsResourceAppId(string environment)
 
     return McpConstants.WorkIQToolsProdAppId;
 }
+
+    /// <summary>
+    /// Environment-aware Agent 365 provisioning service base URL.
+    /// </summary>
+    public static string GetProvisioningBaseUrl(string? environment)
+    {
+        var customEndpoint = Environment.GetEnvironmentVariable(
+            $"A365_PROVISIONING_ENDPOINT_{environment?.ToUpperInvariant()}")
+            ?? Environment.GetEnvironmentVariable("A365_PROVISIONING_ENDPOINT");
+
+        if (!string.IsNullOrWhiteSpace(customEndpoint))
+            return customEndpoint.TrimEnd('/');
+
+        return ProductionProvisioningBaseUrl;
+    }
 }
