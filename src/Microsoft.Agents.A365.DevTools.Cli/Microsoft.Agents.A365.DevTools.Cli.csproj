@@ -23,6 +23,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.A365.DevTools.Validation\Microsoft.Agents.A365.DevTools.Validation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- CLI Framework -->
     <PackageReference Include="Microsoft.Identity.Client" />
     <PackageReference Include="Microsoft.Identity.Client.Broker" />

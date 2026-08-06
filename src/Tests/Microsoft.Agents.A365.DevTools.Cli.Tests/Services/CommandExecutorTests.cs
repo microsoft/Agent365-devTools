@@ -45,15 +45,20 @@ public class CommandExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_InvalidCommand_ThrowsException()
+    public async Task ExecuteAsync_InvalidCommand_ReturnsFailedResult()
     {
         // Arrange
         var command = "nonexistent-command-12345";
         var args = "";
 
-        // Act & Assert
-        await Assert.ThrowsAsync<System.ComponentModel.Win32Exception>(() =>
-            _executor.ExecuteAsync(command, args, captureOutput: true));
+        // Act
+        var result = await _executor.ExecuteAsync(command, args, captureOutput: true);
+
+        // Assert
+        result.ExitCode.Should().Be(-1,
+            because: "a missing executable should return exit code -1 instead of throwing");
+        result.StandardError.Should().Contain("not found",
+            because: "the error message should indicate the command was not found");
     }
 
     [Fact]

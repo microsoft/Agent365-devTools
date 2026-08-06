@@ -34,6 +34,12 @@ public class RequirementCheckResult
     public string? Details { get; set; }
 
     /// <summary>
+    /// Optional metadata for structured report output (validate-specific).
+    /// Consumers should cast to the appropriate metadata type.
+    /// </summary>
+    public object? Metadata { get; set; }
+
+    /// <summary>
     /// Creates a successful result
     /// </summary>
     public static RequirementCheckResult Success(string? details = null)

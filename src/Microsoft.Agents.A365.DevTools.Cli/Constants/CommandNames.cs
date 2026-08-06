@@ -11,6 +11,7 @@ public static class CommandNames
 {
     // Main commands
     public const string Setup = "setup";
+    public const string Validate = "validate";
     public const string Deploy = "deploy";
     public const string Config = "config";
     public const string Publish = "publish";
