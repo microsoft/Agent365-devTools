@@ -62,6 +62,22 @@ public class SetupHelpersAdminConsentInstructionsTests
     }
 
     [Fact]
+    public void LogNonDwAdminConsentInstructions_OptionA_ShowsDefenderDelegatedPermission()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
+
+        var defenderLines = logger.Messages
+            .Where(m => m.Contains("Defender API") && m.Contains(ConfigConstants.DefenderApiRealtimeProtectionScope))
+            .ToList();
+        defenderLines.Should().HaveCount(1,
+            because: "the Defender API delegated scope must appear exactly once so the admin grants it alongside the other platform APIs");
+        defenderLines[0].Should().Contain("Delegated",
+            because: "only delegated grants are needed for OBO — no Application permissions");
+    }
+
+    [Fact]
     public void LogNonDwAdminConsentInstructions_DoesNotEmitOptionBPowerShell()
     {
         var logger = new CapturingLogger();

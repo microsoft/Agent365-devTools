@@ -20,8 +20,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 ///   1. Requirements validation
 ///   2. Blueprint creation (shared with DW)
 ///   3. Batch permissions on the blueprint (shared with DW pipeline; non-DW spec set:
-///      Observability API, Power Platform API, custom). MAC reads from the blueprint,
-///      so stamping here gives the same set visibility there.
+///      Observability API, Defender API, Power Platform API, custom). MAC reads
+///      from the blueprint, so stamping here gives the same set visibility there.
 ///   4. Agent Identity creation via POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity
 ///   5. Agent Identity permission grants (same spec set as step 3) — OBO or S2S
 ///   6. Agent registration via Graph API (copilot/agentRegistrations)
@@ -117,14 +117,15 @@ internal static class NonDwBlueprintSetupOrchestrator
             logger.LogInformation(sub + "create managed identity");
         }
 
-        // 3. Inheritable Permissions — non-DW spec set (Observability API, Power Platform API, custom)
-        //    stamped on the blueprint via SetInheritablePermissionsAsync so MAC and other dependent
-        //    systems can see them. The same set is applied to the agent identity SP in step 5.
+        // 3. Inheritable Permissions — non-DW spec set (Observability API, Defender API,
+        //    Power Platform API, custom) stamped on the blueprint via SetInheritablePermissionsAsync
+        //    so MAC and other dependent systems can see them. The same set is applied to the agent
+        //    identity SP in step 5.
         var selectedAuthMode = authMode ?? config.AuthMode;
         var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
             ? "obo"
             : selectedAuthMode.Trim().ToLowerInvariant();
-        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for Observability API, Power Platform API, and custom permissions (Global Administrator required; consent URL printed if absent)");
+        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for Observability API, Defender API, Power Platform API, and custom permissions (Global Administrator required; consent URL printed if absent)");
 
         // 4. Blueprint Permission Grants — per authMode. The consent URL targets the blueprint
         //    app, and S2S app-role assignments are persisted as grants flowing from the blueprint;

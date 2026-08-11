@@ -310,6 +310,7 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("  - Blueprint: {BlueprintId}", dryRunConfig.AgentBlueprintId);
                 logger.LogInformation("  - Messaging Bot API: {Scope}", ConfigConstants.MessagingBotApiAdminConsentScope);
                 logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("  - Defender API: {DefenderScope} (delegated + application)", ConfigConstants.DefenderApiRealtimeProtectionScope);
                 logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 logger.LogInformation("No changes made. Run without --dry-run to execute.");
                 return;
@@ -852,6 +853,7 @@ internal static class PermissionsSubcommand
             envAtgAppId,
             ConfigConstants.MessagingBotApiAppId,
             ConfigConstants.ObservabilityApiAppId,
+            ConfigConstants.DefenderApiAppId,
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };

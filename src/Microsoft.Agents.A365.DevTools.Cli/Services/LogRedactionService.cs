@@ -59,6 +59,7 @@ public sealed class LogRedactionService : ILogRedactionService
         "00000003-0000-0000-c000-000000000000", // Microsoft Graph
         "5a807f24-c9de-44ee-a3a7-329e88a00ffc", // Agent 365 Messaging Bot API
         "9b975845-388f-4429-889e-eab1ef63949c", // Agent 365 Observability API
+        "86a21212-634e-4553-b3d6-e477e4c9d9ec", // Agent 365 Defender API
         "8578e004-a5c6-46e7-913e-12f58912df43", // Power Platform API (Connectivity)
         "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1", // Agent 365 Tools (MCP audience, production)
     };

@@ -26,13 +26,14 @@ public class SetupHelpersConsentUrlTests
 
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, graphScopes, mcpScopes);
 
-        urls.Should().HaveCount(5);
+        urls.Should().HaveCount(6);
         urls.Select(u => u.ResourceName).Should().Contain(new[]
         {
             "Microsoft Graph",
             "Agent 365 Tools",
             "Messaging Bot API",
             "Observability API",
+            "Defender API",
             "Power Platform API"
         });
     }
@@ -70,6 +71,18 @@ public class SetupHelpersConsentUrlTests
 
         obsUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
             because: "OtelWrite is the published delegated scope on the Observability API used for admin consent");
+    }
+
+    [Fact]
+    public void BuildAdminConsentUrls_DefenderApi_UsesHttpsIdentifierUriNotApiScheme()
+    {
+        var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
+        var defenderUrl = urls.First(u => u.ResourceName == "Defender API").ConsentUrl;
+
+        defenderUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
+            because: "the Defender resource publishes only the https identifier URI — api://{appId} is not in its servicePrincipalNames and consent fails with AADSTS500011");
+        defenderUrl.Should().NotContain(Uri.EscapeDataString($"api://{ConfigConstants.DefenderApiAppId}"),
+            because: "the api:// form of the Defender resource is not a registered servicePrincipalName");
     }
 
     [Fact]
@@ -211,9 +224,9 @@ public class SetupHelpersConsentUrlTests
     }
 
     [Fact]
-    public void BuildCombinedConsentUrl_AlwaysIncludesAllThreeFixedResources()
+    public void BuildCombinedConsentUrl_AlwaysIncludesAllFixedResources()
     {
-        // Even with empty graph and MCP scopes, the three fixed resources must be present
+        // Even with empty graph and MCP scopes, the fixed resources must be present
         var url = SetupHelpers.BuildCombinedConsentUrl(
             TenantId, BlueprintClientId,
             Array.Empty<string>(), Array.Empty<string>());
@@ -222,6 +235,8 @@ public class SetupHelpersConsentUrlTests
             because: "scope URIs are Uri.EscapeDataString-encoded in the query string — required by AAD for adminconsent");
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
             because: "OtelWrite is the published delegated scope on the Observability API used for admin consent");
+        url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
+            because: "RealtimeProtection.Process is the published delegated scope on the Defender API — without it the agent cannot call the Defender security webhook");
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
     }
 
@@ -264,8 +279,9 @@ public class SetupHelpersConsentUrlTests
             "Microsoft Graph",
             "Agent 365 Tools",
             "Observability API",
+            "Defender API",
             "Power Platform API",
-        }, because: "non-M365 tenants lack the Messaging Bot resource SP — Bot would cause AADSTS650053 if included");
+        }, because: "non-M365 tenants lack the Messaging Bot resource SP — Bot would cause AADSTS650053 if included; the Defender API is required for the security integration on every agent regardless of M365 surface");
     }
 
     [Fact]

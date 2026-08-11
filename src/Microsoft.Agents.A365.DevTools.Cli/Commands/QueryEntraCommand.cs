@@ -616,6 +616,7 @@ public class QueryEntraCommand
             AuthenticationConstants.MicrosoftGraphResourceAppId => "Microsoft Graph",
             ConfigConstants.MessagingBotApiAppId => "Messaging Bot API",
             ConfigConstants.ObservabilityApiAppId => "Observability API",
+            ConfigConstants.DefenderApiAppId => "Defender API",
             PowerPlatformConstants.PowerPlatformApiResourceAppId => "Power Platform API",
             "00000002-0000-0000-c000-000000000000" => "Azure Active Directory Graph",
             "797f4846-ba00-4fd7-ba43-dac1f8f63013" => "Azure Service Management",

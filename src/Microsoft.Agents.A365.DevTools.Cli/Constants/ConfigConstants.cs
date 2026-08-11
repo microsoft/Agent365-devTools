@@ -81,6 +81,16 @@ public static class ConfigConstants
     public const string ObservabilityApiIdentifierUri = "api://9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
+    /// Defender API App ID
+    /// </summary>
+    public const string DefenderApiAppId = "86a21212-634e-4553-b3d6-e477e4c9d9ec";
+
+    /// <summary>
+    /// Defender API identifier URI.
+    /// </summary>
+    public const string DefenderApiIdentifierUri = "https://rtp-a365.ai.defender.microsoft.com";
+
+    /// <summary>
     /// Single source of truth for the Messaging Bot API delegated scope.
     /// The resource SP (appId 5a807f24-c9de-44ee-a3a7-329e88a00ffc) exposes exactly
     /// one delegated scope, "AgentData.ReadWrite". Both the per-resource and combined
@@ -96,6 +106,12 @@ public static class ConfigConstants
     /// Used in admin consent URLs and granted to provisioned agent identities via OAuth2PermissionGrants.
     /// </summary>
     public const string ObservabilityApiOtelWriteScope = "Agent365.Observability.OtelWrite";
+
+    /// <summary>
+    /// Defender API app role and delegated scope for the Defender security integration.
+    /// Must match the value published on the resource SP.
+    /// </summary>
+    public const string DefenderApiRealtimeProtectionScope = "RealtimeProtection.Process";
 
     /// <summary>
     /// Delegated scope value exposed on the blueprint app registration to enable

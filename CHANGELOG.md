@@ -22,7 +22,12 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
+#### Existing agents: grant Defender API permissions
+
+Agents provisioned before this release need `RealtimeProtection.Process` granted as both a **delegated** and an **application** permission on the blueprint app for the Defender security integration. Requires Global Administrator. Follow the steps above, searching for `86a21212-634e-4553-b3d6-e477e4c9d9ec` in step 2 and selecting `RealtimeProtection.Process` in steps 3 and 4. Re-running `a365 setup all` grants it automatically.
+
 ### Added
+- `RealtimeProtection.Process` on the Defender API is now granted automatically during `a365 setup` as both a delegated and an application permission, enabling the Microsoft Defender security integration without manual Entra steps.
 - Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.
 - Authentication context (tenant and user) is now logged at the `Information` level whenever the resolved sign-in identity changes, giving operators a clear audit trail in the log file of who the CLI is acting as, without exposing credentials.
 - `a365 develop-mcp evaluate` command for evaluating MCP server tool schema quality — runs deterministic and semantic checks (via GitHub Copilot or Claude Code CLIs), computes maturity scoring, and generates an interactive HTML report
