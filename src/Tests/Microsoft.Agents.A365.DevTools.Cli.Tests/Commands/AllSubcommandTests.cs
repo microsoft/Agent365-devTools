@@ -130,6 +130,175 @@ public class AllSubcommandTests : IDisposable
             because: "no backup should be created when tenants match case-insensitively");
     }
 
+    // MergeCachedBootstrapState
+
+    [Fact]
+    public void MergeCachedBootstrapState_SameAgentIdentity_MergesGeneratedState()
+    {
+        var genConfig = new Agent365Config
+        {
+            AgentIdentityDisplayName = "Support Europe Identity",
+            AgentBlueprintId = "cached-blueprint-id",
+            AgentBlueprintObjectId = "cached-blueprint-object-id",
+            AgentBlueprintServicePrincipalObjectId = "cached-blueprint-sp-id",
+            AgentBlueprintClientSecret = "cached-secret",
+            AgentBlueprintClientSecretProtected = true,
+            AgentRegistrationId = "cached-registration-id",
+            AgenticAppId = "cached-agentic-app-id",
+            AgentInstanceId = "cached-instance-id",
+            AgenticUserId = "cached-agentic-user-id",
+            ManagedIdentityPrincipalId = "cached-managed-identity-id",
+            BotId = "cached-bot-id",
+            BotMsaAppId = "cached-bot-app-id",
+            BotMessagingEndpoint = "https://example.test/api/messages",
+            AzureOpenAIEndpoint = "https://openai.example.test",
+            AzureOpenAIApiKey = "cached-openai-key",
+            Completed = true,
+            CompletedAt = DateTime.UtcNow,
+        };
+        genConfig.ResourceConsents.Add(new ResourceConsent { ResourceAppId = "resource-app-id" });
+        var nonDwConfig = new Agent365Config { AgentIdentityDisplayName = "Support Europe Identity" };
+
+        AllSubcommand.MergeCachedBootstrapState(nonDwConfig, genConfig);
+
+        nonDwConfig.AgentBlueprintId.Should().Be("cached-blueprint-id",
+            because: "a bootstrap rerun must reuse the selected blueprint");
+        nonDwConfig.AgentBlueprintObjectId.Should().Be("cached-blueprint-object-id",
+            because: "the stable object ID prevents ambiguous display-name discovery");
+        nonDwConfig.AgentBlueprintServicePrincipalObjectId.Should().Be("cached-blueprint-sp-id");
+        nonDwConfig.AgentBlueprintClientSecret.Should().Be("cached-secret");
+        nonDwConfig.AgentBlueprintClientSecretProtected.Should().BeTrue();
+        nonDwConfig.ResourceConsents.Should().ContainSingle();
+        nonDwConfig.AgentRegistrationId.Should().Be("cached-registration-id",
+            because: "an exact rerun for the same agent identity must reuse the existing registration, not recreate it");
+        nonDwConfig.AgenticAppId.Should().Be("cached-agentic-app-id",
+            because: "an exact rerun for the same agent identity must reuse the existing agent identity, not recreate it");
+        nonDwConfig.AgentInstanceId.Should().Be("cached-instance-id");
+        nonDwConfig.AgenticUserId.Should().Be("cached-agentic-user-id");
+        nonDwConfig.ManagedIdentityPrincipalId.Should().Be("cached-managed-identity-id");
+        nonDwConfig.BotId.Should().Be("cached-bot-id");
+        nonDwConfig.BotMsaAppId.Should().Be("cached-bot-app-id");
+        nonDwConfig.BotMessagingEndpoint.Should().Be("https://example.test/api/messages");
+        nonDwConfig.AzureOpenAIEndpoint.Should().Be("https://openai.example.test");
+        nonDwConfig.AzureOpenAIApiKey.Should().Be("cached-openai-key");
+        nonDwConfig.Completed.Should().BeTrue();
+        nonDwConfig.CompletedAt.Should().Be(genConfig.CompletedAt);
+    }
+
+    [Fact]
+    public void MergeCachedBootstrapState_DifferentAgentIdentity_MergesBlueprintStateOnly()
+    {
+        var genConfig = new Agent365Config
+        {
+            AgentIdentityDisplayName = "Agent A Identity",
+            AgentBlueprintId = "shared-blueprint-id",
+            AgentBlueprintObjectId = "shared-blueprint-object-id",
+            AgentBlueprintClientSecret = "shared-secret",
+            AgentRegistrationId = "agent-a-registration-id",
+            AgenticAppId = "agent-a-agentic-app-id",
+            BotId = "agent-a-bot-id",
+        };
+        genConfig.ResourceConsents.Add(new ResourceConsent { ResourceAppId = "resource-app-id" });
+        var nonDwConfig = new Agent365Config { AgentIdentityDisplayName = "Agent B Identity" };
+
+        AllSubcommand.MergeCachedBootstrapState(nonDwConfig, genConfig);
+
+        nonDwConfig.AgentBlueprintId.Should().Be("shared-blueprint-id",
+            because: "AgentBlueprintId is blueprint-scoped and safe to share across agent identities hosted under the same blueprint");
+        nonDwConfig.AgentBlueprintObjectId.Should().Be("shared-blueprint-object-id");
+        nonDwConfig.AgentBlueprintClientSecret.Should().Be("shared-secret");
+        nonDwConfig.ResourceConsents.Should().ContainSingle();
+        nonDwConfig.AgentRegistrationId.Should().BeNull(
+            because: "a shared blueprint does not make another agent's registration reusable");
+        nonDwConfig.AgenticAppId.Should().BeNull(
+            because: "Agent A's identity must not be handed to Agent B");
+        nonDwConfig.BotId.Should().BeNull(
+            because: "bot state belongs to the specific agent identity");
+    }
+
+    [Fact]
+    public void MergeCachedBootstrapState_DoesNotOverwriteAlreadyResolvedIds()
+    {
+        var genConfig = new Agent365Config
+        {
+            AgentIdentityDisplayName = "Support Europe Identity",
+            AgentBlueprintId = "cached-blueprint-id",
+            AgenticAppId = "cached-agentic-app-id",
+        };
+        var nonDwConfig = new Agent365Config
+        {
+            AgentIdentityDisplayName = "Support Europe Identity",
+            AgentBlueprintId = "already-resolved-blueprint-id",
+        };
+
+        AllSubcommand.MergeCachedBootstrapState(nonDwConfig, genConfig);
+
+        nonDwConfig.AgentBlueprintId.Should().Be("already-resolved-blueprint-id",
+            because: "an already-resolved value on the target config must not be clobbered by the cached one");
+    }
+
+    // RefuseIfDirectoryBelongsToDifferentAgentIdentityAsync
+
+    [Fact]
+    public async Task RefuseIfDirectoryBelongsToDifferentAgentIdentity_WhenConfigFileAbsent_ReturnsFalse()
+    {
+        var configPath = Path.Combine(_tempDir, "a365.config.json");
+        // deliberately not created — fresh directory, must always be allowed to proceed.
+
+        var refused = await AllSubcommand.RefuseIfDirectoryBelongsToDifferentAgentIdentityAsync(
+            configPath, "Agent B Identity", "Agent B", NullLogger.Instance);
+
+        refused.Should().BeFalse(because: "a fresh directory with no existing config must always be allowed to proceed");
+    }
+
+    [Fact]
+    public async Task RefuseIfDirectoryBelongsToDifferentAgentIdentity_WhenIdentityMatches_ReturnsFalse()
+    {
+        var configPath = Path.Combine(_tempDir, "a365.config.json");
+        File.WriteAllText(configPath, """{"tenantId": "tenant", "agentIdentityDisplayName": "Agent A Identity"}""");
+
+        var refused = await AllSubcommand.RefuseIfDirectoryBelongsToDifferentAgentIdentityAsync(
+            configPath, "Agent A Identity", "Agent A", NullLogger.Instance);
+
+        refused.Should().BeFalse(
+            because: "an exact --agent-name rerun in the same directory must remain idempotent and must not be refused");
+        File.Exists(configPath).Should().BeTrue(because: "the check must not mutate the file either way");
+    }
+
+    [Fact]
+    public async Task RefuseIfDirectoryBelongsToDifferentAgentIdentity_WhenIdentityDiffers_ReturnsTrueAndLeavesFileUntouched()
+    {
+        var configPath = Path.Combine(_tempDir, "a365.config.json");
+        File.WriteAllText(configPath, """{"tenantId": "tenant", "agentIdentityDisplayName": "Agent A Identity"}""");
+        var logger = Substitute.For<ILogger>();
+
+        var refused = await AllSubcommand.RefuseIfDirectoryBelongsToDifferentAgentIdentityAsync(
+            configPath, "Agent B Identity", "Agent B", logger);
+
+        refused.Should().BeTrue(
+            because: "the current config format supports only one agent identity per working directory");
+        File.ReadAllText(configPath).Should().Contain("Agent A Identity",
+            because: "the prior agent's static config must be left completely untouched, not silently overwritten or merged");
+        logger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Agent A Identity") && o.ToString()!.Contains("only one agent identity per working directory")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task RefuseIfDirectoryBelongsToDifferentAgentIdentity_WhenConfigHasNoIdentityField_ReturnsFalse()
+    {
+        var configPath = Path.Combine(_tempDir, "a365.config.json");
+        File.WriteAllText(configPath, """{"tenantId": "tenant"}""");
+
+        var refused = await AllSubcommand.RefuseIfDirectoryBelongsToDifferentAgentIdentityAsync(
+            configPath, "Agent B Identity", "Agent B", NullLogger.Instance);
+
+        refused.Should().BeFalse(because: "with no identity recorded on disk there is nothing to conflict with");
+    }
+
     // -----------------------------------------------------------------------
     // ExecuteMessagingEndpointStepAsync
     // -----------------------------------------------------------------------

@@ -1009,6 +1009,35 @@ public class Agent365ConfigTests
         cloned.NeedAzureOpenAI.Should().BeTrue();
     }
 
+    [Fact]
+    public void WithAgentBlueprintDisplayName_OverridesDisplayNameAndPreservesAllOtherFields()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant-id",
+            ClientAppId = "client-app-id",
+            AgentIdentityDisplayName = "Support Europe Identity",
+            AgentBlueprintDisplayName = "Support Europe Blueprint",
+            AiTeammate = false,
+            UseBlueprint = true,
+        };
+        config.AgentBlueprintId = "cached-blueprint-id";
+        config.AgenticAppId = "cached-agentic-app-id";
+
+        var updated = config.WithAgentBlueprintDisplayName("Contoso Support Blueprint");
+
+        updated.AgentBlueprintDisplayName.Should().Be("Contoso Support Blueprint",
+            because: "the override must take effect on the returned instance");
+        updated.TenantId.Should().Be("tenant-id", because: "static fields must be preserved by the clone");
+        updated.AgentIdentityDisplayName.Should().Be("Support Europe Identity",
+            because: "static fields must be preserved by the clone");
+        updated.AgentBlueprintId.Should().Be("cached-blueprint-id", because: "dynamic fields must be preserved by the clone");
+        updated.AgenticAppId.Should().Be("cached-agentic-app-id",
+            because: "dynamic fields must be preserved by the clone via MemberwiseClone, not just the overridden display name");
+        config.AgentBlueprintDisplayName.Should().Be("Support Europe Blueprint",
+            because: "the original instance must not be mutated — AgentBlueprintDisplayName is init-only");
+    }
+
     #endregion
 
     #region ValidateNonDwMinimal Tests

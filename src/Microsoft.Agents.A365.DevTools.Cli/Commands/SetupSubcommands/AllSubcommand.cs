@@ -127,7 +127,10 @@ internal static class AllSubcommand
             description: "Agent base name (e.g. \"MyAgent\"). When provided, no config file is required.\n" +
                         "Derives AgentIdentityDisplayName=\"<name> Identity\" and AgentBlueprintDisplayName=\"<name> Blueprint\".\n" +
                         "TenantId is auto-detected from 'az account show' (override with --tenant-id).\n" +
-                        $"ClientAppId is resolved by looking up \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" in your tenant.");
+                        $"ClientAppId is resolved by looking up \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" in your tenant.\n" +
+                        "Each agent identity must use its own working directory: reusing a directory that\n" +
+                        "already has a365.config.json for a DIFFERENT --agent-name is refused before any\n" +
+                        "change is made; run from a fresh directory for each new agent identity.");
 
         var tenantIdOption = new Option<string?>(
             "--tenant-id",
@@ -164,6 +167,23 @@ internal static class AllSubcommand
                         "is a post-deploy artifact, so it can be set later with\n" +
                         "'a365 setup blueprint --endpoint-only --messaging-endpoint <url>'.");
 
+        var blueprintIdOption = new Option<string?>(
+            "--blueprint-id",
+            description: "Add the new agent identity to an existing Agent Identity Blueprint instead of\n" +
+                        "deriving/creating \"<agent-name> Blueprint\" (blueprint agents only; not supported\n" +
+                        "with --aiteammate). Value is the blueprint's application (client) ID; list candidates\n" +
+                        "with 'a365 setup blueprint list'. Mutually exclusive with --select-blueprint. Verified\n" +
+                        "against the current tenant before any changes are made. Reruns with the same\n" +
+                        "--agent-name and --blueprint-id reuse the existing agent identity/registration.\n" +
+                        "Example: a365 setup all --agent-name \"Support Europe\" --blueprint-id <guid>");
+
+        var selectBlueprintOption = new Option<bool>(
+            "--select-blueprint",
+            description: "Interactively list existing Agent Identity Blueprints in the tenant and choose one by\n" +
+                        "number to add the new agent identity to (blueprint agents only; not supported with\n" +
+                        "--aiteammate). Mutually exclusive with --blueprint-id. Requires an interactive terminal;\n" +
+                        "use --blueprint-id for non-interactive/CI runs.");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -176,6 +196,8 @@ internal static class AllSubcommand
         command.AddOption(authModeOption);
         command.AddOption(skipSpProvisioningOption);
         command.AddOption(messagingEndpointOption);
+        command.AddOption(blueprintIdOption);
+        command.AddOption(selectBlueprintOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -202,6 +224,9 @@ internal static class AllSubcommand
             // hard error, not silently treated as omitted (which would prompt/defer instead).
             var messagingEndpointSpecified = context.ParseResult.CommandResult.FindResultFor(messagingEndpointOption) != null;
             var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
+            var blueprintIdSpecified = context.ParseResult.CommandResult.FindResultFor(blueprintIdOption) != null;
+            var blueprintIdFlag = context.ParseResult.GetValueForOption(blueprintIdOption)?.Trim();
+            var selectBlueprint = context.ParseResult.GetValueForOption(selectBlueprintOption);
             var ct = context.GetCancellationToken();
 
             if (messagingEndpointSpecified && string.IsNullOrWhiteSpace(messagingEndpointFlag))
@@ -242,6 +267,17 @@ internal static class AllSubcommand
                 }
             }
 
+            // --blueprint-id / --select-blueprint validation (mutually exclusive, GUID format,
+            // aiteammate incompatibility, noninteractive/dry-run guard for the interactive picker).
+            // Runs before any mutation so invalid combinations fail fast.
+            if (!BlueprintSelectionHelper.ValidateOptions(
+                    blueprintIdFlag, blueprintIdSpecified, selectBlueprint, aiTeammateFlag, dryRun,
+                    nonInteractive: Console.IsInputRedirected, logger))
+            {
+                context.ExitCode = 1;
+                return;
+            }
+
             // Generate correlation ID at workflow entry point
             var correlationId = HttpClientFactory.GenerateCorrelationId();
             logger.LogDebug("Starting setup all (CorrelationId: {CorrelationId})", correlationId);
@@ -269,6 +305,12 @@ internal static class AllSubcommand
                             AiTeammate = false,
                             UseBlueprint = true,
                         };
+
+                        // --blueprint-id cannot be resolved without a Graph call (skipped in dry-run),
+                        // so just surface the raw ID in the plan; --select-blueprint is rejected for
+                        // dry-run above since listing requires a Graph call.
+                        if (!string.IsNullOrWhiteSpace(blueprintIdFlag))
+                            nonDwConfig.AgentBlueprintId = blueprintIdFlag;
                     }
                     else
                     {
@@ -287,6 +329,63 @@ internal static class AllSubcommand
                             return;
                         }
 
+                        // If existing config files belong to a different tenant (e.g. the user ran
+                        // 'az login' with a different account), back them up and remove them so this
+                        // run starts with a clean state and does not inherit stale resource IDs.
+                        if (resolver != null)
+                            await resolver.BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!);
+                        else
+                            await BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!, logger);
+
+                        // A working directory stores state for exactly one agent identity.
+                        if (await RefuseIfDirectoryBelongsToDifferentAgentIdentityAsync(
+                                config.FullName, nonDwConfig.AgentIdentityDisplayName, agentName!, logger))
+                        {
+                            context.ExitCode = 1;
+                            return;
+                        }
+
+                        // Restore generated state before applying an explicit blueprint selection.
+                        var bootstrapGenPath = Path.Combine(
+                            config.DirectoryName ?? Environment.CurrentDirectory,
+                            "a365.generated.config.json");
+                        string? cachedAgentIdentityDisplayName = null;
+                        if (File.Exists(bootstrapGenPath))
+                        {
+                            try
+                            {
+                                var genConfig = await configService.LoadAsync(config.FullName, bootstrapGenPath);
+                                cachedAgentIdentityDisplayName = genConfig.AgentIdentityDisplayName;
+                                MergeCachedBootstrapState(nonDwConfig, genConfig);
+                            }
+                            catch (OperationCanceledException) { throw; }
+                            catch (Exception ex)
+                            {
+                                logger.LogDebug(ex, "Could not merge generated config in bootstrap mode; proceeding without stored IDs.");
+                            }
+                        }
+
+                        // Resolve the selected blueprint before persisting bootstrap configuration.
+                        if (!string.IsNullOrWhiteSpace(blueprintIdFlag) || selectBlueprint)
+                        {
+                            var selectedBlueprint = await BlueprintSelectionHelper.ResolveAsync(
+                                blueprintLookupService, nonDwConfig.TenantId!, blueprintIdFlag, selectBlueprint, logger, ct);
+                            if (selectedBlueprint is null)
+                            {
+                                context.ExitCode = 1;
+                                return;
+                            }
+                            nonDwConfig = BlueprintSelectionHelper.ApplyExplicitBlueprintSelection(
+                                nonDwConfig, selectedBlueprint, cachedAgentIdentityDisplayName);
+                            if (File.Exists(config.FullName) &&
+                                !await PersistSelectedBlueprintDisplayNameAsync(
+                                    configService, config.FullName, selectedBlueprint.DisplayName!, logger, ct))
+                            {
+                                context.ExitCode = 1;
+                                return;
+                            }
+                        }
+
                         // Log resolved config so the user can verify the inferred values
                         logger.LogInformation("Bootstrap config resolved:");
                         using (logger.Indent())
@@ -298,16 +397,9 @@ internal static class AllSubcommand
                         }
                         logger.LogInformation("");
 
-                        // If existing config files belong to a different tenant (e.g. the user ran
-                        // 'az login' with a different account), back them up and remove them so this
-                        // run starts with a clean state and does not inherit stale resource IDs.
-                        if (resolver != null)
-                            await resolver.BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!);
-                        else
-                            await BackupAndClearStaleConfigAsync(config.FullName, nonDwConfig.TenantId!, logger);
-
-                        // Write a365.config.json so the resolved bootstrap settings are persisted in the
-                        // current working directory and reused consistently by later setup and cleanup steps.
+                        // Write a365.config.json so the resolved bootstrap settings (including the
+                        // final blueprint display name) are persisted in the current working directory
+                        // and reused consistently by later setup and cleanup steps.
                         if (!File.Exists(config.FullName))
                         {
                             if (resolver != null)
@@ -316,31 +408,8 @@ internal static class AllSubcommand
                                 await WriteBootstrapConfigFileAsync(nonDwConfig, config.FullName, logger);
                         }
 
-                        // Merge stored IDs from the existing generated config (if present) so re-running
-                        // with --agent-name reuses previously created resources. Registration has no
-                        // lookup endpoint so the stored ID is the only idempotency key; blueprint and
-                        // identity IDs are needed for the --agent-registration-only API fallback.
-                        var bootstrapGenPath = Path.Combine(
-                            config.DirectoryName ?? Environment.CurrentDirectory,
-                            "a365.generated.config.json");
-                        if (File.Exists(bootstrapGenPath))
-                        {
-                            try
-                            {
-                                var genConfig = await configService.LoadAsync(config.FullName, bootstrapGenPath);
-                                if (!string.IsNullOrWhiteSpace(genConfig.AgentRegistrationId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentRegistrationId))
-                                    nonDwConfig.AgentRegistrationId = genConfig.AgentRegistrationId;
-                                if (!string.IsNullOrWhiteSpace(genConfig.AgentBlueprintId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentBlueprintId))
-                                    nonDwConfig.AgentBlueprintId = genConfig.AgentBlueprintId;
-                                if (!string.IsNullOrWhiteSpace(genConfig.AgenticAppId) && string.IsNullOrWhiteSpace(nonDwConfig.AgenticAppId))
-                                    nonDwConfig.AgenticAppId = genConfig.AgenticAppId;
-                            }
-                            catch (OperationCanceledException) { throw; }
-                            catch (Exception ex)
-                            {
-                                logger.LogDebug(ex, "Could not merge generated config in bootstrap mode; proceeding without stored IDs.");
-                            }
-                        }
+                        if (!string.IsNullOrWhiteSpace(blueprintIdFlag) || selectBlueprint)
+                            await configService.SaveStateAsync(nonDwConfig, bootstrapGenPath);
                     }
                 }
                 else
@@ -365,9 +434,60 @@ internal static class AllSubcommand
                     catch when (dryRun) { /* config is optional for dry-run; falls through to DW dry-run plan */ }
                     // If aiteammate was not explicitly set, respect what the config says
                     // (allows existing AI Teammate configs to keep working without --aiteammate true)
-                    if (nonDwConfig != null && !aiTeammateFlag.HasValue && !nonDwConfig.IsBlueprintAgent && !dryRun)
+                    if (nonDwConfig != null &&
+                        !aiTeammateFlag.HasValue &&
+                        (nonDwConfig.AiTeammate == true || (!dryRun && !nonDwConfig.IsBlueprintAgent)))
                         nonDwConfig = null; // fall through to DW path
+
+                    if (nonDwConfig != null && (!string.IsNullOrWhiteSpace(blueprintIdFlag) || selectBlueprint))
+                    {
+                        BlueprintLookupResult? selectedBlueprint;
+                        if (dryRun)
+                        {
+                            selectedBlueprint = new BlueprintLookupResult
+                            {
+                                Found = true,
+                                AppId = blueprintIdFlag,
+                                DisplayName = nonDwConfig.AgentBlueprintDisplayName
+                            };
+                        }
+                        else
+                        {
+                            selectedBlueprint = await BlueprintSelectionHelper.ResolveAsync(
+                                blueprintLookupService, nonDwConfig.TenantId!, blueprintIdFlag, selectBlueprint, logger, ct);
+                        }
+
+                        if (selectedBlueprint is null)
+                        {
+                            context.ExitCode = 1;
+                            return;
+                        }
+                        nonDwConfig = BlueprintSelectionHelper.ApplyExplicitBlueprintSelection(
+                            nonDwConfig, selectedBlueprint, nonDwConfig.AgentIdentityDisplayName);
+                        if (!dryRun)
+                        {
+                            if (!await PersistSelectedBlueprintDisplayNameAsync(
+                                    configService, config.FullName, selectedBlueprint.DisplayName!, logger, ct))
+                            {
+                                context.ExitCode = 1;
+                                return;
+                            }
+                            await configService.SaveStateAsync(nonDwConfig, nonDwGenPath);
+                        }
+                    }
                 }
+            }
+
+            // --blueprint-id / --select-blueprint apply only to the blueprint-agent path. Fail fast
+            // rather than silently ignoring the flag when the resolved agent turns out to be an AI
+            // Teammate (e.g. --aiteammate omitted but a365.config.json already has AiTeammate=true).
+            if (nonDwConfig is null && (!string.IsNullOrWhiteSpace(blueprintIdFlag) || selectBlueprint))
+            {
+                logger.LogError(
+                    "--{Option} applies only to blueprint agents (the default). It is not supported for AI Teammate agents.",
+                    !string.IsNullOrWhiteSpace(blueprintIdFlag) ? "blueprint-id" : "select-blueprint");
+                context.ExitCode = 1;
+                return;
             }
 
             // Validate the effective authMode (flag OR config). The CLI flag was validated above;
@@ -1168,6 +1288,129 @@ internal static class AllSubcommand
             File.Move(generatedPath, generatedBackup);
             logger.LogDebug("Backed up: {File}", Path.GetFileName(generatedBackup));
         }
+    }
+
+    /// <summary>
+    /// Restores cached blueprint state and, for the same identity, agent-specific state.
+    /// </summary>
+    internal static void MergeCachedBootstrapState(Agent365Config nonDwConfig, Agent365Config genConfig)
+    {
+        if (!string.IsNullOrWhiteSpace(genConfig.AgentBlueprintId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentBlueprintId))
+            nonDwConfig.AgentBlueprintId = genConfig.AgentBlueprintId;
+        if (!string.IsNullOrWhiteSpace(genConfig.AgentBlueprintObjectId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentBlueprintObjectId))
+            nonDwConfig.AgentBlueprintObjectId = genConfig.AgentBlueprintObjectId;
+        if (!string.IsNullOrWhiteSpace(genConfig.AgentBlueprintServicePrincipalObjectId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentBlueprintServicePrincipalObjectId))
+            nonDwConfig.AgentBlueprintServicePrincipalObjectId = genConfig.AgentBlueprintServicePrincipalObjectId;
+        if (!string.IsNullOrWhiteSpace(genConfig.AgentBlueprintClientSecret) && string.IsNullOrWhiteSpace(nonDwConfig.AgentBlueprintClientSecret))
+        {
+            nonDwConfig.AgentBlueprintClientSecret = genConfig.AgentBlueprintClientSecret;
+            nonDwConfig.AgentBlueprintClientSecretProtected = genConfig.AgentBlueprintClientSecretProtected;
+        }
+        if (nonDwConfig.ResourceConsents.Count == 0 && genConfig.ResourceConsents.Count > 0)
+            nonDwConfig.ResourceConsents = genConfig.ResourceConsents;
+
+        var cachedIdentityMatchesTarget = string.Equals(
+            genConfig.AgentIdentityDisplayName, nonDwConfig.AgentIdentityDisplayName, StringComparison.Ordinal);
+        if (!cachedIdentityMatchesTarget)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(genConfig.AgentRegistrationId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentRegistrationId))
+            nonDwConfig.AgentRegistrationId = genConfig.AgentRegistrationId;
+        if (!string.IsNullOrWhiteSpace(genConfig.AgenticAppId) && string.IsNullOrWhiteSpace(nonDwConfig.AgenticAppId))
+            nonDwConfig.AgenticAppId = genConfig.AgenticAppId;
+        if (!string.IsNullOrWhiteSpace(genConfig.AgentInstanceId) && string.IsNullOrWhiteSpace(nonDwConfig.AgentInstanceId))
+            nonDwConfig.AgentInstanceId = genConfig.AgentInstanceId;
+        if (!string.IsNullOrWhiteSpace(genConfig.AgenticUserId) && string.IsNullOrWhiteSpace(nonDwConfig.AgenticUserId))
+            nonDwConfig.AgenticUserId = genConfig.AgenticUserId;
+        if (!string.IsNullOrWhiteSpace(genConfig.ManagedIdentityPrincipalId) && string.IsNullOrWhiteSpace(nonDwConfig.ManagedIdentityPrincipalId))
+            nonDwConfig.ManagedIdentityPrincipalId = genConfig.ManagedIdentityPrincipalId;
+        if (!string.IsNullOrWhiteSpace(genConfig.BotId) && string.IsNullOrWhiteSpace(nonDwConfig.BotId))
+            nonDwConfig.BotId = genConfig.BotId;
+        if (!string.IsNullOrWhiteSpace(genConfig.BotMsaAppId) && string.IsNullOrWhiteSpace(nonDwConfig.BotMsaAppId))
+            nonDwConfig.BotMsaAppId = genConfig.BotMsaAppId;
+        if (!string.IsNullOrWhiteSpace(genConfig.BotMessagingEndpoint) && string.IsNullOrWhiteSpace(nonDwConfig.BotMessagingEndpoint))
+            nonDwConfig.BotMessagingEndpoint = genConfig.BotMessagingEndpoint;
+        if (!string.IsNullOrWhiteSpace(genConfig.AzureOpenAIEndpoint) && string.IsNullOrWhiteSpace(nonDwConfig.AzureOpenAIEndpoint))
+            nonDwConfig.AzureOpenAIEndpoint = genConfig.AzureOpenAIEndpoint;
+        if (!string.IsNullOrWhiteSpace(genConfig.AzureOpenAIApiKey) && string.IsNullOrWhiteSpace(nonDwConfig.AzureOpenAIApiKey))
+            nonDwConfig.AzureOpenAIApiKey = genConfig.AzureOpenAIApiKey;
+        if (!nonDwConfig.Completed && genConfig.Completed)
+            nonDwConfig.Completed = true;
+        if (nonDwConfig.CompletedAt is null)
+            nonDwConfig.CompletedAt = genConfig.CompletedAt;
+    }
+
+    private static async Task<bool> PersistSelectedBlueprintDisplayNameAsync(
+        IConfigService configService,
+        string configPath,
+        string displayName,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        try
+        {
+            await configService.UpdateAgentBlueprintDisplayNameAsync(displayName, configPath, ct);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            logger.LogError(ex, "Failed to update the selected blueprint in {ConfigPath}: {Message}", configPath, ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Rejects bootstrap setup when the working directory belongs to another identity.
+    /// </summary>
+    internal static async Task<bool> RefuseIfDirectoryBelongsToDifferentAgentIdentityAsync(
+        string configPath,
+        string targetAgentIdentityDisplayName,
+        string agentName,
+        ILogger logger)
+    {
+        if (!File.Exists(configPath))
+            return false;
+
+        string? existingIdentityDisplayName;
+        try
+        {
+            var json = await File.ReadAllTextAsync(configPath);
+            using var doc = JsonDocument.Parse(json);
+            existingIdentityDisplayName = SetupHelpers.GetJsonString(doc.RootElement, "agentIdentityDisplayName");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not read {Path} to check for an existing agent identity.", configPath);
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(existingIdentityDisplayName) ||
+            string.Equals(existingIdentityDisplayName, targetAgentIdentityDisplayName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        logger.LogError(
+            "This directory is already set up for agent identity '{ExistingIdentity}' ({Path}). " +
+            "Running --agent-name \"{AgentName}\" here would target a different identity " +
+            "('{TargetIdentity}'), and the current configuration format supports only one agent " +
+            "identity per working directory.",
+            existingIdentityDisplayName, configPath, agentName, targetAgentIdentityDisplayName);
+        logger.LogInformation("");
+        logger.LogInformation("Run this command from a separate, empty working directory for the new agent identity, e.g.:");
+        logger.LogInformation("  mkdir <new-directory> && cd <new-directory>");
+        logger.LogInformation("  a365 setup all --agent-name \"{AgentName}\"", agentName);
+        logger.LogInformation("");
+
+        return true;
     }
 
     /// <summary>Step 1 — Infrastructure step (no-op, deploy command removed).</summary>

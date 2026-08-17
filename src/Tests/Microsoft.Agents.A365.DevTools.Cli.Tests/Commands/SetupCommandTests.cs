@@ -13,6 +13,7 @@ using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.IO;
 using System.CommandLine.Parsing;
+using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
@@ -63,7 +64,6 @@ public class SetupCommandTests
         _mockConfirmationProvider = Substitute.For<IConfirmationProvider>();
         _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
     }
-
     [Fact]
     public async Task SetupAllCommand_DryRun_ValidConfig_OnlyValidatesConfig()
     {
@@ -676,5 +676,500 @@ public class SetupCommandTests
             Arg.Is<object>(o => o.ToString()!.Contains("S2S")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    // ── --blueprint-id / --select-blueprint (setup all) ────────────────────────
+
+    /// <summary>
+    /// --blueprint-id and --select-blueprint are mutually exclusive. Must fail before any mutation
+    /// (no tenant/Graph calls needed to detect this — pure option validation).
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_BlueprintIdAndSelectBlueprint_MutuallyExclusive_ExitsWithCode1()
+    {
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync(
+            "all --agent-name TestAgent --blueprint-id 11111111-1111-1111-1111-111111111111 --select-blueprint --dry-run",
+            new TestConsole());
+
+        result.Should().Be(1, because: "--blueprint-id and --select-blueprint are mutually exclusive and must fail before any mutation");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("cannot be used together")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        await _mockExecutor.DidNotReceive().ExecuteAsync(
+            Arg.Is<string>(s => s == "az"), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>A malformed --blueprint-id value must be rejected before any tenant/Graph call.</summary>
+    [Fact]
+    public async Task SetupAll_BlueprintIdInvalidGuid_ExitsWithCode1()
+    {
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("all --agent-name TestAgent --blueprint-id not-a-guid --dry-run", new TestConsole());
+
+        result.Should().Be(1, because: "--blueprint-id must be a valid GUID");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Invalid --blueprint-id value")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task SetupAll_BlueprintIdWhitespace_ExitsWithCode1()
+    {
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("all --agent-name TestAgent --blueprint-id \" \" --dry-run", new TestConsole());
+
+        result.Should().Be(1,
+            because: "an explicitly supplied whitespace blueprint ID must not silently use the default create flow");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("--blueprint-id cannot be empty")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>Explicit blueprint selection is unsupported for AI Teammate agents — must fail fast.</summary>
+    [Theory]
+    [InlineData("--blueprint-id 11111111-1111-1111-1111-111111111111")]
+    [InlineData("--select-blueprint")]
+    public async Task SetupAll_ExplicitBlueprintSelection_WithAiteammateTrue_ExitsWithCode1(string blueprintOption)
+    {
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync($"all --agent-name TestAgent --aiteammate true {blueprintOption} --dry-run", new TestConsole());
+
+        result.Should().Be(1, because: "explicit blueprint selection applies to blueprint agents only, not AI Teammate agents");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("not supported with --aiteammate")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SetupAll_BlueprintId_WithExistingAiTeammateConfig_ExitsWithCode1(bool dryRun)
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            AgentIdentityDisplayName = "agent",
+            AgentBlueprintDisplayName = "TestBlueprint",
+            DeploymentProjectPath = ".",
+            AiTeammate = true,
+            UseBlueprint = false,
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+        var dryRunOption = dryRun ? " --dry-run" : string.Empty;
+
+        var result = await parser.InvokeAsync(
+            $"all --blueprint-id 11111111-1111-1111-1111-111111111111{dryRunOption}",
+            new TestConsole());
+
+        result.Should().Be(1,
+            because: "explicit blueprint selection must be rejected when the loaded config belongs to an AI Teammate");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(state => state.ToString()!.Contains("applies only to blueprint agents")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        await _mockConfigService.DidNotReceiveWithAnyArgs().SaveStateAsync(
+            Arg.Any<Agent365Config>(),
+            Arg.Any<string>());
+    }
+
+    /// <summary>
+    /// A syntactically valid --blueprint-id that does not resolve to an existing Agent Identity
+    /// Blueprint in the active tenant (not found, or belongs to a different tenant) must fail before
+    /// any mutation — no a365.config.json / a365.generated.config.json is written.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_BlueprintId_NotFoundInTenant_ExitsWithCode1_AndWritesNoState()
+    {
+        _mockExecutor.ExecuteAsync(
+                Arg.Is<string>(s => s == "az"),
+                Arg.Is<string>(s => s.StartsWith("account show", StringComparison.OrdinalIgnoreCase)),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = "{\"tenantId\":\"blueprint-lookup-tenant\"}",
+                StandardError = string.Empty
+            }));
+        _mockGraphApiService.FindApplicationByDisplayNameAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns("99999999-9999-9999-9999-999999999999");
+        _mockBlueprintLookupService.GetBlueprintByAppIdAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new BlueprintLookupResult { Found = false });
+
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync(
+            "all --agent-name TestAgent --blueprint-id 22222222-2222-2222-2222-222222222222",
+            new TestConsole());
+
+        result.Should().Be(1,
+            because: "an unresolvable --blueprint-id must fail — verifying tenant membership happens before any mutation");
+        await _mockConfigService.DidNotReceiveWithAnyArgs().SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task SetupAll_BlueprintIdResolvesSuccessfully_PersistsBootstrapSelection()
+    {
+        const string tenantId = "11111111-1111-1111-1111-111111111111";
+        const string clientAppId = "22222222-2222-2222-2222-222222222222";
+        const string blueprintAppId = "33333333-3333-3333-3333-333333333333";
+        const string blueprintObjectId = "44444444-4444-4444-4444-444444444444";
+        const string blueprintDisplayName = "Tenant Blueprint";
+        var tempDir = Path.Combine(Path.GetTempPath(), $"a365-setupall-blueprintid-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var originalDir = Environment.CurrentDirectory;
+
+        try
+        {
+            Environment.CurrentDirectory = tempDir;
+            _mockExecutor.ExecuteAsync(
+                    Arg.Is<string>(command => command == "az"),
+                    Arg.Is<string>(arguments => arguments.StartsWith("account show", StringComparison.OrdinalIgnoreCase)),
+                    Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = tenantId,
+                    StandardError = string.Empty
+                }));
+            _mockGraphApiService.FindApplicationByDisplayNameAsync(
+                    tenantId,
+                    Arg.Any<string>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(clientAppId);
+            _mockBlueprintLookupService.GetBlueprintByAppIdAsync(
+                    tenantId,
+                    blueprintAppId,
+                    Arg.Any<CancellationToken>())
+                .Returns(new BlueprintLookupResult
+                {
+                    Found = true,
+                    AppId = blueprintAppId,
+                    ObjectId = blueprintObjectId,
+                    DisplayName = blueprintDisplayName
+                });
+            _mockBlueprintService.FindExistingAgentIdentityAsync(
+                    tenantId,
+                    blueprintAppId,
+                    "TestAgent Identity",
+                    Arg.Any<CancellationToken>())
+                .Returns("agentic-app-id");
+            _mockGraphApiService.RegisterAgentInstanceAsyncV2(
+                    Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+                    Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+                .Returns(("registration-id", false));
+            _mockClientAppValidator.GetUnconsentedRequiredPermissionsAsync(
+                    Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns([]);
+
+            var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+            var result = await parser.InvokeAsync(
+                $"all --agent-name TestAgent --blueprint-id {blueprintAppId} --agent-registration-only",
+                new TestConsole());
+
+            result.Should().Be(0,
+                because: "a tenant-verified blueprint must be usable for a new agent identity");
+            using var staticConfig = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(tempDir, "a365.config.json")));
+            staticConfig.RootElement.GetProperty("agentBlueprintDisplayName").GetString().Should().Be(
+                blueprintDisplayName,
+                because: "the tenant-verified display name must become the static source of truth");
+            await _mockConfigService.Received().SaveStateAsync(
+                Arg.Is<Agent365Config>(candidate =>
+                    candidate.AgentBlueprintId == blueprintAppId &&
+                    candidate.AgentBlueprintObjectId == blueprintObjectId),
+                Arg.Is<string>(path => path == Path.Combine(tempDir, "a365.generated.config.json")));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDir;
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SetupAll_ExistingConfig_BlueprintId_PersistsRefreshedBlueprintMetadata()
+    {
+        const string tenantId = "11111111-1111-1111-1111-111111111111";
+        const string clientAppId = "22222222-2222-2222-2222-222222222222";
+        const string blueprintAppId = "33333333-3333-3333-3333-333333333333";
+        const string blueprintObjectId = "44444444-4444-4444-4444-444444444444";
+        const string blueprintDisplayName = "Tenant Blueprint";
+        const string agenticAppId = "66666666-6666-6666-6666-666666666666";
+        const string registrationId = "77777777-7777-7777-7777-777777777777";
+        var tempDir = Path.Combine(Path.GetTempPath(), $"a365-setupall-existing-blueprint-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var configPath = Path.Combine(tempDir, "a365.config.json");
+        var generatedPath = Path.Combine(tempDir, "a365.generated.config.json");
+        await File.WriteAllTextAsync(configPath, $$"""
+            {
+              "tenantId": "{{tenantId}}",
+              "clientAppId": "{{clientAppId}}",
+              "agentIdentityDisplayName": "TestAgent Identity",
+              "agentBlueprintDisplayName": "Stale Blueprint Name",
+              "agentDescription": "TestAgent",
+              "aiTeammate": false,
+              "useBlueprint": true
+            }
+            """);
+        await File.WriteAllTextAsync(generatedPath, $$"""
+            {
+              "agentBlueprintId": "{{blueprintAppId}}",
+              "agentBlueprintObjectId": "55555555-5555-5555-5555-555555555555",
+              "agenticAppId": "{{agenticAppId}}",
+              "agentRegistrationId": "{{registrationId}}"
+            }
+            """);
+        var originalDir = Environment.CurrentDirectory;
+
+        try
+        {
+            Environment.CurrentDirectory = tempDir;
+            _mockBlueprintLookupService.GetBlueprintByAppIdAsync(
+                    tenantId,
+                    blueprintAppId,
+                    Arg.Any<CancellationToken>())
+                .Returns(new BlueprintLookupResult
+                {
+                    Found = true,
+                    AppId = blueprintAppId,
+                    ObjectId = blueprintObjectId,
+                    DisplayName = blueprintDisplayName
+                });
+            _mockGraphApiService.AgentRegistrationExistsAsync(
+                    tenantId,
+                    registrationId,
+                    Arg.Any<CancellationToken>())
+                .Returns(true);
+            _mockClientAppValidator.GetUnconsentedRequiredPermissionsAsync(
+                    clientAppId,
+                    tenantId,
+                    Arg.Any<CancellationToken>())
+                .Returns([]);
+            var configService = new ConfigService();
+            var command = SetupCommand.CreateCommand(
+                _mockLogger, configService, _mockExecutor, _mockBackendConfigurator,
+                _mockAuthValidator, _mockPlatformDetector, _mockGraphApiService, _mockBlueprintService,
+                _mockBlueprintLookupService, _mockFederatedCredentialService, _mockClientAppValidator,
+                _mockConfirmationProvider);
+            var parser = new CommandLineBuilder(command).Build();
+
+            var result = await parser.InvokeAsync(
+                $"all --blueprint-id {blueprintAppId} --agent-registration-only",
+                new TestConsole());
+
+            result.Should().Be(0,
+                because: "reselecting the same blueprint must be an idempotent successful rerun");
+            using var staticConfig = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+            staticConfig.RootElement.GetProperty("agentBlueprintDisplayName").GetString().Should().Be(
+                blueprintDisplayName,
+                because: "the static config must reflect the tenant-verified blueprint name");
+            using var generatedConfig = JsonDocument.Parse(await File.ReadAllTextAsync(generatedPath));
+            generatedConfig.RootElement.GetProperty("agentBlueprintObjectId").GetString().Should().Be(
+                blueprintObjectId,
+                because: "the stable tenant-verified object ID must replace stale cached metadata");
+            generatedConfig.RootElement.GetProperty("agenticAppId").GetString().Should().Be(
+                agenticAppId,
+                because: "reselecting the same blueprint for the same identity must preserve identity state");
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDir;
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A working directory configured for another identity must be rejected before mutation.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_AgentNameDiffersFromExistingDirectoryIdentity_ExitsWithCode1_AndLeavesDirectoryUntouched()
+    {
+        const string tenantId = "matching-tenant-id";
+        _mockExecutor.ExecuteAsync(
+                Arg.Is<string>(s => s == "az"),
+                Arg.Is<string>(s => s.StartsWith("account show", StringComparison.OrdinalIgnoreCase)),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = tenantId,
+                StandardError = string.Empty
+            }));
+        _mockGraphApiService.FindApplicationByDisplayNameAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns("11111111-1111-1111-1111-111111111111");
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"a365-setupall-identity-mismatch-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var configPath = Path.Combine(tempDir, "a365.config.json");
+        var generatedPath = Path.Combine(tempDir, "a365.generated.config.json");
+        await File.WriteAllTextAsync(configPath,
+            $"{{\"tenantId\":\"{tenantId}\",\"agentIdentityDisplayName\":\"AgentA Identity\",\"agentBlueprintDisplayName\":\"AgentA Blueprint\"}}");
+        await File.WriteAllTextAsync(generatedPath,
+            "{\"agenticAppId\":\"agent-a-agentic-app-id\",\"agentRegistrationId\":\"agent-a-registration-id\"}");
+
+        var originalDir = Environment.CurrentDirectory;
+        try
+        {
+            Environment.CurrentDirectory = tempDir;
+
+            var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+            var result = await parser.InvokeAsync("all --agent-name AgentB", new TestConsole());
+
+            result.Should().Be(1,
+                because: "the current config format supports only one agent identity per working directory");
+            _mockLogger.Received().Log(
+                LogLevel.Error,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("AgentA Identity") && o.ToString()!.Contains("only one agent identity per working directory")),
+                Arg.Any<Exception?>(),
+                Arg.Any<Func<object, Exception?, string>>());
+            (await File.ReadAllTextAsync(configPath)).Should().Contain("AgentA Identity",
+                because: "the prior agent's static config must be left completely untouched, not silently overwritten or merged");
+            (await File.ReadAllTextAsync(generatedPath)).Should().Contain("agent-a-agentic-app-id",
+                because: "the prior agent's generated config/state must be left completely untouched — refusing must happen before any mutation");
+            await _mockConfigService.DidNotReceiveWithAnyArgs().SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>());
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalDir;
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    // ── setup blueprint list ────────────────────────────────────────────────────
+
+    private static void MockAzAccountShow(CommandExecutor executor, string tenantId) =>
+        executor.ExecuteAsync(
+                Arg.Is<string>(s => s == "az"),
+                Arg.Is<string>(s => s.StartsWith("account show", StringComparison.OrdinalIgnoreCase)),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = $"{{\"tenantId\":\"{tenantId}\"}}",
+                StandardError = string.Empty
+            }));
+
+    [Fact]
+    public async Task BlueprintList_WhenBlueprintsExist_ExitsWithCode0AndListsThem()
+    {
+        MockAzAccountShow(_mockExecutor, "list-tenant");
+        _mockBlueprintLookupService.ListBlueprintsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<BlueprintLookupResult>
+            {
+                new() { Found = true, AppId = "11111111-1111-1111-1111-111111111111", DisplayName = "Contoso Blueprint" }
+            });
+
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("blueprint list", new TestConsole());
+
+        result.Should().Be(0, because: "listing blueprints is read-only and must succeed when the query succeeds");
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Contoso Blueprint") && o.ToString()!.Contains("11111111-1111-1111-1111-111111111111")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task BlueprintList_WhenTenantHasNoBlueprints_ExitsWithCode0AndShowsClearMessage()
+    {
+        MockAzAccountShow(_mockExecutor, "empty-tenant");
+        _mockBlueprintLookupService.ListBlueprintsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<BlueprintLookupResult>());
+
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("blueprint list", new TestConsole());
+
+        result.Should().Be(0, because: "an empty list is a successful outcome, not an error");
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("No Agent Identity Blueprints found")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task BlueprintList_WhenGraphQueryFails_ExitsWithCode1()
+    {
+        MockAzAccountShow(_mockExecutor, "failing-tenant");
+        _mockBlueprintLookupService.ListBlueprintsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<IReadOnlyList<BlueprintLookupResult>>(new InvalidOperationException("Graph auth failed")));
+
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("blueprint list", new TestConsole());
+
+        result.Should().Be(1, because: "an auth/query failure must exit non-zero rather than silently reporting an empty list as success");
+    }
+
+    [Fact]
+    public async Task BlueprintList_WhenTenantIdIsWhitespace_ExitsWithCode1WithoutQueryingAzure()
+    {
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("blueprint list --tenant-id \" \"", new TestConsole());
+
+        result.Should().Be(1,
+            because: "an explicitly supplied whitespace tenant ID must produce a targeted validation error");
+        await _mockExecutor.DidNotReceiveWithAnyArgs().ExecuteAsync(
+            default!, default!, default, default, default, default);
+        await _mockBlueprintLookupService.DidNotReceiveWithAnyArgs().ListBlueprintsAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task BlueprintList_WhenTenantCannotBeAutoDetected_ExitsWithCode1()
+    {
+        _mockExecutor.ExecuteAsync(
+                Arg.Is<string>(command => command == "az"),
+                Arg.Is<string>(arguments => arguments.StartsWith("account show", StringComparison.OrdinalIgnoreCase)),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult
+            {
+                ExitCode = 1,
+                StandardOutput = string.Empty,
+                StandardError = "not logged in"
+            }));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("blueprint list", new TestConsole());
+
+        result.Should().Be(1,
+            because: "listing cannot query a tenant until the user signs in or supplies --tenant-id");
+        _mockLogger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(state => state.ToString()!.Contains("Could not detect tenant ID")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        await _mockBlueprintLookupService.DidNotReceiveWithAnyArgs().ListBlueprintsAsync(default!, default);
     }
 }

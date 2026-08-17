@@ -183,6 +183,38 @@ public class Agent365ConfigServiceTests : IDisposable
         Assert.False(savedData.ContainsKey("appServicePlanName"));
     }
 
+    /// <summary>
+    /// Regression test: AgentBlueprintDisplayName must remain <c>init</c>-only (classified as a
+    /// static, user-configured field written to a365.config.json) — not a dynamic/generated field.
+    /// SaveStateAsync/ExtractDynamicProperties classify static vs. dynamic purely by reflecting on
+    /// the property's setter kind (see ConfigService.HasPublicSetter), so if this property is ever
+    /// changed to a plain mutable setter, it would silently be written to a365.generated.config.json
+    /// instead of a365.config.json, and a365.config.json's value would then be discarded/overwritten
+    /// on every SaveStateAsync call — corrupting the "a365.config.json is the source of truth for
+    /// displayName" invariant relied on by blueprint discovery (see BlueprintSubcommand.CreateAgentBlueprintAsync).
+    /// </summary>
+    [Fact]
+    public async Task SaveStateAsync_DoesNotIncludeAgentBlueprintDisplayName()
+    {
+        var statePath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        var config = new Agent365Config
+        {
+            TenantId = "12345678-1234-1234-1234-123456789012",
+            AgentIdentityDisplayName = "Test Agent",
+            AgentBlueprintDisplayName = "Test Agent Blueprint",
+        };
+        config.AgentBlueprintId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+        await _service.SaveStateAsync(config, statePath);
+
+        var json = await File.ReadAllTextAsync(statePath);
+        var savedData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+
+        savedData.Should().NotBeNull();
+        savedData!.ContainsKey("agentBlueprintDisplayName").Should().BeFalse(
+            because: "agentBlueprintDisplayName is a static/user-configured field belonging in a365.config.json, not the generated/dynamic state file");
+    }
+
     [Fact]
     public async Task SaveStateAsync_OverwritesExistingFile()
     {
@@ -366,6 +398,114 @@ public class Agent365ConfigServiceTests : IDisposable
         Assert.NotNull(node);
         Assert.Equal("super-secret-value", node!["agentBlueprintClientSecret"]?.GetValue<string>());
         Assert.Equal(false, node["agentBlueprintClientSecretProtected"]?.GetValue<bool>());
+    }
+
+    #endregion
+
+    #region Static Config Update Tests
+
+    [Fact]
+    public async Task UpdateAgentBlueprintDisplayNameAsync_ReplacesOnlyExistingProperty()
+    {
+        var configPath = Path.Combine(_testDirectory, "a365.config.json");
+        const string original = """
+            {
+              // retained comment
+              "tenantId": "11111111-1111-1111-1111-111111111111",
+              "agentBlueprintDisplayName": "Old Blueprint",
+              "unknownSetting": "keep-me"
+            }
+            """;
+        await File.WriteAllTextAsync(configPath, original);
+
+        await _service.UpdateAgentBlueprintDisplayNameAsync("Selected Blueprint", configPath);
+
+        var updated = await File.ReadAllTextAsync(configPath);
+        updated.Should().Contain("\"agentBlueprintDisplayName\": \"Selected Blueprint\"",
+            because: "the explicit blueprint selection must become the static source of truth");
+        updated.Should().Contain("// retained comment",
+            because: "updating one known field must preserve user-managed comments");
+        updated.Should().Contain("\"unknownSetting\": \"keep-me\"",
+            because: "updating one known field must preserve unknown user-managed settings");
+        updated.Should().NotContain("Old Blueprint");
+    }
+
+    [Fact]
+    public async Task UpdateAgentBlueprintDisplayNameAsync_AddsMissingProperty()
+    {
+        var configPath = Path.Combine(_testDirectory, "a365.config.json");
+        await File.WriteAllTextAsync(configPath, """{"tenantId":"11111111-1111-1111-1111-111111111111","unknownSetting":"keep-me"}""");
+
+        await _service.UpdateAgentBlueprintDisplayNameAsync("Selected Blueprint", configPath);
+
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+        document.RootElement.GetProperty("agentBlueprintDisplayName").GetString().Should().Be(
+            "Selected Blueprint",
+            because: "older config files may not contain the static blueprint display-name field");
+        document.RootElement.GetProperty("unknownSetting").GetString().Should().Be(
+            "keep-me",
+            because: "adding the field must preserve unrelated settings");
+    }
+
+    [Theory]
+    [InlineData("Finance $1 Bot")]
+    [InlineData("Cost $$ Saver")]
+    [InlineData("Team $& Blueprint")]
+    [InlineData("Weird $` Name")]
+    public async Task UpdateAgentBlueprintDisplayNameAsync_ValueContainsRegexReplacementToken_WritesExactValue(
+        string displayName)
+    {
+        var configPath = Path.Combine(_testDirectory, "a365.config.json");
+        await File.WriteAllTextAsync(
+            configPath,
+            """{"agentBlueprintDisplayName":"Old Blueprint","unknownSetting":"keep-me"}""");
+
+        await _service.UpdateAgentBlueprintDisplayNameAsync(displayName, configPath);
+
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+        document.RootElement.GetProperty("agentBlueprintDisplayName").GetString().Should().Be(
+            displayName,
+            because: "tenant-managed blueprint names must not be interpreted as regex replacement syntax");
+        document.RootElement.GetProperty("unknownSetting").GetString().Should().Be(
+            "keep-me",
+            because: "persisting an arbitrary blueprint name must not corrupt adjacent settings");
+    }
+
+    [Fact]
+    public async Task UpdateAgentBlueprintDisplayNameAsync_ValueIsUnchanged_PreservesComments()
+    {
+        var configPath = Path.Combine(_testDirectory, "a365.config.json");
+        const string original = """
+            {
+              // retained comment
+              "agentBlueprintDisplayName": "Selected Blueprint",
+              "unknownSetting": "keep-me"
+            }
+            """;
+        await File.WriteAllTextAsync(configPath, original);
+
+        await _service.UpdateAgentBlueprintDisplayNameAsync("Selected Blueprint", configPath);
+
+        (await File.ReadAllTextAsync(configPath)).Should().Be(
+            original,
+            because: "an idempotent blueprint selection must not reformat the user-managed config");
+    }
+
+    [Fact]
+    public async Task UpdateAgentBlueprintDisplayNameAsync_WhenCancelled_PropagatesCancellation()
+    {
+        var configPath = Path.Combine(_testDirectory, "a365.config.json");
+        await File.WriteAllTextAsync(configPath, """{"agentBlueprintDisplayName":"Old Blueprint"}""");
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        var act = () => _service.UpdateAgentBlueprintDisplayNameAsync(
+            "Selected Blueprint",
+            configPath,
+            cancellationSource.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "cancellation must stop static configuration mutation");
     }
 
     #endregion

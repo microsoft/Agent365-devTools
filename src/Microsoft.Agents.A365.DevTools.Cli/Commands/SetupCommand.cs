@@ -51,10 +51,14 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 "Granular subcommands (for re-runs or partial setup):\n" +
                 "  a365 setup requirements              Validate prerequisites\n" +
                 "  a365 setup blueprint                 Create the agent blueprint (Entra app)\n" +
+                "  a365 setup blueprint list            List existing blueprints in the tenant (read-only)\n" +
                 "  a365 setup permissions mcp           MCP server permissions (when using MCP tools)\n" +
                 "  a365 setup permissions bot           Bot API + Observability + Power Platform\n" +
                 "  a365 setup permissions custom        Inline custom resource permission (--resource-app-id, --scopes)\n" +
                 "  a365 setup permissions copilotstudio Copilot Studio agent permissions\n\n" +
+                "Add a new agent identity to an existing blueprint:\n" +
+                "  a365 setup all --agent-name \"Support Europe\" --blueprint-id <guid>\n" +
+                "  a365 setup all --agent-name \"Support Europe\" --select-blueprint    (interactive picker)\n\n" +
                 "Roles required:\n" +
                 "  - Agent ID Developer                  Blueprint + inheritable permissions\n" +
                 "  - Global Administrator                Tenant-wide OAuth2 consent grants\n\n" +

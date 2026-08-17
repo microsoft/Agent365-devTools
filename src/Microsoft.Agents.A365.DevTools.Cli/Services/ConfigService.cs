@@ -264,6 +264,27 @@ public class ConfigService : IConfigService
     }
 
     /// <inheritdoc />
+    public async Task UpdateAgentBlueprintDisplayNameAsync(
+        string displayName,
+        string configPath = "a365.config.json",
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
+
+        var resolvedPath = FindConfigFile(configPath) ?? configPath;
+        if (!File.Exists(resolvedPath))
+            throw new FileNotFoundException("Static configuration file was not found.", resolvedPath);
+
+        await PatchStringPropertyInConfigFileAsync(
+            resolvedPath,
+            "agentBlueprintDisplayName",
+            displayName,
+            ct);
+        _logger?.LogDebug("Updated agentBlueprintDisplayName in {ConfigPath}", resolvedPath);
+    }
+
+    /// <inheritdoc />
     public async Task<string?> InvalidateGeneratedConfigAsync(
         Agent365Config config,
         string reason,
@@ -613,25 +634,38 @@ public class ConfigService : IConfigService
     }
 
     /// <summary>
-    /// Patches only the clientAppId field in a365.config.json, preserving all other fields and formatting.
+    /// Patches one string field in a365.config.json, preserving all other fields and formatting.
     /// Uses targeted regex replacement so JSON property order and any comments are kept intact.
     /// Falls back to deserialize/re-serialize if the field is not found (e.g., first-time write).
     /// </summary>
-    private static async Task PatchClientAppIdInConfigFileAsync(string configPath, string newClientAppId, CancellationToken ct)
+    private static Task PatchClientAppIdInConfigFileAsync(string configPath, string newClientAppId, CancellationToken ct)
+        => PatchStringPropertyInConfigFileAsync(configPath, "clientAppId", newClientAppId, ct);
+
+    private static async Task PatchStringPropertyInConfigFileAsync(
+        string configPath,
+        string propertyName,
+        string newValue,
+        CancellationToken ct)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(newValue);
+
         var json = await File.ReadAllTextAsync(configPath, ct);
-        var escapedValue = JsonSerializer.Serialize(newClientAppId); // produces "\"value\""
+        var escapedValue = JsonSerializer.Serialize(newValue);
+        var escapedPropertyName = Regex.Escape(propertyName);
 
-        // Replace the clientAppId value in-place, preserving property order and comments.
-        var patched = Regex.Replace(
-            json,
-            @"(""clientAppId""\s*:\s*)""[^""\\]*(?:\\.[^""\\]*)*""",
-            $"$1{escapedValue}",
-            RegexOptions.None);
-
-        if (patched != json)
+        var pattern = $@"(""{escapedPropertyName}""\s*:\s*)""[^""\\]*(?:\\.[^""\\]*)*""";
+        if (Regex.IsMatch(json, pattern))
         {
-            await File.WriteAllTextAsync(configPath, patched, ct);
+            var patched = Regex.Replace(
+                json,
+                pattern,
+                match => match.Groups[1].Value + escapedValue,
+                RegexOptions.None);
+
+            if (patched != json)
+                await File.WriteAllTextAsync(configPath, patched, ct);
             return;
         }
 
@@ -640,7 +674,7 @@ public class ConfigService : IConfigService
             json, new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip })
             ?? throw new JsonException("Failed to parse config file for patching.");
 
-        dict["clientAppId"] = JsonSerializer.SerializeToElement(newClientAppId);
+        dict[propertyName] = JsonSerializer.SerializeToElement(newValue);
         var updated = JsonSerializer.Serialize(dict, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(configPath, updated, ct);
     }

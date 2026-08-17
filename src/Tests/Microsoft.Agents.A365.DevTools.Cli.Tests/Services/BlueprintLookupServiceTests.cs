@@ -26,21 +26,26 @@ public class BlueprintLookupServiceTests
         _graphApiService = Substitute.For<GraphApiService>();
         _service = new BlueprintLookupService(_logger, _graphApiService);
     }
-
     [Fact]
     public async Task GetApplicationByObjectIdAsync_WhenBlueprintExists_ReturnsFoundWithDetails()
     {
         // Arrange
-        var jsonResponse = $@"{{
-            ""id"": ""{TestObjectId}"",
-            ""appId"": ""{TestAppId}"",
-            ""displayName"": ""{TestDisplayName}""
-        }}";
+        var jsonResponse = $$"""
+            {
+              "value": {
+                "id": "{{TestObjectId}}",
+                "appId": "{{TestAppId}}",
+                "displayName": "{{TestDisplayName}}"
+              }
+            }
+            """;
         var jsonDoc = JsonDocument.Parse(jsonResponse);
 
         _graphApiService.GraphGetAsync(
             TestTenantId,
-            $"/beta/applications/{TestObjectId}",
+            Arg.Is<string>(s =>
+                s.Contains($"/beta/applications/{TestObjectId}/microsoft.graph.agentIdentityBlueprint") &&
+                !s.Contains("$filter")),
             Arg.Any<CancellationToken>(),
             null)
             .Returns(jsonDoc);
@@ -59,12 +64,40 @@ public class BlueprintLookupServiceTests
     }
 
     [Fact]
+    public async Task GetApplicationByObjectIdAsync_WhenGraphReturnsMismatchedObjectId_ReturnsNotFound()
+    {
+        var mismatchedObjectId = "99999999-9999-9999-9999-999999999999";
+        _graphApiService.GraphGetAsync(
+                TestTenantId,
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                null)
+            .Returns(JsonDocument.Parse($$"""
+                {
+                  "value": {
+                    "id": "{{mismatchedObjectId}}",
+                    "appId": "{{TestAppId}}",
+                    "displayName": "{{TestDisplayName}}"
+                  }
+                }
+                """));
+
+        var result = await _service.GetApplicationByObjectIdAsync(TestTenantId, TestObjectId);
+
+        result.Found.Should().BeFalse(
+            because: "a Graph result for another object must not satisfy exact blueprint verification");
+        result.ErrorMessage.Should().Contain(
+            "incomplete or inconsistent",
+            because: "the caller must be able to distinguish a mismatched response from an absent blueprint");
+    }
+
+    [Fact]
     public async Task GetApplicationByObjectIdAsync_WhenBlueprintNotFound_ReturnsNotFound()
     {
         // Arrange
         _graphApiService.GraphGetAsync(
             TestTenantId,
-            $"/beta/applications/{TestObjectId}",
+            Arg.Is<string>(s => s.Contains($"/beta/applications/{TestObjectId}/microsoft.graph.agentIdentityBlueprint")),
             Arg.Any<CancellationToken>())
             .Returns((JsonDocument?)null);
 
@@ -75,6 +108,20 @@ public class BlueprintLookupServiceTests
         result.Should().NotBeNull();
         result.Found.Should().BeFalse();
         result.LookupMethod.Should().Be("objectId");
+    }
+
+    [Fact]
+    public async Task GetApplicationByObjectIdAsync_WhenObjectIdIsNotAGuid_ReturnsNotFoundWithoutCallingGraph()
+    {
+        var result = await _service.GetApplicationByObjectIdAsync(TestTenantId, "not-a-guid");
+
+        result.Found.Should().BeFalse(
+            because: "malformed cached object IDs must be rejected before any Graph call");
+        await _graphApiService.DidNotReceiveWithAnyArgs().GraphGetAsync(
+            default!,
+            default!,
+            default,
+            default);
     }
 
     [Fact]
@@ -221,7 +268,7 @@ public class BlueprintLookupServiceTests
         // Arrange
         _graphApiService.GraphGetAsync(
             TestTenantId,
-            $"/beta/applications/{TestObjectId}",
+            Arg.Is<string>(s => s.Contains($"/beta/applications/{TestObjectId}/microsoft.graph.agentIdentityBlueprint")),
             Arg.Any<CancellationToken>())
             .Returns(Task.FromException<JsonDocument?>(new Exception("Graph API error")));
 
@@ -232,6 +279,22 @@ public class BlueprintLookupServiceTests
         result.Should().NotBeNull();
         result.Found.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Graph API error");
+    }
+
+    [Fact]
+    public async Task GetApplicationByObjectIdAsync_WhenCancelled_PropagatesCancellation()
+    {
+        _graphApiService.GraphGetAsync(
+                TestTenantId,
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                null)
+            .Returns(Task.FromException<JsonDocument?>(new OperationCanceledException()));
+
+        var act = async () => await _service.GetApplicationByObjectIdAsync(TestTenantId, TestObjectId);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "cancellation must not be converted into a not-found result");
     }
 
     [Fact]
@@ -304,5 +367,229 @@ public class BlueprintLookupServiceTests
         result.Found.Should().BeFalse("searching by new displayName should not find old cached blueprint");
         result.LookupMethod.Should().Be("displayName");
         result.RequiresPersistence.Should().BeFalse("no blueprint found means nothing to persist");
+    }
+
+    // -----------------------------------------------------------------------
+    // ListBlueprintsAsync
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task ListBlueprintsAsync_WhenBlueprintsExist_ReturnsAllWithDetails()
+    {
+        var jsonResponse = $@"{{
+            ""value"": [
+                {{ ""id"": ""{TestObjectId}"", ""appId"": ""{TestAppId}"", ""displayName"": ""{TestDisplayName}"" }},
+                {{ ""id"": ""22222222-2222-2222-2222-222222222222"", ""appId"": ""33333333-3333-3333-3333-333333333333"", ""displayName"": ""Second Blueprint"" }}
+            ]
+        }}";
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Is<string>(s => s.Contains("/beta/applications/microsoft.graph.agentIdentityBlueprint")),
+            Arg.Any<CancellationToken>(),
+            null)
+            .Returns(JsonDocument.Parse(jsonResponse));
+
+        var result = await _service.ListBlueprintsAsync(TestTenantId);
+
+        result.Should().HaveCount(2, because: "both blueprints returned by Graph must be included");
+        result[0].Found.Should().BeTrue();
+        result[0].AppId.Should().Be(TestAppId);
+        result[0].DisplayName.Should().Be(TestDisplayName);
+        result[1].AppId.Should().Be("33333333-3333-3333-3333-333333333333");
+    }
+
+    [Fact]
+    public async Task ListBlueprintsAsync_WhenTenantHasNoBlueprints_ReturnsEmptyList()
+    {
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>(),
+            null)
+            .Returns(JsonDocument.Parse(@"{""value"": []}"));
+
+        var result = await _service.ListBlueprintsAsync(TestTenantId);
+
+        result.Should().BeEmpty(because: "an empty tenant must be reported as a successful empty list, not an error");
+    }
+
+    [Fact]
+    public async Task ListBlueprintsAsync_FollowsODataNextLinkPagination()
+    {
+        var page1 = $@"{{
+            ""value"": [ {{ ""id"": ""{TestObjectId}"", ""appId"": ""{TestAppId}"", ""displayName"": ""Page1 Blueprint"" }} ],
+            ""@odata.nextLink"": ""https://graph.microsoft.com/beta/applications/microsoft.graph.agentIdentityBlueprint?$skiptoken=abc""
+        }}";
+        var page2 = @"{""value"": [ { ""id"": ""44444444-4444-4444-4444-444444444444"", ""appId"": ""55555555-5555-5555-5555-555555555555"", ""displayName"": ""Page2 Blueprint"" } ] }";
+
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Is<string>(s => s.Contains("$top=100") && !s.Contains("skiptoken")),
+            Arg.Any<CancellationToken>(),
+            null)
+            .Returns(JsonDocument.Parse(page1));
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Is<string>(s => s.Contains("skiptoken")),
+            Arg.Any<CancellationToken>(),
+            null)
+            .Returns(JsonDocument.Parse(page2));
+
+        var result = await _service.ListBlueprintsAsync(TestTenantId);
+
+        result.Should().HaveCount(2, because: "both pages of results must be aggregated");
+        result.Select(r => r.DisplayName).Should().Contain(["Page1 Blueprint", "Page2 Blueprint"]);
+    }
+
+    [Fact]
+    public async Task ListBlueprintsAsync_WhenGraphQueryFails_ThrowsInvalidOperationException()
+    {
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>(),
+            null)
+            .Returns((JsonDocument?)null);
+
+        var act = async () => await _service.ListBlueprintsAsync(TestTenantId);
+
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            because: "an auth/query failure must surface as an exception so the caller returns a non-zero exit code instead of reporting an empty list as success");
+    }
+
+    // -----------------------------------------------------------------------
+    // GetBlueprintByAppIdAsync
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetBlueprintByAppIdAsync_WhenBlueprintExists_ReturnsFoundWithDetails()
+    {
+        var jsonResponse = $@"{{
+            ""value"": [ {{ ""id"": ""{TestObjectId}"", ""appId"": ""{TestAppId}"", ""displayName"": ""{TestDisplayName}"" }} ]
+        }}";
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Is<string>(s => s.Contains("/beta/applications/microsoft.graph.agentIdentityBlueprint") && s.Contains(TestAppId)),
+            Arg.Any<CancellationToken>(),
+            null)
+            .Returns(JsonDocument.Parse(jsonResponse));
+
+        var result = await _service.GetBlueprintByAppIdAsync(TestTenantId, TestAppId);
+
+        result.Found.Should().BeTrue();
+        result.ObjectId.Should().Be(TestObjectId);
+        result.AppId.Should().Be(TestAppId);
+        result.DisplayName.Should().Be(TestDisplayName);
+    }
+
+    [Fact]
+    public async Task GetBlueprintByAppIdAsync_WhenGraphReturnsMismatchedAppId_ReturnsNotFound()
+    {
+        var mismatchedAppId = "99999999-9999-9999-9999-999999999999";
+        _graphApiService.GraphGetAsync(
+                TestTenantId,
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                null)
+            .Returns(JsonDocument.Parse($$"""
+                {
+                  "value": [
+                    {
+                      "id": "{{TestObjectId}}",
+                      "appId": "{{mismatchedAppId}}",
+                      "displayName": "{{TestDisplayName}}"
+                    }
+                  ]
+                }
+                """));
+
+        var result = await _service.GetBlueprintByAppIdAsync(TestTenantId, TestAppId);
+
+        result.Found.Should().BeFalse(
+            because: "a Graph result for another app must not satisfy exact tenant verification");
+        result.ErrorMessage.Should().Contain(
+            "incomplete or inconsistent",
+            because: "the caller must be able to distinguish a mismatched response from an absent blueprint");
+    }
+
+    [Fact]
+    public async Task GetBlueprintByAppIdAsync_WhenGraphReturnsMissingDisplayName_ReturnsNotFound()
+    {
+        _graphApiService.GraphGetAsync(
+                TestTenantId,
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                null)
+            .Returns(JsonDocument.Parse($$"""
+                {
+                  "value": [
+                    {
+                      "id": "{{TestObjectId}}",
+                      "appId": "{{TestAppId}}"
+                    }
+                  ]
+                }
+                """));
+
+        var result = await _service.GetBlueprintByAppIdAsync(TestTenantId, TestAppId);
+
+        result.Found.Should().BeFalse(
+            because: "an incomplete Graph record must not be persisted as an authoritative blueprint");
+    }
+
+    [Fact]
+    public async Task GetBlueprintByAppIdAsync_WhenNotFoundInTenant_ReturnsNotFound()
+    {
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>(),
+            null)
+            .Returns(JsonDocument.Parse(@"{""value"": []}"));
+
+        var result = await _service.GetBlueprintByAppIdAsync(TestTenantId, TestAppId);
+
+        result.Found.Should().BeFalse(
+            because: "a blueprint that does not exist in this tenant (e.g. belongs to a different tenant) must not be treated as found");
+    }
+
+    [Fact]
+    public async Task GetBlueprintByAppIdAsync_WhenAppIdIsNotAGuid_ReturnsNotFoundWithoutCallingGraph()
+    {
+        var result = await _service.GetBlueprintByAppIdAsync(TestTenantId, "not-a-guid");
+
+        result.Found.Should().BeFalse(because: "malformed input must be rejected before any Graph call is made");
+        await _graphApiService.DidNotReceiveWithAnyArgs().GraphGetAsync(default!, default!, default, default);
+    }
+
+    [Fact]
+    public async Task GetBlueprintByAppIdAsync_OnGraphFailure_ReturnsNotFound()
+    {
+        _graphApiService.GraphGetAsync(
+            TestTenantId,
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>(),
+            null)
+            .Returns((JsonDocument?)null);
+
+        var result = await _service.GetBlueprintByAppIdAsync(TestTenantId, TestAppId);
+
+        result.Found.Should().BeFalse(because: "a query failure must not be misreported as a successful not-found result being confused with success");
+    }
+
+    [Fact]
+    public async Task GetBlueprintByAppIdAsync_WhenCancelled_PropagatesCancellation()
+    {
+        _graphApiService.GraphGetAsync(
+                TestTenantId,
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                null)
+            .Returns(Task.FromException<JsonDocument?>(new OperationCanceledException()));
+
+        var act = async () => await _service.GetBlueprintByAppIdAsync(TestTenantId, TestAppId);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "cancellation must not be converted into a failed lookup");
     }
 }

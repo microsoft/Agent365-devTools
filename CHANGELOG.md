@@ -23,6 +23,8 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
+- Added `a365 setup blueprint list` to list existing Agent Identity Blueprints and their Blueprint IDs.
+- Added `setup all --blueprint-id <guid>` and `--select-blueprint` to create an agent identity under a tenant-verified existing blueprint.
 - Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.
 - Authentication context (tenant and user) is now logged at the `Information` level whenever the resolved sign-in identity changes, giving operators a clear audit trail in the log file of who the CLI is acting as, without exposing credentials.
 - `a365 develop-mcp evaluate` command for evaluating MCP server tool schema quality — runs deterministic and semantic checks (via GitHub Copilot or Claude Code CLIs), computes maturity scoring, and generates an interactive HTML report

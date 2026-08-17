@@ -43,6 +43,14 @@ public interface IConfigService
         string statePath = "a365.generated.config.json");
 
     /// <summary>
+    /// Updates the selected blueprint display name in the static configuration file.
+    /// </summary>
+    Task UpdateAgentBlueprintDisplayNameAsync(
+        string displayName,
+        string configPath = "a365.config.json",
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Backs up the current generated state file (if it exists) to a timestamped sibling file,
     /// then resets every dynamic (get/set) property on <paramref name="config"/> to its default value
     /// and persists an empty state file. Use when a structural root resource (e.g. the agent blueprint)

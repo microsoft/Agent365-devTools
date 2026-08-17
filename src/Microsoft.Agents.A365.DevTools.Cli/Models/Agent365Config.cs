@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -672,6 +673,26 @@ public class Agent365Config
 
         return config;
     }
+
+    /// <summary>
+    /// Returns a shallow copy of this config with <see cref="AgentBlueprintDisplayName"/> overridden.
+    /// </summary>
+    /// <remarks>
+    /// Setter metadata determines static config persistence; callers must replace shared collections
+    /// before mutating them on the shallow copy.
+    /// </remarks>
+    public Agent365Config WithAgentBlueprintDisplayName(string? displayName)
+    {
+        var clone = (Agent365Config)MemberwiseClone();
+        SetAgentBlueprintDisplayName(clone, displayName);
+        return clone;
+    }
+
+    /// <summary>
+    /// Invokes the init-only display-name setter on a cloned config.
+    /// </summary>
+    [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "set_" + nameof(AgentBlueprintDisplayName))]
+    private static extern void SetAgentBlueprintDisplayName(Agent365Config config, string? value);
 
     /// <summary>
     /// Creates a new Agent365Config instance with the same static properties but updated CustomBlueprintPermissions.

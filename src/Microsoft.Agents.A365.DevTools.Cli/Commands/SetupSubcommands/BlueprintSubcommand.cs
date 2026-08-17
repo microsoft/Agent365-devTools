@@ -130,7 +130,9 @@ internal static class BlueprintSubcommand
     {
         var command = new Command("blueprint",
             "Create agent blueprint (Entra ID application registration)\n" +
-            "Minimum required permissions: Agent ID Developer role\n");
+            "Minimum required permissions: Agent ID Developer role\n\n" +
+            "Subcommand:\n" +
+            "  a365 setup blueprint list             List existing blueprints in the tenant (read-only)\n");
 
         var agentNameOption = new Option<string?>(
             ["--agent-name", "-n"],
@@ -194,6 +196,9 @@ internal static class BlueprintSubcommand
         command.AddOption(skipRequirementsOption);
         command.AddOption(m365Option);
         command.AddOption(showSecretOption);
+
+        // Keep listing separate from the blueprint create/update handler.
+        command.AddCommand(CreateListSubcommand(logger, executor, graphApiService, blueprintLookupService));
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -454,6 +459,87 @@ internal static class BlueprintSubcommand
                 isM365: isM365
                 );
 
+        });
+
+        return command;
+    }
+
+    /// <summary>
+    /// Creates the read-only blueprint listing command.
+    /// </summary>
+    private static Command CreateListSubcommand(
+        ILogger logger,
+        CommandExecutor executor,
+        GraphApiService graphApiService,
+        BlueprintLookupService blueprintLookupService)
+    {
+        var command = new Command("list",
+            "List Agent Identity Blueprints in the tenant (read-only)\n" +
+            "Shows each blueprint's display name and Blueprint ID (application/client ID); pass the\n" +
+            "Blueprint ID to 'a365 setup all --blueprint-id <id>' to add a new agent identity to it.\n" +
+            "Minimum required permissions: AgentIdentityBlueprint.Read.All (or ReadWrite.All)\n");
+
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            description: "Azure AD tenant ID. Overrides auto-detection from 'az account show'.");
+
+        command.AddOption(tenantIdOption);
+
+        command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
+        {
+            var tenantIdSpecified = context.ParseResult.CommandResult.FindResultFor(tenantIdOption) != null;
+            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption)?.Trim();
+            var ct = context.GetCancellationToken();
+
+            if (tenantIdSpecified && string.IsNullOrWhiteSpace(tenantIdFlag))
+            {
+                logger.LogError("--tenant-id cannot be empty or whitespace.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            var tenantId = await SetupHelpers.ResolveBootstrapTenantIdAsync(tenantIdFlag, executor, logger);
+            if (string.IsNullOrWhiteSpace(tenantId))
+            {
+                logger.LogError("Could not detect tenant ID. Sign in with 'az login' or pass --tenant-id.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            IReadOnlyList<Models.BlueprintLookupResult> blueprints;
+            try
+            {
+                blueprints = await blueprintLookupService.ListBlueprintsAsync(tenantId, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to list agent identity blueprints: {Message}", ex.Message);
+                context.ExitCode = 1;
+                return;
+            }
+
+            if (blueprints.Count == 0)
+            {
+                logger.LogInformation("No Agent Identity Blueprints found in tenant {TenantId}.", tenantId);
+                logger.LogInformation("");
+                logger.LogInformation("Create one with: a365 setup blueprint --agent-name <name>");
+                return;
+            }
+
+            logger.LogInformation("Agent Identity Blueprints in tenant {TenantId}:", tenantId);
+            logger.LogInformation("");
+            using (logger.Indent())
+            {
+                for (var i = 0; i < blueprints.Count; i++)
+                {
+                    logger.LogInformation("{Index}. {DisplayName}  (Blueprint ID: {AppId})",
+                        i + 1, blueprints[i].DisplayName ?? "(unnamed)", blueprints[i].AppId ?? "(unknown)");
+                }
+            }
+            logger.LogInformation("");
+            logger.LogInformation("To add a new agent identity under an existing blueprint, run:");
+            logger.LogInformation("  a365 setup all --agent-name <name> --blueprint-id <id>");
         });
 
         return command;
@@ -862,10 +948,61 @@ internal static class BlueprintSubcommand
     }
 
     /// <summary>
-    /// Creates Agent Blueprint application using Graph API
-    /// Implements displayName-first discovery for idempotency: always searches by displayName from a365.config.json (the source of truth).
-    /// Cached objectIds are only used for dependent resources (FIC, etc.) after blueprint existence is confirmed.
-    /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted, graphPermissionsConfigured, graphInheritablePermissionsFailed, graphInheritablePermissionsError, ficConfigured, ficError, adminConsentUrl)
+    /// Resolves a blueprint by stable object ID, then falls back to its display name.
+    /// </summary>
+    internal static async Task<BlueprintLookupResult> ResolveExistingBlueprintAsync(
+        BlueprintLookupService blueprintLookupService,
+        string tenantId,
+        string? cachedObjectId,
+        string displayName,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(cachedObjectId))
+        {
+            logger.LogDebug("Verifying cached blueprint object ID: {ObjectId}...", cachedObjectId);
+            var idLookupResult = await blueprintLookupService.GetApplicationByObjectIdAsync(tenantId, cachedObjectId, ct);
+
+            if (idLookupResult.Found)
+            {
+                logger.LogInformation("Found existing blueprint by object ID (authoritative)");
+                using (logger.Indent())
+                {
+                    logger.LogInformation("Blueprint ID: {AppId}", idLookupResult.AppId);
+                    logger.LogDebug("Object ID: {ObjectId}", idLookupResult.ObjectId);
+                }
+
+                return idLookupResult;
+            }
+
+            logger.LogDebug(
+                "Cached blueprint object ID {ObjectId} no longer resolves in the tenant; falling back to display-name discovery.",
+                cachedObjectId);
+        }
+
+        // Always search by displayName from a365.config.json (the master source of truth) when no
+        // authoritative object ID was already confirmed above.
+        if (string.IsNullOrWhiteSpace(displayName))
+            return new BlueprintLookupResult { Found = false };
+
+        logger.LogDebug("Searching for existing blueprint by display name: {DisplayName}...", displayName);
+        var lookupResult = await blueprintLookupService.GetApplicationByDisplayNameAsync(tenantId, displayName, cancellationToken: ct);
+
+        if (lookupResult.Found)
+        {
+            logger.LogInformation("Found existing blueprint by display name");
+            using (logger.Indent())
+            {
+                logger.LogInformation("Blueprint ID: {AppId}", lookupResult.AppId);
+                logger.LogDebug("Object ID: {ObjectId}", lookupResult.ObjectId);
+            }
+        }
+
+        return lookupResult;
+    }
+
+    /// <summary>
+    /// Creates or reuses an Agent Identity Blueprint through Microsoft Graph.
     /// </summary>
     public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError, bool ficConfigured, string? ficError, string? adminConsentUrl)> CreateAgentBlueprintAsync(
         ILogger logger,
@@ -888,13 +1025,7 @@ internal static class BlueprintSubcommand
         Func<Task<string?>>? loginHintResolver = null,
         IConfirmationProvider? confirmationProvider = null)
     {
-        // ========================================================================
-        // Idempotency Check: DisplayName-First Discovery
-        // ========================================================================
-        // IMPORTANT: a365.config.json is the source of truth for displayName.
-        // We always search by displayName first to handle scenarios where the user
-        // changes displayName in a365.config.json. Cached objectIds are only used
-        // for dependent resources (FIC, etc.) after blueprint is confirmed to exist.
+        // Prefer the stable object ID because blueprint display names are not unique.
 
         string? existingObjectId = null;
         string? existingAppId = null;
@@ -902,26 +1033,14 @@ internal static class BlueprintSubcommand
         bool blueprintAlreadyExists = false;
         bool requiresPersistence = false;
 
-        // Always search by displayName from a365.config.json (the master source of truth)
-        if (!string.IsNullOrWhiteSpace(displayName))
+        var discovery = await ResolveExistingBlueprintAsync(
+            blueprintLookupService, tenantId, setupConfig.AgentBlueprintObjectId, displayName, logger, ct);
+        if (discovery.Found)
         {
-            logger.LogDebug("Searching for existing blueprint by display name: {DisplayName}...", displayName);
-            var lookupResult = await blueprintLookupService.GetApplicationByDisplayNameAsync(tenantId, displayName, cancellationToken: ct);
-
-            if (lookupResult.Found)
-            {
-                logger.LogInformation("Found existing blueprint by display name");
-                using (logger.Indent())
-                {
-                    logger.LogInformation("Blueprint ID: {AppId}", lookupResult.AppId);
-                    logger.LogDebug("Object ID: {ObjectId}", lookupResult.ObjectId);
-                }
-
-                existingObjectId = lookupResult.ObjectId;
-                existingAppId = lookupResult.AppId;
-                blueprintAlreadyExists = true;
-                requiresPersistence = lookupResult.RequiresPersistence;
-            }
+            existingObjectId = discovery.ObjectId;
+            existingAppId = discovery.AppId;
+            blueprintAlreadyExists = true;
+            requiresPersistence = discovery.RequiresPersistence;
         }
 
         // If blueprint exists, verify service principal still exists (cached ID may be stale if SP was deleted externally)
