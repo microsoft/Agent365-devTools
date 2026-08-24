@@ -39,6 +39,7 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService, graphApiService));
         developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
+        developMcpCommand.AddCommand(CreateEnableVnetSubcommand(logger, toolingService));
 
         if (evaluationPipelineService is not null)
         {
@@ -528,6 +529,50 @@ public static class DevelopMcpCommand
             logger.LogInformation("Successfully unpublished MCP server {ServerName} from environment {EnvId}", serverName, envId);
 
         }, envIdOption, serverNameOption, dryRunOption, verboseOption);
+
+        return command;
+    }
+
+    /// <summary>
+    /// Creates the enable-vnet subcommand.
+    /// </summary>
+    private static Command CreateEnableVnetSubcommand(
+        ILogger logger,
+        IAgent365ToolingService toolingService)
+    {
+        var command = new Command(
+            "enable-vnet",
+            "Enable virtual network support for external MCP servers");
+
+        var dryRunOption = new Option<bool>(
+            "--dry-run",
+            description: "Show what would be done without executing");
+        command.AddOption(dryRunOption);
+
+        command.AddOption(new Option<bool>(
+            ["--verbose", "-v"],
+            description: "Enable verbose logging"));
+
+        command.SetHandler(async (context) =>
+        {
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+            if (dryRun)
+            {
+                logger.LogInformation("[DRY RUN] Would enable virtual network support for external MCP servers");
+                return;
+            }
+
+            logger.LogInformation("Enabling virtual network support for external MCP servers...");
+            var success = await toolingService.EnableVnetAsync(context.GetCancellationToken());
+            if (!success)
+            {
+                logger.LogError("Failed to enable virtual network support for external MCP servers.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            logger.LogInformation("Virtual network support for external MCP servers enabled successfully.");
+        });
 
         return command;
     }
