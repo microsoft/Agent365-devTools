@@ -88,6 +88,7 @@ The CLI provides a `develop-mcp` command for managing Model Context Protocol (MC
 - `a365 develop-mcp list-servers -e <environment-id>` — List MCP servers in a specific Dataverse environment
 - `a365 develop-mcp publish -e <environment-id> -s <server-name>` — Publish an MCP server to a Dataverse environment
 - `a365 develop-mcp unpublish -e <environment-id> -s <server-name>` — Unpublish an MCP server from a Dataverse environment
+- `a365 develop-mcp enable-vnet` — Enable virtual network support for external MCP servers
 
 **Key Features:**
 - **Azure CLI Style Parameters:** Uses named options (`--environment-id/-e`, `--server-name/-s`) for better UX
@@ -121,6 +122,9 @@ a365 develop-mcp publish \
 
 # Quick unpublish with short aliases
 a365 develop-mcp unpublish -e "Default-12345678-1234-1234-1234-123456789abc" -s "msdyn_MyMcpServer"
+
+# Enable virtual network support for external MCP servers
+a365 develop-mcp enable-vnet
 
 # Test commands safely with dry-run
 a365 develop-mcp publish -e "myenv" -s "myserver" --dry-run
@@ -978,5 +982,3 @@ Logging is implemented using Serilog with dual sinks:
 Command name detection is automatic - the CLI analyzes command-line arguments to determine which command is running.
 
 ---
-
-

@@ -17,9 +17,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 public class Agent365ToolingService : IAgent365ToolingService
 {
     private readonly IConfigService _configService;
-    private readonly AuthenticationService _authService;
+    private readonly IAuthenticationService _authService;
     private readonly ILogger<Agent365ToolingService> _logger;
     private readonly string _environment;
+    private readonly HttpMessageHandler? _httpMessageHandler;
+    private readonly Func<Task<string?>> _loginHintResolver;
 
     /// <inheritdoc />
     public string Environment => _environment;
@@ -29,11 +31,25 @@ public class Agent365ToolingService : IAgent365ToolingService
         AuthenticationService authService,
         ILogger<Agent365ToolingService> logger,
         string environment = "prod")
+        : this(configService, authService, logger, environment, null, null)
+    {
+    }
+
+
+    internal Agent365ToolingService(
+        IConfigService configService,
+        IAuthenticationService authService,
+        ILogger<Agent365ToolingService> logger,
+        string environment,
+        HttpMessageHandler? httpMessageHandler,
+        Func<Task<string?>>? loginHintResolver)
     {
         _configService = configService ?? throw new ArgumentNullException(nameof(configService));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _environment = environment ?? "prod";
+        _httpMessageHandler = httpMessageHandler;
+        _loginHintResolver = loginHintResolver ?? AzCliHelper.ResolveLoginHintAsync;
     }
 
     /// <summary>
@@ -297,6 +313,12 @@ public class Agent365ToolingService : IAgent365ToolingService
     {
         var baseUrl = BuildAgent365ToolsBaseUrl(environment);
         return $"{baseUrl}/agents/externalMcpServers/logEvaluate";
+    }
+
+    private string BuildEnableVnetUrl(string environment)
+    {
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        return $"{baseUrl}/agents/vnet/enable";
     }
 
     /// <summary>
@@ -697,6 +719,58 @@ public class Agent365ToolingService : IAgent365ToolingService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<bool> EnableVnetAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var endpointUrl = BuildEnableVnetUrl(_environment);
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
+
+            _logger.LogDebug("Enabling virtual network support (CorrelationId: {CorrelationId})", correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
+
+            var loginHint = await _loginHintResolver().WaitAsync(cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience,
+                userId: loginHint,
+                ct: cancellationToken);
+            if (string.IsNullOrWhiteSpace(authToken))
+            {
+                _logger.LogError("Failed to acquire authentication token");
+                return false;
+            }
+
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(
+                authToken,
+                correlationId: correlationId,
+                handler: _httpMessageHandler,
+                disposeHandler: _httpMessageHandler is null);
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpointUrl);
+
+            LogRequest("POST", endpointUrl);
+
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            var (isSuccess, _) = await ValidateResponseAsync(
+                response,
+                "enable virtual network support",
+                cancellationToken);
+            return isSuccess;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to enable virtual network support");
+            return false;
+        }
+    }
+
     public async Task<AddMcpServerResponse?> AddMcpServerAsync(
         AddMcpServerRequest request,
         string? environmentId = null,
@@ -905,4 +979,3 @@ public class Agent365ToolingService : IAgent365ToolingService
         }
     }
 }
-

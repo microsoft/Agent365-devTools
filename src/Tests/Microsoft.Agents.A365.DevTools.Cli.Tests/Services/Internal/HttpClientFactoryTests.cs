@@ -243,4 +243,48 @@ public class HttpClientFactoryTests
 
         correlationId.Should().Be(clientRequestId, "Both headers should have the same auto-generated correlation ID");
     }
+
+    [Fact]
+    public void CreateAuthenticatedClient_DisposeHandlerTrue_DisposesInjectedHandler()
+    {
+        using var handler = new DisposalTrackingHandler();
+        var client = HttpClientFactory.CreateAuthenticatedClient(
+            handler: handler,
+            disposeHandler: true);
+
+        client.Dispose();
+
+        handler.IsDisposed.Should().BeTrue(
+            because: "the default ownership contract disposes the injected handler with its client");
+    }
+
+    [Fact]
+    public void CreateAuthenticatedClient_DisposeHandlerFalse_PreservesInjectedHandler()
+    {
+        using var handler = new DisposalTrackingHandler();
+        using (var client = HttpClientFactory.CreateAuthenticatedClient(
+            handler: handler,
+            disposeHandler: false))
+        {
+        }
+
+        handler.IsDisposed.Should().BeFalse(
+            because: "callers can retain ownership of a reusable injected handler");
+    }
+
+    private sealed class DisposalTrackingHandler : HttpMessageHandler
+    {
+        public bool IsDisposed { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage());
+
+        protected override void Dispose(bool disposing)
+        {
+            IsDisposed = disposing;
+            base.Dispose(disposing);
+        }
+    }
 }

@@ -27,6 +27,7 @@ There is reference documentation for each command.
 | [develop-mcp list-servers](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-list-servers) | List MCP servers in a specific Dataverse environment. |
 | [develop-mcp publish](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-publish) | Publish an MCP server to a Dataverse environment. |
 | [develop-mcp unpublish](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-unpublish) | Unpublish an MCP server from a Dataverse environment. |
+| [develop-mcp enable-vnet](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-enable-vnet) | Enable virtual network support for external MCP servers. |
 | [publish](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/publish) | Update manifest.json ID values and publish the package. Configure federated identity and app role assignments. |
 | [query-entra](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra) | Query Microsoft Entra ID for agent information including scopes, permissions, and consent status. |
 | [query-entra blueprint-scopes](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra#query-entra-blueprint-scopes) | List configured scopes and consent status for the agent blueprint. |

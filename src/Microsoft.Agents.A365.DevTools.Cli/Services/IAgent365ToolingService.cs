@@ -76,6 +76,13 @@ public interface IAgent365ToolingService
     Task LogEvaluateUsageAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Enables virtual network support for external MCP servers.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True when virtual network support was enabled successfully; otherwise false</returns>
+    Task<bool> EnableVnetAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Adds a BYO (Bring Your Own) MCP server
     /// </summary>
     /// <param name="request">Add MCP server request</param>
@@ -108,4 +115,3 @@ public interface IAgent365ToolingService
         bool force = false,
         CancellationToken cancellationToken = default);
 }
-

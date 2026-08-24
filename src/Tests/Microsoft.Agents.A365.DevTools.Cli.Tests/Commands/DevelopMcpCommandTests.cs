@@ -42,17 +42,22 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(5);
+        command.Subcommands.Should().HaveCount(
+            6,
+            because: "enable-vnet must be registered in the develop-mcp command group");
 
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
-        subcommandNames.Should().Contain(new[]
-        {
-            "list-environments",
-            "list-servers",
-            "publish",
-            "unpublish",
-            "register-external-mcp-server"
-        });
+        subcommandNames.Should().Contain(
+            new[]
+            {
+                "list-environments",
+                "list-servers",
+                "publish",
+                "unpublish",
+                "register-external-mcp-server",
+                "enable-vnet"
+            },
+            because: "all supported develop-mcp commands must remain registered");
     }
 
     [Fact]
@@ -246,6 +251,27 @@ public class DevelopMcpCommandTests
 
         var verboseOption = options.First(o => o.Name == "verbose");
         verboseOption.Aliases.Should().Contain("-v");
+    }
+
+    [Fact]
+    public void EnableVnetSubcommand_HasExpectedShape()
+    {
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
+        var subcommand = command.Subcommands.First(sc => sc.Name == "enable-vnet");
+
+        // Assert
+        subcommand.Description.Should().Be(
+            "Enable virtual network support for external MCP servers",
+            because: "the enable-vnet help text is user-facing");
+        subcommand.Arguments.Should().BeEmpty(
+            because: "the MCP Platform endpoint accepts no route parameters");
+        subcommand.Options.Select(o => o.Name).Should().BeEquivalentTo(
+            ["dry-run", "verbose"],
+            because: "the endpoint accepts no payload fields or command-specific inputs");
+        subcommand.Options.First(o => o.Name == "verbose").Aliases.Should().Contain(
+            "-v",
+            because: "enable-vnet should follow the neighboring command's verbose alias convention");
     }
 
 
