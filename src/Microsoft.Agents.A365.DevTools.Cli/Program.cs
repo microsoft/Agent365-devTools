@@ -399,6 +399,9 @@ class Program
         // adding its ICodingAgentLauncher implementation file plus one line here.
         services.AddSingleton<ICodingAgentLauncher, GitHubCopilotLauncher>();
         services.AddSingleton<ICodingAgentLauncher, ClaudeCodeLauncher>();
+        // Azure OpenAI judge (BYO model via Entra ID). Explicit-only (AutoDetectable=false),
+        // so it never participates in --eval-engine auto despite being registered here.
+        services.AddSingleton<ICodingAgentLauncher, AzureOpenAiLauncher>();
         services.AddSingleton<IChecklistEvaluator, ChecklistEvaluator>();
         services.AddSingleton<IEvaluationAnalyzer, EvaluationAnalyzer>();
         services.AddSingleton<IReportGenerator, ReportGenerator>();

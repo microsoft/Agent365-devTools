@@ -56,10 +56,11 @@ public static class DevelopMcpCommand
         var command = new Command(
             "evaluate",
             "Evaluate MCP server tool schema quality and generate an HTML report. " +
-            "Uses a locally installed coding agent (GitHub Copilot or Claude Code) to score semantic checks. " +
+            "Scores semantic checks with a locally installed coding agent (GitHub Copilot or Claude Code), " +
+            "or with your own Azure OpenAI deployment via --eval-engine azure-openai. " +
             "If no agent is detected, the command stops after writing the checklist so you can score it manually with your own LLM, " +
             "or pass --eval-engine none to skip agent probing entirely. " +
-            "Only run this against MCP servers you trust: the server's tool names and descriptions are sent to a locally running coding agent.");
+            "Only run this against MCP servers you trust: the server's tool names and descriptions are sent to the scoring engine.");
 
         // Use a required option (not a positional argument) for consistency with other
         // develop-mcp subcommands and Azure CLI conventions.
@@ -78,9 +79,10 @@ public static class DevelopMcpCommand
         var evalEngineOption = new Option<string>(
             "--eval-engine",
             getDefaultValue: () => "auto",
-            "Which local coding agent scores semantic checks. " +
-            "auto: try github-copilot then claude-code. " +
-            "github-copilot or claude-code: use only that engine. " +
+            "Which engine scores semantic checks. " +
+            "auto: try github-copilot then claude-code (local coding agents). " +
+            "github-copilot or claude-code: use only that local agent. " +
+            "azure-openai: use your own Azure OpenAI deployment as the judge via Entra ID (set A365_EVAL_AZURE_OPENAI_ENDPOINT and A365_EVAL_AZURE_OPENAI_DEPLOYMENT). " +
             "none: skip automatic scoring and expect the checklist to be pre-scored (bring-your-own-LLM).");
 
         var authTokenOption = new Option<string?>(

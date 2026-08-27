@@ -32,15 +32,17 @@ Wait for the answer. Store as `needsAuth`:
 1. Auto — try GitHub Copilot first, fall back to Claude Code
 2. GitHub Copilot only
 3. Claude Code only
-4. None — generate the checklist and let me (or my own LLM) score it manually (bring-your-own-LLM)
+4. Azure OpenAI — score with your own Azure OpenAI deployment via Entra ID (no local coding agent; typically the fastest option)
+5. None — generate the checklist and let me (or my own LLM) score it manually (bring-your-own-LLM)
 
 Wait for the answer. Store as `evalEngine`:
 - If **1 (Auto)**: `evalEngine = "auto"`
 - If **2 (GitHub Copilot)**: `evalEngine = "github-copilot"`
 - If **3 (Claude Code)**: `evalEngine = "claude-code"`
-- If **4 (None)**: `evalEngine = "none"`
+- If **4 (Azure OpenAI)**: `evalEngine = "azure-openai"` — also confirm the user has set `A365_EVAL_AZURE_OPENAI_ENDPOINT` and `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` and is signed in to Entra ID (see Step 2).
+- If **5 (None)**: `evalEngine = "none"`
 
-> **Note:** Auto and the named engines require the corresponding CLI to be installed on the workstation (`copilot` or `claude`). If neither is installed and `evalEngine` is `auto` or a named engine, the pipeline will stop after writing the checklist and print BYO-LLM instructions — that is expected, not an error.
+> **Note:** The local engines (`auto`, `github-copilot`, `claude-code`) require the corresponding CLI on the workstation (`copilot` or `claude`); if none is installed the pipeline stops after writing the checklist and prints BYO-LLM instructions — that is expected, not an error. The `azure-openai` engine needs **no local CLI** — instead it requires the `A365_EVAL_AZURE_OPENAI_ENDPOINT` and `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` environment variables and an Entra ID sign-in (e.g. `az login`); see Step 2.
 
 After all three questions are answered, create all todos for the path and mark Todo 1 in-progress:
 
@@ -133,6 +135,27 @@ Tell the user one of the following is required, and that without one of them the
 - Install Claude Code (see above), or
 - Switch to `evalEngine = "none"` and score the checklist with their own LLM after the run.
 
+### If `evalEngine = "azure-openai"`
+
+No local coding agent is used — the `a365` CLI calls your Azure OpenAI deployment directly. Verify two things:
+
+1. **Endpoint and deployment are configured.** The CLI reads these from the environment (they are not flags):
+
+```bash
+echo "$A365_EVAL_AZURE_OPENAI_ENDPOINT"     # e.g. https://<resource>.services.ai.azure.com/openai/v1
+echo "$A365_EVAL_AZURE_OPENAI_DEPLOYMENT"   # deployment name, e.g. gpt-5.4 (recommended)
+```
+
+If either is empty, ask the user for their Azure OpenAI endpoint (include the `/openai/v1` path) and deployment name, then set both variables.
+
+2. **The workstation is signed in to Entra ID.** The engine authenticates with `DefaultAzureCredential` and requests a token for `https://ai.azure.com/.default`. The simplest sign-in is:
+
+```bash
+az login
+```
+
+> **Authentication — Microsoft Entra ID only.** The `azure-openai` engine supports **Entra ID authentication only**, via `DefaultAzureCredential` (Azure CLI sign-in, managed identity, a service principal supplied through environment variables, or Visual Studio / VS Code sign-in). **API-key authentication is NOT supported** — no key is read from the environment or any config file. The model call is made directly by the `a365` CLI to *your* Azure OpenAI deployment, under your Azure subscription, billing, and access policies.
+
 ### Step 2 completion
 
 > Mark Todo 2 as **completed**. Mark Todo 3 as **in-progress**. Proceed to Step 3.
@@ -188,8 +211,11 @@ These settings can come from environment variables instead of (or alongside) the
 | `A365_MCP_AUTH_TOKEN` | Bearer token for the MCP server, used when `--auth-token` is not passed. **Preferred over the flag** — it keeps the token out of process listings (`ps` / Task Manager) and shell history. If you pass `--auth-token`, the CLI prints a one-time warning recommending this variable. |
 | `A365_EVAL_COPILOT_MODEL` | Override the GitHub Copilot model (exact model ID, e.g. `claude-haiku-4.5`). |
 | `A365_EVAL_CLAUDE_MODEL` | Override the Claude Code model (alias, e.g. `haiku`). |
+| `A365_EVAL_AZURE_OPENAI_ENDPOINT` | **Required for `--eval-engine azure-openai`.** Azure OpenAI endpoint, including the API path (e.g. `https://<resource>.services.ai.azure.com/openai/v1`). |
+| `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` | **Required for `--eval-engine azure-openai`.** Deployment (model) name to score with. `gpt-5.4` is recommended — it is the model this engine was tested against. |
+| `A365_EVAL_AZURE_OPENAI_MAX_CONCURRENCY` | Parallel check-scoring calls for the `azure-openai` engine. Default `100`. |
 
-The model defaults to Claude Haiku 4.5; override only to move to a newer model without waiting for a CLI release.
+For the coding-agent engines the model defaults to Claude Haiku 4.5; override only to move to a newer model without waiting for a CLI release. The `azure-openai` engine uses whatever deployment you name in `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` (`gpt-5.4` recommended) and authenticates with Entra ID only (no API key — see Step 2).
 
 ### What you will see
 
@@ -268,6 +294,8 @@ If any step results in an error, stop and analyze the error message carefully.
 | `Unauthorized` from `tools/list` | Wrong or expired bearer token | Re-acquire the token (Question 2). |
 | `Could not parse server URL` | URL doesn't include the protocol | Add `http://` or `https://` to the URL. |
 | `No coding agent detected` after `[2/5]` | Neither `copilot` nor `claude` is on PATH | Install one (Step 2) or pass `--eval-engine none`. |
+| `Azure OpenAI is not available` / engine not selected | `azure-openai` chosen but `A365_EVAL_AZURE_OPENAI_ENDPOINT` / `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` are unset | Set both env vars (Step 2). |
+| `Azure OpenAI authentication failed` | Not signed in to Entra ID (or no usable credential) for the `azure-openai` engine | Run `az login` (or configure a managed identity / service-principal credential). |
 | `Failed to write report to <path>` | Output dir not writable | Choose a different `--output-dir` or fix permissions. |
 | Telemetry warning at debug level | Non-blocking — the marker call failed | Ignore. The evaluation runs regardless. |
 

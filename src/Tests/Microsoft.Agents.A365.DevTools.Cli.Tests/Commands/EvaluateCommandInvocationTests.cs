@@ -198,4 +198,23 @@ public class EvaluateCommandInvocationTests
             Arg.Any<string?>(),
             Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task InvokeAsync_AzureOpenAiEngine_ForwardsEngineAsThirdArgument()
+    {
+        var pipeline = PipelineReturning(0);
+        var evaluate = GetEvaluateSubcommand(Substitute.For<ILogger>(), pipeline);
+        var parser = BuildFaithfulParser(evaluate);
+
+        var exitCode = await parser.InvokeAsync(
+            new[] { "--server-url", "http://localhost/mcp", "--eval-engine", "azure-openai" });
+
+        exitCode.Should().Be(0, because: "RunAsync returned 0, which the handler must propagate as the process exit code");
+        await pipeline.Received(1).RunAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            "azure-openai",
+            Arg.Any<string?>(),
+            Arg.Any<CancellationToken>());
+    }
 }
