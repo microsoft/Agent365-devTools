@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 
@@ -62,6 +63,11 @@ public class WidsOptionalClaimRequirementCheck : RequirementCheck
                 details: "The wids optional claim check requires a tenantId to query Graph.");
         }
 
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(config.ClientAppId))
+        {
+            return await CheckFirstPartyWidsClaimAsync(config, cancellationToken);
+        }
+
         bool hasWids;
         try
         {
@@ -97,6 +103,43 @@ public class WidsOptionalClaimRequirementCheck : RequirementCheck
             resolutionGuidance: manualPatch,
             details: "Without 'wids' in the access token, IsCurrentUserAdminAsync returns Unknown for every user — " +
                 "the orchestrator collapses Unknown to 'not GA' and skips Phase 2b.");
+    }
+
+    /// <summary>
+    /// Verifies <c>wids</c> for the Microsoft first-party app from a token actually issued to it —
+    /// its registration is not readable from the tenant, so the token is the only evidence.
+    /// </summary>
+    private async Task<RequirementCheckResult> CheckFirstPartyWidsClaimAsync(
+        Agent365Config config,
+        CancellationToken cancellationToken)
+    {
+        const string FirstPartyGuidance =
+            "The 'wids' claim is configured by Microsoft on the Agent 365 CLI application and cannot be changed in your tenant. " +
+            "It is also absent when the signed-in account holds no directory role assignment. " +
+            "Sign in with an account that holds Global Administrator (az logout && az login) and re-run this check. " +
+            "If it remains absent, run 'a365 setup blueprint' as a Global Administrator so the blueprint permission grants are not skipped.";
+
+        var hasWids = await _clientAppValidator.HasWidsClaimOnIssuedAccessTokenAsync(
+            config.ClientAppId, config.TenantId, cancellationToken);
+
+        if (hasWids == true)
+        {
+            return RequirementCheckResult.Success(
+                details: $"'wids' is present on an access token issued to {config.ClientAppId}");
+        }
+
+        if (hasWids == false)
+        {
+            return RequirementCheckResult.Warning(
+                message: $"'wids' is not present on the access token issued to the first-party Agent 365 CLI application {config.ClientAppId}. " +
+                    "Global Administrator detection will return Unknown, so blueprint-level AllPrincipals grants may be skipped.",
+                details: FirstPartyGuidance);
+        }
+
+        return RequirementCheckResult.Warning(
+            message: $"Could not verify the 'wids' claim for the first-party Agent 365 CLI application {config.ClientAppId} — " +
+                "no access token was available to inspect.",
+            details: FirstPartyGuidance);
     }
 
     private static string BuildManualPatchInstructions(string clientAppId, string tenantId)

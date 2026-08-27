@@ -3,6 +3,7 @@
 
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -61,6 +62,7 @@ public sealed class LogRedactionService : ILogRedactionService
         "9b975845-388f-4429-889e-eab1ef63949c", // Agent 365 Observability API
         "8578e004-a5c6-46e7-913e-12f58912df43", // Power Platform API (Connectivity)
         "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1", // Agent 365 Tools (MCP audience, production)
+        AuthenticationConstants.WellKnownClientAppId, // Agent 365 CLI (well-known first-party application)
     };
 
     public LogRedactionResult Redact(string logContent, string sourceFilePath)

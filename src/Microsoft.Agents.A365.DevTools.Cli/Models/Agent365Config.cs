@@ -29,7 +29,7 @@ public class Agent365Config
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
         if (string.IsNullOrWhiteSpace(ClientAppId))
         {
-            errors.Add($"clientAppId is required. This must be a client app you create in your tenant with specific permissions. See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions.");
+            errors.Add($"clientAppId is required. Use the default Agent 365 CLI application or configure a tenant-owned custom client app. See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions.");
         }
         else
         {
@@ -78,7 +78,7 @@ public class Agent365Config
 
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
         if (string.IsNullOrWhiteSpace(ClientAppId))
-            errors.Add($"clientAppId could not be resolved. Ensure an Entra app named \"{AuthenticationConstants.WellKnownClientAppDisplayName}\" exists in your tenant.");
+            errors.Add("clientAppId could not be resolved. Ensure the Agent 365 CLI enterprise application exists or configure a tenant-owned custom client app.");
         else
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");

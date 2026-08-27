@@ -37,6 +37,13 @@ public class BootstrapConfigResolverTests : IDisposable
             Substitute.For<ILogger<GraphApiService>>(),
             _executor,
             (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
+        _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = 200
+            });
 
         _loggerFactory = NullLoggerFactory.Instance;
     }

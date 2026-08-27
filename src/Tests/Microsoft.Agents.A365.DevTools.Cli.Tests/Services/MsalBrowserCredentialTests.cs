@@ -3,6 +3,8 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Azure.Core;
+using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Identity.Client;
 using NSubstitute;
@@ -161,6 +163,147 @@ public class MsalBrowserCredentialTests
     #region Platform Detection Tests
 
     [Fact]
+    public void SelectAuthenticationMode_FirstPartyAppOnWindows_UsesWam()
+    {
+        var mode = MsalBrowserCredential.SelectAuthenticationMode(
+            AuthenticationConstants.WellKnownClientAppId,
+            useWam: true,
+            isWindows: true);
+
+        Assert.Equal(MsalBrowserCredential.InteractiveAuthenticationMode.Wam, mode);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void SelectAuthenticationMode_FirstPartyAppWithoutWam_UsesDeviceCode(
+        bool useWam,
+        bool isWindows)
+    {
+        var mode = MsalBrowserCredential.SelectAuthenticationMode(
+            AuthenticationConstants.WellKnownClientAppId,
+            useWam,
+            isWindows);
+
+        Assert.Equal(
+            MsalBrowserCredential.InteractiveAuthenticationMode.DeviceCode,
+            mode);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void SelectAuthenticationMode_CustomAppWithoutWam_UsesSystemBrowser(
+        bool useWam,
+        bool isWindows)
+    {
+        var mode = MsalBrowserCredential.SelectAuthenticationMode(
+            ValidClientId,
+            useWam,
+            isWindows);
+
+        Assert.Equal(
+            MsalBrowserCredential.InteractiveAuthenticationMode.SystemBrowser,
+            mode);
+    }
+
+    [Fact]
+    public void SelectAuthenticationMode_CustomAppOnWindowsWithWam_PreservesWam()
+    {
+        var mode = MsalBrowserCredential.SelectAuthenticationMode(
+            ValidClientId,
+            useWam: true,
+            isWindows: true);
+
+        mode.Should().Be(
+            MsalBrowserCredential.InteractiveAuthenticationMode.Wam,
+            because: "tenant-owned custom apps already use WAM on Windows and the FPA fix must not change that behavior");
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_FirstPartyWithoutWam_UsesDeviceCodeOnly()
+    {
+        var acquirer = CreateEmptyAcquirer();
+        var expected = CreateAccessToken();
+        acquirer.DeviceCodeResult = expected;
+        var credential = new MsalBrowserCredential(
+            AuthenticationConstants.WellKnownClientAppId,
+            ValidTenantId,
+            MsalBrowserCredential.InteractiveAuthenticationMode.DeviceCode,
+            acquirer);
+
+        var result = await credential.GetTokenAsync(
+            new TokenRequestContext(["https://graph.microsoft.com/Application.Read.All"]),
+            CancellationToken.None);
+
+        result.Token.Should().Be(expected.Token,
+            because: "the FPA system-browser request is rejected with AADSTS70007 in WSL/non-Windows environments, while device code avoids that response-mode incompatibility");
+        acquirer.DeviceCodeCalls.Should().Be(1,
+            because: "the non-WAM FPA path must invoke device code exactly once");
+        acquirer.SystemBrowserCalls.Should().Be(0,
+            because: "the FPA must not repeat the system-browser request that Entra rejects with AADSTS70007");
+        acquirer.WamCalls.Should().Be(0,
+            because: "WAM is unavailable in WSL, macOS, and Linux");
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_CustomAppWithoutWam_UsesSystemBrowserOnly()
+    {
+        var acquirer = CreateEmptyAcquirer();
+        var expected = CreateAccessToken();
+        acquirer.SystemBrowserResult = expected;
+        var credential = new MsalBrowserCredential(
+            ValidClientId,
+            ValidTenantId,
+            MsalBrowserCredential.InteractiveAuthenticationMode.SystemBrowser,
+            acquirer);
+
+        var result = await credential.GetTokenAsync(
+            new TokenRequestContext(["https://graph.microsoft.com/User.Read"]),
+            CancellationToken.None);
+
+        result.Token.Should().Be(expected.Token,
+            because: "tenant-owned custom apps retain their registered localhost browser callback flow");
+        acquirer.SystemBrowserCalls.Should().Be(1,
+            because: "a custom app without WAM must keep its registered browser callback flow");
+        acquirer.DeviceCodeCalls.Should().Be(0,
+            because: "the FPA-specific fallback must not alter custom-app authentication");
+        acquirer.WamCalls.Should().Be(0,
+            because: "this scenario explicitly represents a platform without WAM");
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_FirstPartyWithWam_UsesWamOnly()
+    {
+        var acquirer = CreateEmptyAcquirer();
+        acquirer.OperatingSystemAccountFailure = new MsalUiRequiredException(
+            "interaction_required",
+            "Interactive WAM sign-in is required.");
+        var expected = CreateAccessToken();
+        acquirer.WamResult = expected;
+        var credential = new MsalBrowserCredential(
+            AuthenticationConstants.WellKnownClientAppId,
+            ValidTenantId,
+            MsalBrowserCredential.InteractiveAuthenticationMode.Wam,
+            acquirer);
+
+        var result = await credential.GetTokenAsync(
+            new TokenRequestContext(["https://graph.microsoft.com/User.Read"]),
+            CancellationToken.None);
+
+        result.Token.Should().Be(expected.Token,
+            because: "Windows should continue using the broker-backed WAM flow for the FPA");
+        acquirer.WamCalls.Should().Be(1,
+            because: "Windows must retain the broker-backed FPA authentication path");
+        acquirer.DeviceCodeCalls.Should().Be(0,
+            because: "device code is only the FPA fallback when WAM is unavailable");
+        acquirer.SystemBrowserCalls.Should().Be(0,
+            because: "native Windows must retain WAM rather than switching the FPA to system-browser authentication");
+    }
+
+    [Fact]
     public void WamShouldOnlyBeEnabledOnWindows()
     {
         // This test documents the expected platform behavior:
@@ -217,6 +360,68 @@ public class MsalBrowserCredentialTests
     }
 
     #endregion
+
+    private static TestMsalTokenAcquirer CreateEmptyAcquirer() => new();
+
+    private static AccessToken CreateAccessToken() =>
+        new("test-token", DateTimeOffset.UtcNow.AddHours(1));
+
+    private sealed class TestMsalTokenAcquirer : MsalBrowserCredential.IMsalTokenAcquirer
+    {
+        public AccessToken DeviceCodeResult { get; set; }
+        public AccessToken SystemBrowserResult { get; set; }
+        public AccessToken WamResult { get; set; }
+        public Exception? OperatingSystemAccountFailure { get; set; }
+        public int DeviceCodeCalls { get; private set; }
+        public int SystemBrowserCalls { get; private set; }
+        public int WamCalls { get; private set; }
+
+        public Task<IReadOnlyList<IAccount>> GetAccountsAsync() =>
+            Task.FromResult<IReadOnlyList<IAccount>>([]);
+
+        public Task<AccessToken> AcquireTokenSilentAsync(
+            string[] scopes,
+            IAccount account,
+            bool forceRefresh,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("No cached account should be used in these tests.");
+
+        public Task<AccessToken> AcquireOperatingSystemAccountSilentAsync(
+            string[] scopes,
+            bool forceRefresh,
+            CancellationToken cancellationToken) =>
+            OperatingSystemAccountFailure is not null
+                ? Task.FromException<AccessToken>(OperatingSystemAccountFailure)
+                : throw new InvalidOperationException("An operating-system account result was not configured.");
+
+        public Task<AccessToken> AcquireWamAsync(
+            string[] scopes,
+            IAccount? account,
+            string? loginHint,
+            CancellationToken cancellationToken)
+        {
+            WamCalls++;
+            return Task.FromResult(WamResult);
+        }
+
+        public Task<AccessToken> AcquireSystemBrowserAsync(
+            string[] scopes,
+            string? loginHint,
+            CancellationToken cancellationToken)
+        {
+            SystemBrowserCalls++;
+            return Task.FromResult(SystemBrowserResult);
+        }
+
+        public Task<AccessToken> AcquireDeviceCodeAsync(
+            string[] scopes,
+            ILogger? logger,
+            CancellationToken cancellationToken)
+        {
+            DeviceCodeCalls++;
+            return Task.FromResult(DeviceCodeResult);
+        }
+    }
 
     #region Persistent Cache Tests
 

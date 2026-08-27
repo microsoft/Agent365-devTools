@@ -4,6 +4,7 @@
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -34,6 +35,22 @@ public class SetupHelpersBootstrapTests : IDisposable
         _mockExecutor = Substitute.For<CommandExecutor>(execLogger);
 
         _mockGraph = Substitute.ForPartsOf<GraphApiService>();
+
+        // Default: the well-known first-party application's service principal is not present.
+        // This preserves the pre-existing custom-app (display-name lookup) behavior exercised by
+        // most tests in this file. Tests that specifically cover the new first-party default path
+        // override this per-test with Arg.Is<string>(id => id == AuthenticationConstants.WellKnownClientAppId).
+        // Configuring this default here (rather than leaving it unmocked) is required: ResolveBootstrapClientAppIdAsync
+        // now checks the first-party service principal before the display-name lookup, and this is a
+        // partial substitute (Substitute.ForPartsOf) — an unconfigured virtual call falls through to the
+        // real GraphApiService implementation, which would attempt a real Graph/MSAL token acquisition.
+        _mockGraph.LookupServicePrincipalByAppIdWithResponseAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = 200
+            });
     }
 
     public void Dispose()
@@ -240,6 +257,144 @@ public class SetupHelpersBootstrapTests : IDisposable
         // Assert
         result.Should().Be(clientAppId,
             because: "when Entra lookup succeeds the resolved app ID is returned");
+    }
+
+    // ── First-party default resolution ────────────────────────────────────────
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_WhenFirstPartyServicePrincipalExists_ReturnsWellKnownIdWithoutDisplayNameLookup()
+    {
+        // Arrange: the well-known first-party application's service principal is present in the
+        // tenant (a customer tenant may have only this manager-created SP, no application object).
+        _mockGraph.LookupServicePrincipalByAppIdWithResponseAsync(
+                Arg.Any<string>(),
+                Arg.Is<string>(id => id == AuthenticationConstants.WellKnownClientAppId),
+                Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "first-party-sp-object-id",
+                StatusCode = 200
+            });
+
+        // Act
+        var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+        // Assert
+        result.Should().Be(AuthenticationConstants.WellKnownClientAppId,
+            because: "the well-known first-party application must be the default identity whenever its service principal is present");
+
+        await _mockGraph.DidNotReceive().FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _mockGraph.DidNotReceive().ApplicationExistsByAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_ChecksFirstPartyIdentityViaServicePrincipalsNotApplications()
+    {
+        // Arrange
+        _mockGraph.LookupServicePrincipalByAppIdWithResponseAsync(
+                Arg.Any<string>(),
+                Arg.Is<string>(id => id == AuthenticationConstants.WellKnownClientAppId),
+                Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "first-party-sp-object-id",
+                StatusCode = 200
+            });
+
+        // Act
+        await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+        // Assert: the well-known default identity must be resolved/validated via GET /v1.0/servicePrincipals,
+        // never GET /v1.0/applications — customer tenants may contain only the manager-created SP.
+        await _mockGraph.Received(1).LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-id",
+            AuthenticationConstants.WellKnownClientAppId,
+            Arg.Any<CancellationToken>());
+        await _mockGraph.DidNotReceive().ApplicationExistsByAppIdAsync(
+            Arg.Any<string>(), AuthenticationConstants.WellKnownClientAppId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_WhenFirstPartyServicePrincipalAbsent_FallsBackToCustomAppDisplayNameLookup()
+    {
+        // Arrange: first-party SP absent (default stub from constructor already returns null for
+        // any appId) — the legacy custom-app-by-display-name flow must still run unchanged.
+        const string customAppId = "custom-app-id";
+        _mockGraph.FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(customAppId));
+
+        // Act
+        var result = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+        // Assert: preserves existing custom-app behavior when the first-party default is unavailable.
+        result.Should().Be(customAppId,
+            because: "when the first-party application's service principal is absent, resolution must fall back to the tenant-owned custom app discovered by display name");
+
+        await _mockGraph.Received(1).FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), AuthenticationConstants.WellKnownClientAppDisplayName, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_WhenFirstPartyLookupFails_DoesNotFallBackToCustomAppCreation()
+    {
+        _mockGraph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                AuthenticationConstants.WellKnownClientAppId,
+                Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = 503,
+                FailureReason = "Microsoft Graph service-principal lookup failed: HTTP 503 Service Unavailable."
+            });
+
+        Func<Task> act = async () => await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+        var exception = await act.Should().ThrowAsync<ClientAppValidationException>(
+            because: "an operational lookup failure must not be mistaken for an absent first-party service principal");
+        exception.Which.ErrorDetails.Should().Contain(
+            detail => detail.Contains("HTTP 503", StringComparison.Ordinal));
+        await _mockGraph.DidNotReceive().FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await _mockGraph.DidNotReceive().CreateCliClientAppAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapClientAppIdAsync_WhenFirstPartyLookupCannotAuthenticate_DoesNotFallBackSilently()
+    {
+        // "NoAuth" is what the presence probe reports when no Graph token could be acquired at all.
+        // That is an operational failure, not evidence that the first-party application is absent.
+        _mockGraph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                AuthenticationConstants.WellKnownClientAppId,
+                Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = 0,
+                FailureReason = "Microsoft Graph service-principal lookup failed: NoAuth."
+            });
+
+        Func<Task> act = async () => await SetupHelpers.ResolveBootstrapClientAppIdAsync(
+            "tenant-id", _mockGraph, NullLogger.Instance, CancellationToken.None);
+
+        var exception = await act.Should().ThrowAsync<ClientAppValidationException>(
+            because: "a token-acquisition failure must surface, not be downgraded to a silent custom-app fallback");
+        exception.Which.ErrorDetails.Should().Contain(
+            detail => detail.Contains("NoAuth", StringComparison.Ordinal),
+            because: "the operator needs to see that authentication, not app absence, blocked the lookup");
+        await _mockGraph.DidNotReceive().FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

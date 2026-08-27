@@ -1339,7 +1339,7 @@ public class CleanupCommand
 
         // Step 2: Resolve client app ID.
         // Prefer a365.config.json when it exists locally and its tenant matches the current tenant.
-        // Fall back to Entra lookup by well-known display name if the static config is absent or stale.
+        // Otherwise prefer the first-party service principal, then the named custom-app fallback.
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
             tenantId,
             graphApiService,

@@ -11,7 +11,7 @@ using System.Text.Json;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
 /// <summary>
-/// Ensures oauth2PermissionGrant exists for the custom client application.
+/// Ensures oauth2PermissionGrant exists for a tenant-owned custom client application.
 /// Validates that AgentIdentityBlueprint.ReadWrite.All permission is granted, which is required for creating and managing Agent Blueprints.
 /// </summary>
 public sealed class DelegatedConsentService
@@ -69,6 +69,13 @@ public sealed class DelegatedConsentService
             {
                 _logger.LogError("Invalid Tenant ID format: {TenantId}", tenantId);
                 return false;
+            }
+
+            if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(callingAppId))
+            {
+                _logger.LogDebug(
+                    "Skipping tenant-local delegated consent grant for the first-party Agent 365 CLI application.");
+                return true;
             }
 
             // Get Graph access token with required scopes

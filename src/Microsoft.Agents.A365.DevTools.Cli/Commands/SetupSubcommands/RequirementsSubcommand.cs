@@ -128,9 +128,9 @@ internal static class RequirementsSubcommand
     /// <summary>
     /// Resolves the <see cref="Agent365Config"/> used by config-dependent requirement checks.
     /// If <c>a365.config.json</c> is present, it is loaded and returned as-is. Otherwise a
-    /// minimal bootstrap config is synthesized from the current Azure CLI context plus a
-    /// well-known-name lookup for the Agent 365 CLI client app. Returns <c>null</c> when
-    /// the tenant cannot be determined or the well-known client app cannot be resolved —
+    /// minimal bootstrap config is synthesized from the current Azure CLI context and the
+    /// first-party service principal or custom-app fallback. Returns <c>null</c> when
+    /// the tenant cannot be determined or no client app can be resolved —
     /// in which case config-dependent checks should be skipped.
     /// </summary>
     private static async Task<Agent365Config?> ResolveConfigForChecksAsync(
@@ -143,7 +143,9 @@ internal static class RequirementsSubcommand
         var localConfigPath = Path.Combine(Directory.GetCurrentDirectory(), ConfigConstants.DefaultConfigFileName);
         if (File.Exists(localConfigPath))
         {
-            return await configService.LoadAsync(localConfigPath);
+            var localConfig = await configService.LoadAsync(localConfigPath);
+            graphApiService.CustomClientAppId = localConfig.ClientAppId;
+            return localConfig;
         }
 
         // No config file — try to synthesize a minimal config from the Azure CLI context.
@@ -158,10 +160,11 @@ internal static class RequirementsSubcommand
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(tenantId, graphApiService, logger, ct);
         if (string.IsNullOrWhiteSpace(clientAppId))
         {
-            logger.LogInformation("Agent 365 CLI app not found in tenant — client app validation skipped.");
+            logger.LogInformation("No Agent 365 CLI enterprise application or custom client app was found — client app validation skipped.");
             return null;
         }
 
+        graphApiService.CustomClientAppId = clientAppId;
         return new Agent365Config
         {
             TenantId = tenantId,

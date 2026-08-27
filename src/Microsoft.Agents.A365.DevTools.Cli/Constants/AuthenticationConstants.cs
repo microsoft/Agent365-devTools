@@ -72,11 +72,24 @@ public static class AuthenticationConstants
     }
 
     /// <summary>
-    /// Well-known display name for the Agent 365 CLI client app registration in the tenant.
-    /// Used to resolve the clientAppId automatically when --agent-name is provided without a config file.
-    /// Tenants must register an Entra app with this exact display name and grant it the required permissions.
+    /// Display name used to discover a tenant-owned custom client app when the first-party
+    /// Agent 365 CLI service principal is unavailable.
     /// </summary>
     public const string WellKnownClientAppDisplayName = "Agent 365 CLI";
+
+    /// <summary>
+    /// Well-known first-party Agent 365 CLI application ID used by setup/bootstrap by default.
+    /// </summary>
+    public const string WellKnownClientAppId = "f54280f4-395e-4ea8-9e48-bf2d4952aa14";
+
+    private static readonly Guid WellKnownClientAppGuid = Guid.Parse(WellKnownClientAppId);
+
+    /// <summary>
+    /// Returns whether <paramref name="clientAppId"/> identifies the first-party Agent 365 CLI app.
+    /// </summary>
+    public static bool IsWellKnownFirstPartyClientApp(string? clientAppId) =>
+        Guid.TryParse(clientAppId, out var parsedClientAppId) &&
+        parsedClientAppId == WellKnownClientAppGuid;
 
     /// <summary>
     /// Application name for cache directory
@@ -213,6 +226,11 @@ public static class AuthenticationConstants
     public const string AgentIdUserReadWriteAllScope = "AgentIdUser.ReadWrite.All";
 
     /// <summary>
+    /// Delegated scope required to create and delete agent registrations.
+    /// </summary>
+    public const string AgentRegistrationReadWriteAllScope = "AgentRegistration.ReadWrite.All";
+
+    /// <summary>
     /// Required delegated permissions for the custom client app used by a365 CLI.
     /// These permissions enable the CLI to manage Entra ID applications and agent blueprints.
     /// All permissions require admin consent.
@@ -224,7 +242,7 @@ public static class AuthenticationConstants
     {
         "AgentIdentityBlueprint.ReadWrite.All",    // Umbrella — covers blueprint creation, UpdateAuthProperties, AddRemoveCreds, DeleteRestore sub-scopes
         "AgentIdentityBlueprintPrincipal.Create",  // Required for POST /v1.0/serviceprincipals/graph.agentIdentityBlueprintPrincipal — separate from ReadWrite.All (different resource)
-        "AgentRegistration.ReadWrite.All",  // Required for POST/DELETE /beta/copilot/agentRegistrations (agent registration)
+        AgentRegistrationReadWriteAllScope,  // Required for POST/DELETE /beta/copilot/agentRegistrations (agent registration)
         "AgentIdentity.Read.All",       // Required for GET /beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId (idempotency check)
         "AgentIdentity.DeleteRestore.All",  // Required for 'a365 cleanup' to delete the Agent Identity service principal
         "Application.Read.All",         // Narrower replacement for Directory.Read.All — covers SP lookups by appId
@@ -238,7 +256,7 @@ public static class AuthenticationConstants
     /// an MSAL consent error with no actionable guidance.
     /// </summary>
     public static readonly string[] BlueprintOperationScopes = RequiredClientAppPermissions
-        .Where(s => s != "AgentRegistration.ReadWrite.All")
+        .Where(s => s != AgentRegistrationReadWriteAllScope)
         .ToArray();
 
     /// <summary>

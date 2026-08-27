@@ -98,8 +98,8 @@ public interface IConfigService
     Task InitializeStateAsync(string statePath = "a365.generated.config.json");
 
     /// <summary>
-    /// Validates the configured clientAppId still exists in the tenant and, if not, resolves
-    /// it by looking up the well-known display name "Agent 365 CLI".
+    /// Validates the configured clientAppId, preferring the first-party service principal before
+    /// resolving a tenant-owned custom app named "Agent 365 CLI".
     /// When a new ID is found it is written back to a365.config.json so subsequent LoadAsync
     /// calls return the correct value without manual config edits.
     /// Safe to call before any command — uses az CLI token, not MSAL.

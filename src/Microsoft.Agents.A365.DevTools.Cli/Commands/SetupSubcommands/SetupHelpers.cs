@@ -181,8 +181,9 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Resolves the client app ID for config-free bootstrap flows.
-    /// Optionally prefers a matching local <c>a365.config.json</c> value before falling back to
-    /// the well-known Entra display name lookup.
+    /// Optionally prefers a matching local <c>a365.config.json</c> value, then the well-known
+    /// first-party Agent 365 CLI application (<see cref="AuthenticationConstants.WellKnownClientAppId"/>),
+    /// before falling back to a tenant-owned custom app discovered by well-known display name.
     /// </summary>
     internal static async Task<string?> ResolveBootstrapClientAppIdAsync(
         string tenantId,
@@ -198,6 +199,32 @@ internal static class SetupHelpers
             clientAppId = await TryGetLocalClientAppIdAsync(tenantId, logger, ct);
             if (!string.IsNullOrWhiteSpace(clientAppId))
                 logger.LogDebug("Using client app ID from local a365.config.json (tenant matches).");
+        }
+
+        // Prefer the well-known first-party Agent 365 CLI application. A customer tenant may
+        // contain only the manager-created service principal for this app (no local application
+        // object), so resolve/validate its presence via /servicePrincipals — never
+        // /applications — to avoid incorrectly falling through to the custom-app creation prompt.
+        if (string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
+        {
+            logger.LogDebug("Checking for the first-party Agent 365 CLI application ({AppId})...",
+                AuthenticationConstants.WellKnownClientAppId);
+            var firstPartyLookup = await graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                tenantId, AuthenticationConstants.WellKnownClientAppId, ct);
+            if (firstPartyLookup is null || !firstPartyLookup.IsSuccess)
+            {
+                throw ClientAppValidationException.FirstPartyServicePrincipalLookupFailed(
+                    AuthenticationConstants.WellKnownClientAppId,
+                    tenantId,
+                    firstPartyLookup?.FailureReason ?? "Service-principal lookup returned no result.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(firstPartyLookup.ServicePrincipalId))
+            {
+                logger.LogInformation("Using the first-party Agent 365 CLI application ({AppId}).",
+                    AuthenticationConstants.WellKnownClientAppId);
+                return AuthenticationConstants.WellKnownClientAppId;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
