@@ -852,6 +852,30 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Resolves an application's object ID from its appId (client ID). Returns null when the application
+    /// cannot be found (for example it was already deleted). Virtual to allow substitution in unit tests.
+    /// </summary>
+    public virtual async Task<string?> GetAppObjectIdByAppIdAsync(
+        string tenantId, string appId, CancellationToken ct = default)
+    {
+        // Validate GUID format to prevent OData injection.
+        if (!Guid.TryParse(appId, out var validGuid))
+        {
+            _logger.LogWarning("Invalid appId format for application lookup: {AppId}", appId);
+            return null;
+        }
+
+        using var doc = await GraphGetAsync(
+            tenantId,
+            $"/v1.0/applications?$filter=appId eq '{validGuid:D}'&$select=id&$top=1",
+            ct);
+        if (doc == null) return null;
+        if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
+        if (!value[0].TryGetProperty("id", out var id)) return null;
+        return id.GetString();
+    }
+
+    /// <summary>
     /// Looks up the display name of a service principal by its application ID.
     /// Returns null if the service principal is not found.
     /// Virtual to allow substitution in unit tests using NSubstitute.
@@ -2491,42 +2515,6 @@ public class GraphApiService
         }
 
         return result;
-    }
-
-    /// <summary>
-    /// Looks up an application by its appId (clientId) and returns the object ID.
-    /// Retries up to 6 times with a 10-second delay to handle replication lag for newly created apps.
-    /// </summary>
-    public virtual async Task<string?> GetAppObjectIdByClientIdAsync(
-        string tenantId, string clientId, CancellationToken ct = default)
-    {
-        const int maxAttempts = 6;
-        const int delayMs = 10_000;
-
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            var response = await GraphGetWithResponseAsync(tenantId, $"/v1.0/applications?$filter=appId eq '{clientId}'&$select=id", ct: ct);
-            if (response.IsSuccess && response.Json != null)
-            {
-                var values = response.Json.RootElement.GetProperty("value");
-                if (values.GetArrayLength() > 0)
-                {
-                    return values[0].GetProperty("id").GetString();
-                }
-            }
-            else
-            {
-                _logger.LogDebug("App {ClientId} query failed: {Code} {Reason} (attempt {Attempt}/{Max})", clientId, response.StatusCode, response.ReasonPhrase, attempt + 1, maxAttempts);
-            }
-
-            if (attempt < maxAttempts - 1)
-            {
-                _logger.LogDebug("App {ClientId} not found yet, retrying in {Delay}s (attempt {Attempt}/{Max})...", clientId, delayMs / 1000, attempt + 1, maxAttempts);
-                await Task.Delay(delayMs, ct);
-            }
-        }
-
-        return null;
     }
 
     /// <summary>
