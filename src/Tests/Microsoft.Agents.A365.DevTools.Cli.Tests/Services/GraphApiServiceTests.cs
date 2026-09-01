@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -29,6 +30,49 @@ public class GraphApiServiceTests
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
     }
 
+
+    [Fact]
+    public async Task GetClientAppAccessTokenAsync_PassesExplicitClientIdAndScopesToTokenProvider()
+    {
+        const string tenantId = "12345678-1234-1234-1234-123456789012";
+        const string clientAppId = "f54280f4-395e-4ea8-9e48-bf2d4952aa14";
+        const string graphBaseUrl = "https://graph.microsoft.us";
+        const string authorityHost = "https://login.microsoftonline.us";
+        var expectedScopes = new[] { "User.Read", "Application.Read.All" };
+        string? capturedClientAppId = null;
+        string[]? capturedScopes = null;
+
+        _mockTokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId,
+                Arg.Do<IEnumerable<string>>(scopes => capturedScopes = scopes.ToArray()),
+                useDeviceCode: false,
+                clientAppId: Arg.Do<string?>(id => capturedClientAppId = id),
+                ct: Arg.Any<CancellationToken>(),
+                loginHint: null,
+                forceRefresh: false,
+                graphBaseUrl: graphBaseUrl,
+                authorityHost: authorityHost)
+            .Returns("first-party-token");
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            FakeAuth(),
+            tokenProvider: _mockTokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            graphBaseUrl: graphBaseUrl)
+        {
+            AuthorityHost = authorityHost
+        };
+
+        var token = await service.GetClientAppAccessTokenAsync(
+            tenantId, clientAppId, expectedScopes);
+
+        token.Should().Be("first-party-token");
+        capturedClientAppId.Should().Be(clientAppId,
+            because: "the token scp claim is authoritative only when the token was issued to the first-party client being validated");
+        capturedScopes.Should().BeEquivalentTo(expectedScopes,
+            because: "authorization validation must request the exact delegated scopes that will be checked in the token scp claim");
+    }
 
     [Fact]
     public async Task GraphPostWithResponseAsync_Returns_Success_And_ParsesJson()
@@ -162,14 +206,15 @@ public class GraphApiServiceTests
         var service = new GraphApiService(logger, executor, FakeAuth(), handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
         // Queue response for service principal lookup
-        var spResponse = new { value = new[] { new { id = "sp-object-id-123", appId = "blueprint-456" } } };
+        const string appId = "11111111-1111-1111-1111-111111111111";
+        var spResponse = new { value = new[] { new { id = "sp-object-id-123", appId } } };
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(spResponse))
         });
 
         // Act - Call a public method that internally uses LookupServicePrincipalAsync
-        var result = await service.LookupServicePrincipalByAppIdAsync("tenant-123", "blueprint-456");
+        var result = await service.LookupServicePrincipalByAppIdAsync("tenant-123", appId);
 
         // Assert
         result.Should().NotBeNull("service principal lookup should succeed");
@@ -185,6 +230,368 @@ public class GraphApiServiceTests
         capturedRequest.Headers.Contains("ConsistencyLevel").Should().BeFalse(
             "ConsistencyLevel header should NOT be present for simple service principal lookup queries. " +
             "Per Graph docs, appId eq is Default+Advanced and does not require this header.");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task LookupServicePrincipalByAppIdWithResponseAsync_WhenGraphFails_PreservesOperationalFailure(
+        HttpStatusCode statusCode)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent(
+                """{"error":{"code":"RequestFailed","message":"lookup failed"}}""")
+        });
+
+        string[]? requestedScopes = null;
+        string? requestedClientAppId = null;
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(),
+                Arg.Do<IEnumerable<string>>(scopes => requestedScopes = scopes.ToArray()),
+                Arg.Any<bool>(),
+                Arg.Do<string?>(clientAppId => requestedClientAppId = clientAppId),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>(),
+                Arg.Any<bool>())
+            .Returns("fake-token");
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            FakeAuth(),
+            handler,
+            tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0))
+        {
+            CustomClientAppId = AuthenticationConstants.WellKnownClientAppId
+        };
+
+        var result = await service.LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-123", AuthenticationConstants.WellKnownClientAppId);
+
+        result.IsSuccess.Should().BeFalse(
+            because: "an HTTP failure must not be represented as a successful empty service-principal query");
+        result.StatusCode.Should().Be((int)statusCode,
+            because: "the original Graph status must be preserved for authorization and retry diagnostics");
+        result.FailureReason.Should().Contain($"HTTP {(int)statusCode}",
+            because: "operators need the Graph status to distinguish authorization failures from transient failures");
+        requestedScopes.Should().BeNull(
+            because: "presence discovery must not request a scoped token from the app being probed — that app may not exist, so its token could never be acquired");
+        requestedClientAppId.Should().BeNull(
+            because: "presence discovery must authenticate ambiently, never as the client app whose existence is in question");
+    }
+
+    [Fact]
+    public async Task LookupServicePrincipalByAppIdWithResponseAsync_UsesAmbientAuthEvenWhenProbingTheResolvedClientApp()
+    {
+        // Regression guard: authenticating as the app being probed makes an absent app report
+        // NoAuth instead of a conclusive "not present", blocking the custom-app fallback.
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"value":[]}""")
+        });
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        var authService = FakeAuth();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            authService,
+            handler,
+            tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0))
+        {
+            CustomClientAppId = AuthenticationConstants.WellKnownClientAppId
+        };
+
+        var result = await service.LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-123", AuthenticationConstants.WellKnownClientAppId);
+
+        result.IsSuccess.Should().BeTrue(
+            because: "the ambient identity can complete the query and report the app as conclusively absent");
+        result.ServicePrincipalId.Should().BeNull();
+        await tokenProvider.DidNotReceiveWithAnyArgs().GetMgGraphAccessTokenAsync(
+            default!, default!, default, default, default, default, default);
+        await authService.ReceivedWithAnyArgs(1).GetAccessTokenAsync(
+            default!, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
+    public async Task LookupServicePrincipalByAppIdWithResponseAsync_WhenValidatingResolvedApp_UsesItsScopedToken()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"value":[{"id":"first-party-sp-object-id"}]}""")
+        });
+        string[]? requestedScopes = null;
+        string? requestedClientAppId = null;
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(),
+                Arg.Do<IEnumerable<string>>(scopes => requestedScopes = scopes.ToArray()),
+                Arg.Any<bool>(),
+                Arg.Do<string?>(clientAppId => requestedClientAppId = clientAppId),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>(),
+                Arg.Any<bool>())
+            .Returns("first-party-token");
+        var authService = FakeAuth();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            authService,
+            handler,
+            tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0))
+        {
+            CustomClientAppId = AuthenticationConstants.WellKnownClientAppId
+        };
+
+        var result = await service.LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-123",
+            AuthenticationConstants.WellKnownClientAppId,
+            authenticationMode: GraphAuthenticationMode.ResolvedClientApp);
+
+        result.ServicePrincipalId.Should().Be(
+            "first-party-sp-object-id",
+            because: "validation must still query the resolved first-party service principal");
+        requestedClientAppId.Should().Be(
+            AuthenticationConstants.WellKnownClientAppId,
+            because: "post-resolution validation must not depend on the ambient Graph PowerShell application");
+        requestedScopes.Should().ContainSingle(
+            because: "service-principal validation requires one delegated scope")
+            .Which.Should().Be(
+                AuthenticationConstants.ApplicationReadAllScope,
+                because: "the resolved client token needs Application.Read.All for the service-principal query");
+        await authService.DidNotReceiveWithAnyArgs().GetAccessTokenAsync(
+            default!, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
+    public async Task LookupServicePrincipalByAppIdWithResponseAsync_WhenAmbientTokenUnavailable_ReportsNoAuth()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            FakeAuthReturning(null),
+            handler,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+
+        var result = await service.LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-123", AuthenticationConstants.WellKnownClientAppId);
+
+        result.IsSuccess.Should().BeFalse(
+            because: "without an ambient token the presence query never ran and cannot prove absence");
+        result.StatusCode.Should().Be(
+            0,
+            because: "no HTTP response exists when token acquisition fails before the request");
+        result.FailureReason.Should().Contain(
+            "NoAuth",
+            because: "callers need to distinguish authentication failure from a successful empty lookup");
+        handler.RequestCount.Should().Be(
+            0,
+            because: "Graph must not be called without an access token");
+    }
+
+    [Fact]
+    public async Task LookupServicePrincipalByAppIdWithResponseAsync_WhenGraphReturnsEmptyArray_ReportsSuccessfulAbsence()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        using var handler = new CapturingHttpMessageHandler(request => capturedRequest = request);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"value":[]}""")
+        });
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var result = await service.LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-123", AuthenticationConstants.WellKnownClientAppId);
+
+        result.IsSuccess.Should().BeTrue(
+            because: "only a successful Graph response with an empty value array proves that the service principal is absent");
+        result.ServicePrincipalId.Should().BeNull(
+            because: "an empty successful Graph result proves that no matching service principal exists");
+        result.StatusCode.Should().Be((int)HttpStatusCode.OK,
+            because: "absence is conclusive only when Graph successfully processed the lookup");
+        capturedRequest.Should().NotBeNull(
+            because: "the test must inspect the actual Graph request used for first-party resolution");
+        capturedRequest!.RequestUri!.AbsolutePath.Should().EndWith(
+            "/v1.0/servicePrincipals",
+            because: "customer tenants may contain only the manager-created service principal and no tenant-local application object");
+        capturedRequest.RequestUri.AbsolutePath.Should().NotContain(
+            "/applications",
+            because: "the first-party identity must never be resolved through tenant-local application registrations");
+        Uri.UnescapeDataString(capturedRequest.RequestUri.Query).Should().Be(
+            $"?$filter=appId eq '{AuthenticationConstants.WellKnownClientAppId}'&$select=id",
+            because: "the service-principal query must target the exact well-known application ID and request only its object ID");
+    }
+
+    [Fact]
+    public async Task LookupServicePrincipalByAppIdWithResponseAsync_WhenServicePrincipalExists_ReturnsObjectId()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        using var handler = new CapturingHttpMessageHandler(request => capturedRequest = request);
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"value":[{"id":"first-party-sp-object-id"}]}""")
+        });
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var result = await service.LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-123", AuthenticationConstants.WellKnownClientAppId);
+
+        result.IsSuccess.Should().BeTrue(
+            because: "a valid Graph response containing the service principal proves the first-party enterprise application is present");
+        result.ServicePrincipalId.Should().Be("first-party-sp-object-id",
+            because: "callers need the tenant service-principal object ID rather than a tenant-local application object");
+        Uri.UnescapeDataString(capturedRequest!.RequestUri!.Query).Should().Be(
+            $"?$filter=appId eq '{AuthenticationConstants.WellKnownClientAppId}'&$select=id",
+            because: "the lookup must query the exact first-party appId through servicePrincipals");
+    }
+
+    [Fact]
+    public async Task LookupServicePrincipalByAppIdWithResponseAsync_WhenResponseIsMalformed_ReportsFailure()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"unexpected":[]}""")
+        });
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var result = await service.LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-123", AuthenticationConstants.WellKnownClientAppId);
+
+        result.IsSuccess.Should().BeFalse(
+            because: "an HTTP 200 without a value array cannot prove either service-principal presence or absence");
+        result.FailureReason.Should().Contain("invalid service-principal lookup response",
+            because: "malformed Graph data must remain distinguishable from a successful empty lookup");
+    }
+
+    [Fact]
+    public async Task LookupServicePrincipalByAppIdWithResponseAsync_WhenAppIdIsInvalid_DoesNotSendRequest()
+    {
+        var requestSent = false;
+        using var handler = new CapturingHttpMessageHandler(_ => requestSent = true);
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            FakeAuth(),
+            handler,
+            tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        var result = await service.LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-123", "not-a-guid");
+
+        result.IsSuccess.Should().BeFalse(
+            because: "user-controlled app IDs must be rejected before OData query construction");
+        requestSent.Should().BeFalse(
+            because: "invalid app IDs must never reach Microsoft Graph");
+        await tokenProvider.DidNotReceiveWithAnyArgs().GetMgGraphAccessTokenAsync(
+            default!, default!, default, default, default, default, default);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task LookupApplicationByAppIdWithResponseAsync_WhenGraphFails_PreservesOperationalFailure(
+        HttpStatusCode statusCode)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent(
+                """{"error":{"code":"RequestFailed","message":"lookup failed"}}""")
+        });
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var result = await service.LookupApplicationByAppIdWithResponseAsync(
+            "tenant-123", "11111111-1111-1111-1111-111111111111");
+
+        result.IsSuccess.Should().BeFalse(
+            because: "a failed Graph request cannot prove that a configured custom application is absent");
+        result.StatusCode.Should().Be((int)statusCode,
+            because: "configuration resolution needs the original status to preserve custom IDs on inconclusive lookups");
+        result.FailureReason.Should().Contain($"HTTP {(int)statusCode}",
+            because: "operators need the Graph status to diagnose authorization and transient failures");
+    }
+
+    [Fact]
+    public async Task LookupApplicationByAppIdWithResponseAsync_WhenGraphReturnsEmptyArray_ReportsSuccessfulAbsence()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"value":[]}""")
+        });
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var result = await service.LookupApplicationByAppIdWithResponseAsync(
+            "tenant-123", "11111111-1111-1111-1111-111111111111");
+
+        result.IsSuccess.Should().BeTrue(
+            because: "only a successful empty applications response proves that the configured custom app is absent");
+        result.ApplicationId.Should().BeNull(
+            because: "an empty applications result contains no matching custom application");
+    }
+
+    [Fact]
+    public async Task GraphGetWithResponseAsync_WhenHttpClientTimesOut_ReturnsFailureInsteadOfThrowing()
+    {
+        // HttpClient surfaces its own timeout as TaskCanceledException with no cancellation
+        // requested; treating it as a cancel would abort the command instead of reporting a
+        // recoverable lookup failure.
+        using var handler = new ExceptionThrowingHttpMessageHandler(
+            () => new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"));
+        var service = CreateServiceWithTokenProvider(handler);
+
+        var result = await service.GraphGetWithResponseAsync("tenant-123", "/v1.0/servicePrincipals");
+
+        result.IsSuccess.Should().BeFalse(
+            because: "a timed-out lookup is a failure result, not a caller cancellation");
+        result.StatusCode.Should().Be(0,
+            because: "no HTTP response was received, so no status can be reported");
+    }
+
+    [Fact]
+    public async Task GraphGetWithResponseAsync_WhenCallerCancels_PropagatesCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        using var handler = new ExceptionThrowingHttpMessageHandler(() =>
+        {
+            cts.Cancel();
+            return new TaskCanceledException("cancelled by caller", null, cts.Token);
+        });
+        var authService = Substitute.For<IAuthenticationService>();
+        authService.GetAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+                Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult("fake-token"));
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            authService,
+            handler,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+
+        var act = async () => await service.GraphGetWithResponseAsync(
+            "tenant-123", "/v1.0/servicePrincipals", ct: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "Ctrl+C must abort the command rather than being converted into a misleading lookup failure");
     }
 
     [Theory]
@@ -683,7 +1090,7 @@ public class GraphApiServiceTests
         return mock;
     }
 
-    private static GraphApiService CreateServiceWithTokenProvider(TestHttpMessageHandler handler)
+    private static GraphApiService CreateServiceWithTokenProvider(HttpMessageHandler handler)
     {
         var logger = Substitute.For<ILogger<GraphApiService>>();
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
@@ -913,15 +1320,29 @@ public class GraphApiServiceTests
     #endregion
 }
 
+// Handler that throws the supplied exception instead of sending a request.
+internal class ExceptionThrowingHttpMessageHandler : HttpMessageHandler
+{
+    private readonly Func<Exception> _exceptionFactory;
+
+    public ExceptionThrowingHttpMessageHandler(Func<Exception> exceptionFactory) => _exceptionFactory = exceptionFactory;
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        => throw _exceptionFactory();
+}
+
 // Simple test handler that returns queued responses sequentially
 internal class TestHttpMessageHandler : HttpMessageHandler
 {
     private readonly Queue<HttpResponseMessage> _responses = new();
 
+    public int RequestCount { get; private set; }
+
     public void QueueResponse(HttpResponseMessage resp) => _responses.Enqueue(resp);
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        RequestCount++;
         if (_responses.Count == 0)
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("") });
 
@@ -980,4 +1401,3 @@ internal class CapturingHttpMessageHandler : HttpMessageHandler
         base.Dispose(disposing);
     }
 }
-

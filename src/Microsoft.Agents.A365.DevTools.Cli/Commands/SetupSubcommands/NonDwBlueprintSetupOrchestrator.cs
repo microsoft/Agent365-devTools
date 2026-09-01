@@ -186,6 +186,13 @@ internal static class NonDwBlueprintSetupOrchestrator
         if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
             return;
 
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+        {
+            ctx.Logger.LogDebug(
+                "Skipping tenant-local consent mutation for the first-party Agent 365 CLI application.");
+            return;
+        }
+
         List<string> unconsented;
         try
         {

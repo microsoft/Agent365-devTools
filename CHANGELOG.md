@@ -23,6 +23,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
+- Setup and bootstrap now use Microsoft's first-party Agent 365 CLI application when it is present in your tenant, validating it without changing Microsoft's app registration, and fall back to a tenant-owned "Agent 365 CLI" app when it is not (#489).
 - Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.
 - Authentication context (tenant and user) is now logged at the `Information` level whenever the resolved sign-in identity changes, giving operators a clear audit trail in the log file of who the CLI is acting as, without exposing credentials.
 - `a365 develop-mcp evaluate` command for evaluating MCP server tool schema quality — runs deterministic and semantic checks (via GitHub Copilot or Claude Code CLIs), computes maturity scoring, and generates an interactive HTML report
@@ -59,6 +60,8 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 ### Fixed
 - Cloud-specific Graph, authority, and Agent 365 Tools endpoint overrides now apply consistently across setup, consent, authentication, query, and create-instance flows for sovereign and custom clouds. (#478)
+- Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
+- The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
 - `setup all --authmode s2s` no longer prints spurious "Action Required" PowerShell steps when the agent identity already inherits its app roles from the blueprint, and now retries the grant automatically before falling back to manual steps (#460).
 - `a365 develop get-token` now falls back to device code when the Windows WAM broker rejects Exchange Graph scopes with `ApiContractViolation`, instead of failing with an opaque MSAL error.
 - `setup blueprint` now configures the blueprint's inheritable Microsoft Graph permissions even when the signed-in user is not a Global Administrator, no longer aborts with a misleading "Failed to configure inheritable permissions" error when the tenant-wide consent grant cannot be made programmatically, and ends with a setup summary whose Action Required block surfaces the admin-consent URL for non-admins to hand off (#452).

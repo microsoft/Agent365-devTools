@@ -369,6 +369,13 @@ public class SetupCommandTests
 
         // NSubstitute returns null by default for Task<string?> — FindApplicationByDisplayNameAsync
         // returns null, simulating the app not existing in Entra.
+        _mockGraphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = 200
+            });
 
         var command = SetupCommand.CreateCommand(
             _mockLogger, _mockConfigService, _mockExecutor, _mockBackendConfigurator,

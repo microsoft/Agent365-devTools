@@ -180,9 +180,42 @@ internal static class SetupHelpers
             : Task.FromResult<string?>(tenantIdFlag);
 
     /// <summary>
+    /// Resolves the cloud environment for config-free bootstrap flows.
+    /// Uses A365_ENVIRONMENT first, then the active Azure CLI cloud.
+    /// </summary>
+    internal static async Task<string> ResolveBootstrapEnvironmentAsync(
+        CommandExecutor executor,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var configuredEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
+        if (!string.IsNullOrWhiteSpace(configuredEnvironment))
+            return configuredEnvironment.Trim();
+
+        try
+        {
+            var result = await executor.ExecuteAsync(
+                "az", "cloud show --query name -o tsv",
+                captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
+            var cloudName = result.StandardOutput?.Trim();
+            return string.IsNullOrWhiteSpace(cloudName) ? "prod" : cloudName;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to resolve current Azure CLI cloud; using the default environment.");
+            return "prod";
+        }
+    }
+
+    /// <summary>
     /// Resolves the client app ID for config-free bootstrap flows.
-    /// Optionally prefers a matching local <c>a365.config.json</c> value before falling back to
-    /// the well-known Entra display name lookup.
+    /// Optionally prefers a matching local <c>a365.config.json</c> value, then the well-known
+    /// first-party Agent 365 CLI application (<see cref="AuthenticationConstants.WellKnownClientAppId"/>),
+    /// before falling back to a tenant-owned custom app discovered by well-known display name.
     /// </summary>
     internal static async Task<string?> ResolveBootstrapClientAppIdAsync(
         string tenantId,
@@ -198,6 +231,32 @@ internal static class SetupHelpers
             clientAppId = await TryGetLocalClientAppIdAsync(tenantId, logger, ct);
             if (!string.IsNullOrWhiteSpace(clientAppId))
                 logger.LogDebug("Using client app ID from local a365.config.json (tenant matches).");
+        }
+
+        // Prefer the well-known first-party Agent 365 CLI application. A customer tenant may
+        // contain only the manager-created service principal for this app (no local application
+        // object), so resolve/validate its presence via /servicePrincipals — never
+        // /applications — to avoid incorrectly falling through to the custom-app creation prompt.
+        if (string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)
+        {
+            logger.LogDebug("Checking for the first-party Agent 365 CLI application ({AppId})...",
+                AuthenticationConstants.WellKnownClientAppId);
+            var firstPartyLookup = await graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                tenantId, AuthenticationConstants.WellKnownClientAppId, ct);
+            if (firstPartyLookup is null || !firstPartyLookup.IsSuccess)
+            {
+                throw ClientAppValidationException.FirstPartyServicePrincipalLookupFailed(
+                    AuthenticationConstants.WellKnownClientAppId,
+                    tenantId,
+                    firstPartyLookup?.FailureReason ?? "Service-principal lookup returned no result.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(firstPartyLookup.ServicePrincipalId))
+            {
+                logger.LogInformation("Using the first-party Agent 365 CLI application ({AppId}).",
+                    AuthenticationConstants.WellKnownClientAppId);
+                return AuthenticationConstants.WellKnownClientAppId;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(clientAppId) && graphApiService != null)

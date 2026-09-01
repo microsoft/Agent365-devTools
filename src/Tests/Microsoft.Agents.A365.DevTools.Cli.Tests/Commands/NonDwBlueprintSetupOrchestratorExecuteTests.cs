@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -167,6 +168,28 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         // Blueprint fails → exit 1, but NOT due to requirements check
         exitCode.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FirstPartyClientApp_DoesNotReadOrMutateTenantConsentGrants()
+    {
+        var ctx = BuildContext(new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentIdentityDisplayName = "Test Agent",
+            ClientAppId = AuthenticationConstants.WellKnownClientAppId,
+        });
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        var consentCalls = ctx.ClientAppValidator.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name is
+                nameof(IClientAppValidator.GetUnconsentedRequiredPermissionsAsync) or
+                nameof(IClientAppValidator.GrantConsentForPermissionsAsync))
+            .ToList();
+        consentCalls.Should().BeEmpty(
+            because: "setup must trust validated first-party token preauthorization instead of reading or mutating a tenant-local oauth2PermissionGrant");
     }
 
     /// <summary>

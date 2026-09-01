@@ -127,7 +127,8 @@ internal static class AllSubcommand
             description: "Agent base name (e.g. \"MyAgent\"). When provided, no config file is required.\n" +
                         "Derives AgentIdentityDisplayName=\"<name> Identity\" and AgentBlueprintDisplayName=\"<name> Blueprint\".\n" +
                         "TenantId is auto-detected from 'az account show' (override with --tenant-id).\n" +
-                        $"ClientAppId is resolved by looking up \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" in your tenant.");
+                        "ClientAppId defaults to the first-party Agent 365 CLI enterprise application, " +
+                        $"then falls back to a tenant-owned \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" app.");
 
         var tenantIdOption = new Option<string?>(
             "--tenant-id",
@@ -1029,7 +1030,7 @@ internal static class AllSubcommand
     /// requiring an <c>a365.config.json</c> file on disk.
     /// <list type="bullet">
     ///   <item>TenantId: from <paramref name="tenantIdFlag"/> or auto-detected via <c>az account show</c></item>
-    ///   <item>ClientAppId: resolved by searching Entra for <see cref="AuthenticationConstants.WellKnownClientAppDisplayName"/></item>
+    ///   <item>ClientAppId: the first-party app when its service principal exists, otherwise the named custom-app fallback</item>
     /// </list>
     /// Returns <c>null</c> and logs errors if validation fails.
     /// </summary>
@@ -1046,6 +1047,9 @@ internal static class AllSubcommand
         if (tenantId is null)
             return null;
 
+        var environment = await SetupHelpers.ResolveBootstrapEnvironmentAsync(executor, logger, ct);
+        graphApiService.ConfigureCloudEndpoints(new Agent365Config { Environment = environment });
+
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
             tenantId, graphApiService, logger, ct);
         if (string.IsNullOrWhiteSpace(clientAppId))
@@ -1058,6 +1062,9 @@ internal static class AllSubcommand
         {
             TenantId = tenantId,
             ClientAppId = clientAppId,
+            Environment = environment,
+            GraphBaseUrl = graphApiService.GraphBaseUrl,
+            AuthorityHost = graphApiService.AuthorityHost,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,

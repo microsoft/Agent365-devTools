@@ -37,11 +37,120 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 /// </summary>
 public sealed class MsalBrowserCredential : TokenCredential
 {
-    private readonly IPublicClientApplication _publicClientApp;
+    internal enum InteractiveAuthenticationMode
+    {
+        Wam,
+        SystemBrowser,
+        DeviceCode
+    }
+
+    internal interface IMsalTokenAcquirer
+    {
+        Task<IReadOnlyList<IAccount>> GetAccountsAsync();
+        Task<AccessToken> AcquireTokenSilentAsync(
+            string[] scopes,
+            IAccount account,
+            bool forceRefresh,
+            CancellationToken cancellationToken);
+        Task<AccessToken> AcquireOperatingSystemAccountSilentAsync(
+            string[] scopes,
+            bool forceRefresh,
+            CancellationToken cancellationToken);
+        Task<AccessToken> AcquireWamAsync(
+            string[] scopes,
+            IAccount? account,
+            string? loginHint,
+            CancellationToken cancellationToken);
+        Task<AccessToken> AcquireSystemBrowserAsync(
+            string[] scopes,
+            string? loginHint,
+            CancellationToken cancellationToken);
+        Task<AccessToken> AcquireDeviceCodeAsync(
+            string[] scopes,
+            ILogger? logger,
+            CancellationToken cancellationToken);
+    }
+
+    private sealed class MsalTokenAcquirer(IPublicClientApplication app) : IMsalTokenAcquirer
+    {
+        public async Task<IReadOnlyList<IAccount>> GetAccountsAsync() =>
+            (await app.GetAccountsAsync()).ToList();
+
+        public async Task<AccessToken> AcquireTokenSilentAsync(
+            string[] scopes,
+            IAccount account,
+            bool forceRefresh,
+            CancellationToken cancellationToken)
+        {
+            var result = await app
+                .AcquireTokenSilent(scopes, account)
+                .WithForceRefresh(forceRefresh)
+                .ExecuteAsync(cancellationToken);
+            return new AccessToken(result.AccessToken, result.ExpiresOn);
+        }
+
+        public async Task<AccessToken> AcquireOperatingSystemAccountSilentAsync(
+            string[] scopes,
+            bool forceRefresh,
+            CancellationToken cancellationToken)
+        {
+            var result = await app
+                .AcquireTokenSilent(scopes, PublicClientApplication.OperatingSystemAccount)
+                .WithForceRefresh(forceRefresh)
+                .ExecuteAsync(cancellationToken);
+            return new AccessToken(result.AccessToken, result.ExpiresOn);
+        }
+
+        public async Task<AccessToken> AcquireWamAsync(
+            string[] scopes,
+            IAccount? account,
+            string? loginHint,
+            CancellationToken cancellationToken)
+        {
+            var builder = app.AcquireTokenInteractive(scopes);
+            if (account != null && !string.IsNullOrWhiteSpace(loginHint))
+                builder = builder.WithAccount(account);
+            else if (!string.IsNullOrWhiteSpace(loginHint))
+                builder = builder.WithLoginHint(loginHint);
+            else
+                builder = builder.WithPrompt(Prompt.SelectAccount);
+
+            var result = await builder.ExecuteAsync(cancellationToken);
+            return new AccessToken(result.AccessToken, result.ExpiresOn);
+        }
+
+        public async Task<AccessToken> AcquireSystemBrowserAsync(
+            string[] scopes,
+            string? loginHint,
+            CancellationToken cancellationToken)
+        {
+            var builder = app
+                .AcquireTokenInteractive(scopes)
+                .WithUseEmbeddedWebView(false);
+            if (!string.IsNullOrWhiteSpace(loginHint))
+                builder = builder.WithLoginHint(loginHint);
+
+            var result = await builder.ExecuteAsync(cancellationToken);
+            return new AccessToken(result.AccessToken, result.ExpiresOn);
+        }
+
+        public async Task<AccessToken> AcquireDeviceCodeAsync(
+            string[] scopes,
+            ILogger? logger,
+            CancellationToken cancellationToken)
+        {
+            var result = await app
+                .AcquireTokenWithDeviceCode(scopes, MsalHelper.CreateDeviceCodeCallback(logger))
+                .ExecuteAsync(cancellationToken);
+            return new AccessToken(result.AccessToken, result.ExpiresOn);
+        }
+    }
+
+    private readonly IMsalTokenAcquirer _tokenAcquirer;
     private readonly ILogger? _logger;
     private readonly string _clientAppId;
     private readonly string _tenantId;
-    private readonly bool _useWam;
+    private InteractiveAuthenticationMode _authenticationMode;
     private readonly IntPtr _windowHandle;
     private readonly string? _loginHint;
     private readonly bool _forceRefresh;
@@ -127,9 +236,13 @@ public sealed class MsalBrowserCredential : TokenCredential
         // Get window handle for WAM on Windows
         // Try multiple sources: console window, foreground window, or desktop window
         _windowHandle = IntPtr.Zero;
-        _useWam = useWam && OperatingSystem.IsWindows();
+        _authenticationMode = SelectAuthenticationMode(
+            clientId,
+            useWam,
+            OperatingSystem.IsWindows());
         
-        if (OperatingSystem.IsWindows() && _useWam)
+        if (OperatingSystem.IsWindows() &&
+            _authenticationMode == InteractiveAuthenticationMode.Wam)
         {
             try
             {
@@ -139,8 +252,14 @@ public sealed class MsalBrowserCredential : TokenCredential
             catch (Exception ex)
             {
                 _logger?.LogDebug(ex, "Failed to get window handle");
-                _logger?.LogWarning("Failed to get window handle, falling back to system browser");
-                _useWam = false;
+                _authenticationMode = AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientId)
+                    ? InteractiveAuthenticationMode.DeviceCode
+                    : InteractiveAuthenticationMode.SystemBrowser;
+                _logger?.LogWarning(
+                    "Failed to get a WAM window handle; falling back to {AuthenticationMode}.",
+                    _authenticationMode == InteractiveAuthenticationMode.DeviceCode
+                        ? "device code authentication"
+                        : "the system browser");
             }
         }
 
@@ -152,7 +271,7 @@ public sealed class MsalBrowserCredential : TokenCredential
                 .Create(clientId)
                 .WithAuthority(authority);
 
-        if (_useWam)
+        if (_authenticationMode == InteractiveAuthenticationMode.Wam)
         {
             // Use WAM broker on Windows for native authentication experience
             // WAM provides SSO with Windows accounts and doesn't require browser
@@ -168,6 +287,12 @@ public sealed class MsalBrowserCredential : TokenCredential
                 .WithParentActivityOrWindow(() => _windowHandle)
                 .WithRedirectUri($"ms-appx-web://microsoft.aad.brokerplugin/{clientId}");
         }
+        else if (_authenticationMode == InteractiveAuthenticationMode.DeviceCode)
+        {
+            // The Microsoft-managed CLI app uses WAM on Windows. Its MSAL system-browser flow
+            // is rejected with AADSTS70007 in WSL/non-Windows environments, so use device code.
+            _logger?.LogDebug("Configuring device code authentication for the first-party Agent 365 CLI application");
+        }
         else
         {
             // Use system browser on non-Windows platforms or when WAM isn't available
@@ -176,11 +301,48 @@ public sealed class MsalBrowserCredential : TokenCredential
             builder = builder.WithRedirectUri(effectiveRedirectUri);
         }
 
-        _publicClientApp = builder.Build();
+        var publicClientApp = builder.Build();
 
         // Register persistent token cache to share tokens across all MsalBrowserCredential instances.
         // This is crucial for reducing multiple WAM prompts during 'a365 setup all' operations.
-        RegisterPersistentCache(_publicClientApp, _logger);
+        RegisterPersistentCache(publicClientApp, _logger);
+        _tokenAcquirer = new MsalTokenAcquirer(publicClientApp);
+    }
+
+    internal MsalBrowserCredential(
+        string clientId,
+        string tenantId,
+        InteractiveAuthenticationMode authenticationMode,
+        IMsalTokenAcquirer tokenAcquirer,
+        ILogger? logger = null,
+        string? loginHint = null,
+        bool forceRefresh = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+        _clientAppId = clientId;
+        _tenantId = tenantId;
+        _authenticationMode = authenticationMode;
+        _tokenAcquirer = tokenAcquirer ?? throw new ArgumentNullException(nameof(tokenAcquirer));
+        _logger = logger;
+        _loginHint = loginHint;
+        _forceRefresh = forceRefresh;
+        _windowHandle = IntPtr.Zero;
+        _authorityHost = ConfigConstants.DefaultAuthorityHost;
+    }
+
+    internal static InteractiveAuthenticationMode SelectAuthenticationMode(
+        string clientId,
+        bool useWam,
+        bool isWindows)
+    {
+        if (useWam && isWindows)
+            return InteractiveAuthenticationMode.Wam;
+
+        return AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientId)
+            ? InteractiveAuthenticationMode.DeviceCode
+            : InteractiveAuthenticationMode.SystemBrowser;
     }
 
     /// <summary>
@@ -369,7 +531,7 @@ public sealed class MsalBrowserCredential : TokenCredential
             // When a login hint is provided, only attempt silent acquisition for the matching account.
             // Do NOT fall back to any other cached account — that would silently return a token for
             // the wrong user (e.g. sellak's cached token when sellakdev is the CLI identity).
-            var accounts = (await _publicClientApp.GetAccountsAsync()).ToList();
+            var accounts = (await _tokenAcquirer.GetAccountsAsync()).ToList();
             IAccount? account;
             if (!string.IsNullOrWhiteSpace(_loginHint))
             {
@@ -387,13 +549,14 @@ public sealed class MsalBrowserCredential : TokenCredential
                 try
                 {
                     _logger?.LogDebug("Attempting to acquire token silently from cache...");
-                    var silentResult = await _publicClientApp
-                        .AcquireTokenSilent(scopes, account)
-                        .WithForceRefresh(_forceRefresh)
-                        .ExecuteAsync(cancellationToken);
+                    var silentResult = await _tokenAcquirer.AcquireTokenSilentAsync(
+                        scopes,
+                        account,
+                        _forceRefresh,
+                        cancellationToken);
 
                     _logger?.LogDebug("Successfully acquired token from cache.");
-                    return new AccessToken(silentResult.AccessToken, silentResult.ExpiresOn);
+                    return silentResult;
                 }
                 catch (MsalUiRequiredException ex)
                 {
@@ -406,21 +569,21 @@ public sealed class MsalBrowserCredential : TokenCredential
             // Before showing interactive WAM: probe silently using the OS account.
             // WAM can detect "Need admin approval" (consent required) without showing any dialog.
             // If detected, print the admin consent URL and exit — WAM dialog is never shown.
-            if (_useWam)
+            if (_authenticationMode == InteractiveAuthenticationMode.Wam)
             {
                 try
                 {
                     _logger?.LogDebug("Probing consent status silently via WAM OS account...");
-                    var probeResult = await _publicClientApp
-                        .AcquireTokenSilent(scopes, PublicClientApplication.OperatingSystemAccount)
-                        .WithForceRefresh(_forceRefresh)
-                        .ExecuteAsync(cancellationToken);
+                    var probeResult = await _tokenAcquirer.AcquireOperatingSystemAccountSilentAsync(
+                        scopes,
+                        _forceRefresh,
+                        cancellationToken);
                     _logger?.LogDebug("WAM OS account probe succeeded — consent is granted.");
                     // Only return the OS account token when no login hint is set.
                     // When a hint is provided, the caller wants a specific identity — fall through
                     // to interactive WAM with the hint so the correct user is authenticated.
                     if (string.IsNullOrWhiteSpace(_loginHint))
-                        return new AccessToken(probeResult.AccessToken, probeResult.ExpiresOn);
+                        return probeResult;
                     _logger?.LogDebug("Login hint set — skipping OS account token, proceeding to interactive WAM for {LoginHint}.", _loginHint);
                 }
                 catch (MsalUiRequiredException ex) when (
@@ -437,53 +600,31 @@ public sealed class MsalBrowserCredential : TokenCredential
             // Acquire token interactively.
             // When a login hint is provided, WAM and browser auth will pre-select that identity
             // instead of defaulting to the Windows account or cached account picker.
-            AuthenticationResult interactiveResult;
+            if (_authenticationMode == InteractiveAuthenticationMode.DeviceCode)
+            {
+                return await AcquireTokenWithDeviceCodeFallbackAsync(
+                    scopes,
+                    cancellationToken,
+                    trySilentFirst: false);
+            }
 
-            if (_useWam)
+            if (_authenticationMode == InteractiveAuthenticationMode.Wam)
             {
                 // WAM on Windows - native authentication dialog, no browser needed
                 _logger?.LogInformation("Authenticating via Windows Account Manager...");
-                var builder = _publicClientApp.AcquireTokenInteractive(scopes);
-                if (account != null && !string.IsNullOrWhiteSpace(_loginHint))
-                {
-                    // Caller explicitly identified this account via loginHint and MSAL found it in
-                    // cache — WithAccount is more reliable than WithLoginHint for WAM because it
-                    // passes the internal WAM account reference, not just a UPN.
-                    builder = builder.WithAccount(account);
-                }
-                else if (!string.IsNullOrWhiteSpace(_loginHint))
-                {
-                    // Hint provided (e.g. resolved from az account show) but this account is not
-                    // yet in the MSAL cache (e.g. first sign-in or cache cleared).
-                    // WithLoginHint asks WAM to pre-select this identity in the dialog; WAM honors
-                    // it for registered Work/School accounts so the user only needs to confirm,
-                    // rather than searching for the right account in a blank picker.
-                    builder = builder.WithLoginHint(_loginHint);
-                }
-                else
-                {
-                    // No hint at all — show the account picker so the user can select or add the
-                    // correct account. Using WithAccount for a first-cached "best guess" would lock
-                    // WAM to a stale identity (e.g. an old account from a previous session) with no
-                    // way to switch.
-                    builder = builder.WithPrompt(Prompt.SelectAccount);
-                }
-                interactiveResult = await builder.ExecuteAsync(cancellationToken);
-            }
-            else
-            {
-                // System browser on Mac/Linux
-                _logger?.LogInformation("Opening browser for authentication...");
-                var builder = _publicClientApp
-                    .AcquireTokenInteractive(scopes)
-                    .WithUseEmbeddedWebView(false);
-                if (!string.IsNullOrWhiteSpace(_loginHint))
-                    builder = builder.WithLoginHint(_loginHint);
-                interactiveResult = await builder.ExecuteAsync(cancellationToken);
+                return await _tokenAcquirer.AcquireWamAsync(
+                    scopes,
+                    account,
+                    _loginHint,
+                    cancellationToken);
             }
 
-            _logger?.LogDebug("Successfully acquired token via interactive authentication.");
-            return new AccessToken(interactiveResult.AccessToken, interactiveResult.ExpiresOn);
+            // System browser for tenant-owned custom applications.
+            _logger?.LogInformation("Opening browser for authentication...");
+            return await _tokenAcquirer.AcquireSystemBrowserAsync(
+                scopes,
+                _loginHint,
+                cancellationToken);
         }
         catch (PlatformNotSupportedException ex)
         {
@@ -599,13 +740,16 @@ public sealed class MsalBrowserCredential : TokenCredential
 
     private async Task<AccessToken> AcquireTokenWithDeviceCodeFallbackAsync(
         string[] scopes,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool trySilentFirst = true)
     {
         // Before showing a device code, try to get a cached token.
         // On Linux, the shared in-process cache may already hold a token from an earlier
         // authentication step in the same CLI invocation (e.g., blueprint creation),
         // which can be reused silently without prompting the user again.
-        var accountsList = (await _publicClientApp.GetAccountsAsync()).ToList();
+        var accountsList = trySilentFirst
+            ? (await _tokenAcquirer.GetAccountsAsync()).ToList()
+            : [];
         // Filter by tenant to avoid silently authenticating as the wrong identity when multiple accounts are cached.
         // If multiple accounts share the same tenant (rare), FirstOrDefault picks the first match; this is acceptable
         // since MSAL will re-prompt if the silent acquisition fails for the wrong account.
@@ -621,11 +765,13 @@ public sealed class MsalBrowserCredential : TokenCredential
             try
             {
                 _logger?.LogDebug("Attempting silent token acquisition before device code...");
-                var silentResult = await _publicClientApp
-                    .AcquireTokenSilent(scopes, cachedAccount)
-                    .ExecuteAsync(cancellationToken);
+                var silentResult = await _tokenAcquirer.AcquireTokenSilentAsync(
+                    scopes,
+                    cachedAccount,
+                    forceRefresh: false,
+                    cancellationToken);
                 _logger?.LogDebug("Acquired token silently, skipping device code prompt.");
-                return new AccessToken(silentResult.AccessToken, silentResult.ExpiresOn);
+                return silentResult;
             }
             catch (MsalUiRequiredException)
             {
@@ -642,17 +788,21 @@ public sealed class MsalBrowserCredential : TokenCredential
             }
         }
 
-        _logger?.LogInformation("Falling back to device code authentication...");
+        _logger?.LogInformation(
+            trySilentFirst
+                ? "Falling back to device code authentication..."
+                : "Using device code authentication...");
         _logger?.LogInformation("Please sign in with your Microsoft account");
 
         try
         {
-            var deviceCodeResult = await _publicClientApp
-                .AcquireTokenWithDeviceCode(scopes, MsalHelper.CreateDeviceCodeCallback(_logger))
-                .ExecuteAsync(cancellationToken);
+            var deviceCodeResult = await _tokenAcquirer.AcquireDeviceCodeAsync(
+                scopes,
+                _logger,
+                cancellationToken);
 
             _logger?.LogDebug("Successfully acquired token via device code authentication.");
-            return new AccessToken(deviceCodeResult.AccessToken, deviceCodeResult.ExpiresOn);
+            return deviceCodeResult;
         }
         catch (MsalException msalEx) when (
             msalEx.Message.Contains("AADSTS7000218", StringComparison.Ordinal) ||

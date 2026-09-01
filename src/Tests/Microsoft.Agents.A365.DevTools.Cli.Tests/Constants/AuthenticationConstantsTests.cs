@@ -95,4 +95,27 @@ public class AuthenticationConstantsTests
                 because: "the consent-required path keys on the 0xcaa prefix; the declined-scopes signature " +
                          "must not overlap with it or the fallback would trigger on consent errors");
     }
+
+    [Fact]
+    public void WellKnownClientAppId_ShouldBeExpectedFirstPartyGuid()
+    {
+        AuthenticationConstants.WellKnownClientAppId.Should().Be("f54280f4-395e-4ea8-9e48-bf2d4952aa14",
+            because: "setup/bootstrap flows must resolve this exact well-known first-party application " +
+                     "ID as the default client app before falling back to any tenant-owned custom app");
+        Guid.TryParse(AuthenticationConstants.WellKnownClientAppId, out _).Should().BeTrue(
+            because: "the default client app ID must be a valid GUID accepted by Agent365Config.Validate()");
+    }
+
+    [Theory]
+    [InlineData("f54280f4-395e-4ea8-9e48-bf2d4952aa14", true)]
+    [InlineData("F54280F4-395E-4EA8-9E48-BF2D4952AA14", true)]
+    [InlineData("{f54280f4-395e-4ea8-9e48-bf2d4952aa14}", true)]
+    [InlineData("a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6", false)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    public void IsWellKnownFirstPartyClientApp_ReturnsExpected(string? clientAppId, bool expected)
+    {
+        AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId).Should().Be(expected,
+            because: "first-party detection must match the well-known ID case-insensitively and reject any other value");
+    }
 }

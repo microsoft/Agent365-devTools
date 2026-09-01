@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
@@ -11,6 +12,8 @@ using Microsoft.Agents.A365.DevTools.Cli.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using System.CommandLine;
+using System.CommandLine.Parsing;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
@@ -283,6 +286,70 @@ public class RequirementsSubcommandTests
         allPassed.Should().BeFalse();
         failedCount.Should().Be(2);
         results.Should().HaveCount(2);
+    }
+
+    #endregion
+
+    #region ClientAppRequirementCheck First-Party Detection Tests
+
+    [Fact]
+    public async Task ClientAppRequirementCheck_WithCustomAppId_DelegatesToValidatorUnchanged()
+    {
+        var mockValidator = Substitute.For<IClientAppValidator>();
+        var check = new ClientAppRequirementCheck(mockValidator);
+        var config = new Agent365Config
+        {
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            TenantId = "12345678-1234-1234-1234-123456789012"
+        };
+
+        await check.CheckAsync(config, _mockLogger);
+
+        await mockValidator.Received(1).EnsureValidClientAppAsync(
+            config.ClientAppId, config.TenantId, ct: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ClientAppRequirementCheck_WithWellKnownClientAppId_DelegatesTheWellKnownIdToValidator()
+    {
+        // First-party semantics are derived from the resolved client app ID alone — there is no
+        // caller-supplied override — so the check must pass the ID through untouched and let the
+        // validator apply the non-mutating first-party path.
+        var mockValidator = Substitute.For<IClientAppValidator>();
+        var check = new ClientAppRequirementCheck(mockValidator);
+        var config = new Agent365Config
+        {
+            ClientAppId = AuthenticationConstants.WellKnownClientAppId,
+            TenantId = "12345678-1234-1234-1234-123456789012"
+        };
+
+        await check.CheckAsync(config, _mockLogger);
+
+        await mockValidator.Received(1).EnsureValidClientAppAsync(
+            AuthenticationConstants.WellKnownClientAppId, config.TenantId, ct: Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public void Command_DoesNotExposeAFirstPartyOption()
+    {
+        // First-party validation is selected by the resolved client app ID, never by a flag: a flag
+        // could force weak first-party validation onto a tenant-owned custom app.
+        var mockConfigService = Substitute.For<IConfigService>();
+        var mockExecutor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var mockAuthValidator = Substitute.ForPartsOf<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, mockExecutor);
+        var mockClientAppValidator = Substitute.For<IClientAppValidator>();
+        var mockGraphApiService = Substitute.ForPartsOf<GraphApiService>(
+            Substitute.For<ILogger<GraphApiService>>(), mockExecutor, (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
+
+        var command = RequirementsSubcommand.CreateCommand(
+            _mockLogger, mockConfigService, mockAuthValidator, mockClientAppValidator, mockExecutor, mockGraphApiService);
+
+        command.Options.Should().NotContain(
+            option => option.Aliases.Contains("--first-party"),
+            because: "the CLI contract must not offer a flag that applies first-party validation to a tenant-owned custom app");
+
+        command.Parse("--first-party").Errors.Should().NotBeEmpty(
+            because: "an unrecognized option must be rejected rather than silently ignored");
     }
 
     #endregion

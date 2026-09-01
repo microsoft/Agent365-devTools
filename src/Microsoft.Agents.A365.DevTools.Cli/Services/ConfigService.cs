@@ -554,8 +554,14 @@ public class ConfigService : IConfigService
 
             root.TryGetProperty("tenantId", out var tenantIdEl);
             root.TryGetProperty("clientAppId", out var clientAppIdEl);
+            root.TryGetProperty("environment", out var environmentEl);
+            root.TryGetProperty("graphBaseUrl", out var graphBaseUrlEl);
+            root.TryGetProperty("authorityHost", out var authorityHostEl);
             var tenantId = tenantIdEl.ValueKind == JsonValueKind.String ? tenantIdEl.GetString() : null;
             var configuredId = clientAppIdEl.ValueKind == JsonValueKind.String ? clientAppIdEl.GetString() : null;
+            var environment = environmentEl.ValueKind == JsonValueKind.String ? environmentEl.GetString() : null;
+            var graphBaseUrl = graphBaseUrlEl.ValueKind == JsonValueKind.String ? graphBaseUrlEl.GetString() : null;
+            var authorityHost = authorityHostEl.ValueKind == JsonValueKind.String ? authorityHostEl.GetString() : null;
 
             if (string.IsNullOrWhiteSpace(tenantId))
             {
@@ -563,19 +569,98 @@ public class ConfigService : IConfigService
                 return;
             }
 
-            // If a clientAppId is configured, validate it still exists.
+            graphApiService.ConfigureCloudEndpoints(new Agent365Config
+            {
+                Environment = string.IsNullOrWhiteSpace(environment) ? "prod" : environment,
+                GraphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl,
+                AuthorityHost = authorityHost,
+            });
+
+            // Guard against OData injection: configuredId comes from a user-editable file, so it
+            // must be a valid GUID before it is interpolated into any Graph $filter query below.
+            if (!string.IsNullOrWhiteSpace(configuredId) && !Guid.TryParse(configuredId, out _))
+            {
+                _logger?.LogWarning("Configured clientAppId '{Id}' in a365.config.json is not a valid GUID — ignoring.", configuredId);
+                configuredId = null;
+            }
+
+            // If a clientAppId is configured, validate it still exists. The well-known first-party
+            // application is validated via /servicePrincipals (a customer tenant may contain only
+            // the manager-created service principal, with no tenant-local application object);
+            // any other (custom) app ID keeps the original /applications-based existence check.
             if (!string.IsNullOrWhiteSpace(configuredId))
             {
-                var exists = await graphApiService.ApplicationExistsByAppIdAsync(tenantId, configuredId, ct);
+                bool exists;
+                if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(configuredId))
+                {
+                    var lookup = await graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                        tenantId, AuthenticationConstants.WellKnownClientAppId, ct);
+                    if (lookup is null || !lookup.IsSuccess)
+                    {
+                        LogInconclusiveClientAppLookup(
+                            configuredId,
+                            lookup?.FailureReason ?? "Service-principal lookup returned no result.");
+                        return;
+                    }
+
+                    exists = !string.IsNullOrWhiteSpace(lookup.ServicePrincipalId);
+                }
+                else
+                {
+                    var applicationLookup = await graphApiService.LookupApplicationByAppIdWithResponseAsync(
+                        tenantId, configuredId, ct);
+                    if (applicationLookup is null || !applicationLookup.IsSuccess)
+                    {
+                        LogInconclusiveClientAppLookup(
+                            configuredId,
+                            applicationLookup?.FailureReason ?? "Application lookup returned no result.");
+                        return;
+                    }
+
+                    exists = !string.IsNullOrWhiteSpace(applicationLookup.ApplicationId);
+                }
+
                 if (exists)
                 {
+                    if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(configuredId) &&
+                        !string.Equals(configuredId, AuthenticationConstants.WellKnownClientAppId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        await PatchClientAppIdInConfigFileAsync(
+                            configPath, AuthenticationConstants.WellKnownClientAppId, ct);
+                    }
+
                     _logger?.LogDebug("Configured clientAppId {Id} is valid.", configuredId);
                     return;
                 }
 
                 _logger?.LogInformation(
-                    "Configured clientAppId {Id} was not found in the tenant. Looking up by display name '{Name}'...",
-                    configuredId, AuthenticationConstants.WellKnownClientAppDisplayName);
+                    "Configured clientAppId {Id} was not found in the tenant. Looking up a replacement...",
+                    configuredId);
+            }
+
+            // Prefer the well-known first-party Agent 365 CLI application before falling back to a
+            // tenant-owned custom app discovered by display name — preserves existing custom-app
+            // behavior for tenants that registered their own "Agent 365 CLI" app.
+            if (!AuthenticationConstants.IsWellKnownFirstPartyClientApp(configuredId))
+            {
+                var firstPartyLookup = await graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                    tenantId, AuthenticationConstants.WellKnownClientAppId, ct);
+                if (firstPartyLookup is null || !firstPartyLookup.IsSuccess)
+                {
+                    LogInconclusiveClientAppLookup(
+                        AuthenticationConstants.WellKnownClientAppId,
+                        firstPartyLookup?.FailureReason ?? "Service-principal lookup returned no result.");
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(firstPartyLookup.ServicePrincipalId))
+                {
+                    await PatchClientAppIdInConfigFileAsync(configPath, AuthenticationConstants.WellKnownClientAppId, ct);
+                    _logger?.LogInformation(
+                        "clientAppId updated to {NewId} (first-party Agent 365 CLI application). a365.config.json has been updated.",
+                        AuthenticationConstants.WellKnownClientAppId);
+                    return;
+                }
             }
 
             // Look up by well-known display name.
@@ -610,6 +695,19 @@ public class ConfigService : IConfigService
         {
             _logger?.LogDebug(ex, "Client app ID resolution skipped due to error: {Message}", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Reports a client app lookup that could neither confirm nor disprove the app's presence.
+    /// The existing configuration is preserved — a failed lookup is not evidence of absence.
+    /// </summary>
+    private void LogInconclusiveClientAppLookup(string clientAppId, string reason)
+    {
+        _logger?.LogWarning(
+            "Could not verify client app {Id}; no configuration changes were made. {Reason} " +
+            "Run 'a365 setup requirements' for full diagnostics if commands fail.",
+            clientAppId,
+            reason);
     }
 
     /// <summary>

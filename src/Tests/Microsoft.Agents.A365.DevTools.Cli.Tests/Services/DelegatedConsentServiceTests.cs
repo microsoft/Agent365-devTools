@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -91,6 +92,23 @@ public class DelegatedConsentServiceTests
         var result = await svc.EnsureBlueprintPermissionGrantAsync(ValidAppId, ValidTenantId);
 
         result.Should().BeFalse(because: "when Graph token acquisition fails the method must abort without HTTP calls");
+    }
+
+    [Fact]
+    public async Task EnsureBlueprintPermissionGrantAsync_FirstPartyApp_SkipsTenantLocalGrant()
+    {
+        var graphService = Substitute.ForPartsOf<GraphApiService>();
+        using var handler = new TestHttpMessageHandler();
+        var svc = new DelegatedConsentService(NullLogger.Instance, graphService, handler);
+
+        var result = await svc.EnsureBlueprintPermissionGrantAsync(
+            AuthenticationConstants.WellKnownClientAppId,
+            ValidTenantId);
+
+        result.Should().BeTrue(
+            because: "Graph preauthorization is validated from the first-party token and must not require a tenant-local oauth2PermissionGrant");
+        await graphService.DidNotReceive().GetGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     // ── Scope already on grant ────────────────────────────────────────────────
