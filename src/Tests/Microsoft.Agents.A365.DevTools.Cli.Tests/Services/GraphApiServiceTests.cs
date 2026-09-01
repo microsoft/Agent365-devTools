@@ -286,6 +286,106 @@ public class GraphApiServiceTests
     }
 
     [Fact]
+    public async Task GraphGetAsync_AmbientMode_IgnoresResolvedClientAppAndRequestedScopes()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"value":[]}""")
+        });
+
+        string? requestedClientAppId = null;
+        string[]? requestedScopes = null;
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(),
+                Arg.Do<IEnumerable<string>>(scopes => requestedScopes = scopes.ToArray()),
+                Arg.Any<bool>(),
+                Arg.Do<string?>(clientAppId => requestedClientAppId = clientAppId),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>(),
+                Arg.Any<bool>())
+            .Returns("custom-app-token");
+        var authService = FakeAuth();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            authService,
+            handler,
+            tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0))
+        {
+            CustomClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"
+        };
+
+        using var result = await service.GraphGetAsync(
+            "tenant-123",
+            "/v1.0/applications?$select=id",
+            CancellationToken.None,
+            [AuthenticationConstants.ApplicationReadAllScope],
+            GraphAuthenticationMode.Ambient);
+
+        result.Should().NotBeNull(
+            because: "the ambient bootstrap identity must be able to diagnose an underconfigured custom app");
+        requestedClientAppId.Should().BeNull(
+            because: "ambient metadata reads must never request a token from the app being diagnosed");
+        requestedScopes.Should().BeNull(
+            because: "Application.Read.All must not be requested through the underconfigured custom app");
+        await authService.ReceivedWithAnyArgs(1).GetAccessTokenAsync(
+            default!, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
+    public async Task GraphPatchAsync_AmbientMode_IgnoresResolvedClientAppAndRequestedScopes()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        string? requestedClientAppId = null;
+        string[]? requestedScopes = null;
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(),
+                Arg.Do<IEnumerable<string>>(scopes => requestedScopes = scopes.ToArray()),
+                Arg.Any<bool>(),
+                Arg.Do<string?>(clientAppId => requestedClientAppId = clientAppId),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<string?>(),
+                Arg.Any<bool>())
+            .Returns("custom-app-token");
+        var authService = FakeAuth();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            authService,
+            handler,
+            tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0))
+        {
+            CustomClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"
+        };
+
+        var result = await service.GraphPatchAsync(
+            "tenant-123",
+            "/v1.0/applications/application-object-id",
+            new { isFallbackPublicClient = true },
+            CancellationToken.None,
+            [AuthenticationConstants.ApplicationReadAllScope],
+            GraphAuthenticationMode.Ambient);
+
+        result.Should().BeTrue(
+            because: "repair mutations must use the ambient identity rather than depend on the app being repaired");
+        requestedClientAppId.Should().BeNull(
+            because: "ambient repairs must never acquire a token from the underconfigured custom app");
+        requestedScopes.Should().BeNull(
+            because: "requested custom-app scopes are intentionally ignored for ambient repairs");
+        await authService.ReceivedWithAnyArgs(1).GetAccessTokenAsync(
+            default!, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
     public async Task LookupServicePrincipalByAppIdWithResponseAsync_UsesAmbientAuthEvenWhenProbingTheResolvedClientApp()
     {
         // Regression guard: authenticating as the app being probed makes an absent app report

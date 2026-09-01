@@ -275,9 +275,9 @@ public class GraphApiService
         //    that need claims from the custom-app JWT (e.g. CheckDirectoryRoleAsync) must guard
         //    for both `_tokenProvider == null` and an empty `CustomClientAppId` themselves.
         //
-        // 4. GraphAuthenticationMode.Ambient: the caller is probing whether a client app exists.
-        //    Authenticating as that app would make its own absence unverifiable, so the resolved
-        //    client app and requested scopes are ignored and the bootstrap path below is used.
+        // 4. GraphAuthenticationMode.Ambient: the caller is diagnosing or repairing a client app.
+        //    Authenticating as that app would make an underconfigured registration unable to
+        //    authorize its own repair, so the resolved app and requested scopes are ignored.
         //
         // All paths go through MSAL — no az CLI subprocess involved.
 
@@ -395,9 +395,36 @@ public class GraphApiService
     /// Executes a GET request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual Task<JsonDocument?> GraphGetAsync(
+        string tenantId,
+        string relativePath,
+        CancellationToken ct = default,
+        IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return null;
+        return GraphGetAsync(
+            tenantId,
+            relativePath,
+            ct,
+            scopes,
+            GraphAuthenticationMode.ResolvedClientApp);
+    }
+
+    /// <summary>
+    /// Executes a GET request to Microsoft Graph API using the selected authentication identity.
+    /// </summary>
+    public virtual async Task<JsonDocument?> GraphGetAsync(
+        string tenantId,
+        string relativePath,
+        CancellationToken ct,
+        IEnumerable<string>? scopes,
+        GraphAuthenticationMode authenticationMode)
+    {
+        if (!await EnsureGraphHeadersAsync(
+                tenantId,
+                scopes: scopes,
+                ct: ct,
+                authenticationMode: authenticationMode))
+            return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         try
         {
@@ -585,9 +612,39 @@ public class GraphApiService
     /// Executes a PATCH request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual Task<bool> GraphPatchAsync(
+        string tenantId,
+        string relativePath,
+        object payload,
+        CancellationToken ct = default,
+        IEnumerable<string>? scopes = null)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return false;
+        return GraphPatchAsync(
+            tenantId,
+            relativePath,
+            payload,
+            ct,
+            scopes,
+            GraphAuthenticationMode.ResolvedClientApp);
+    }
+
+    /// <summary>
+    /// Executes a PATCH request to Microsoft Graph API using the selected authentication identity.
+    /// </summary>
+    public virtual async Task<bool> GraphPatchAsync(
+        string tenantId,
+        string relativePath,
+        object payload,
+        CancellationToken ct,
+        IEnumerable<string>? scopes,
+        GraphAuthenticationMode authenticationMode)
+    {
+        if (!await EnsureGraphHeadersAsync(
+                tenantId,
+                scopes: scopes,
+                ct: ct,
+                authenticationMode: authenticationMode))
+            return false;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         try

@@ -59,6 +59,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- `setup requirements` now validates and repairs tenant-owned fallback CLI apps with the administrator bootstrap identity, preventing false "app not found" failures when the first-party CLI app is unavailable.
 - Cloud-specific Graph, authority, and Agent 365 Tools endpoint overrides now apply consistently across setup, consent, authentication, query, and create-instance flows for sovereign and custom clouds. (#478)
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
