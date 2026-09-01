@@ -798,7 +798,8 @@ public class AgentBlueprintServiceTests
             string relativePath,
             object payload,
             CancellationToken ct = default,
-            IEnumerable<string>? scopes = null)
+            IEnumerable<string>? scopes = null,
+            GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
             => Task.FromException<bool>(new HttpRequestException("Network error during PATCH"));
     }
 

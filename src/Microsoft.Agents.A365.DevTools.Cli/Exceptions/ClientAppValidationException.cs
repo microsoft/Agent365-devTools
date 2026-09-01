@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using System.Globalization;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 
@@ -48,6 +49,45 @@ public sealed class ClientAppValidationException : Agent365Exception
             {
                 ["clientAppId"] = clientAppId,
                 ["tenantId"] = tenantId
+            });
+    }
+
+    /// <summary>
+    /// Creates an exception when the client app lookup could not complete. Distinct from
+    /// <see cref="AppNotFound"/>: absence is only proven by a successful Graph response with no
+    /// matching application, never by an authorization, HTTP, or network failure.
+    /// </summary>
+    public static ClientAppValidationException ApplicationLookupFailed(
+        string clientAppId,
+        string tenantId,
+        string reason,
+        int statusCode = 0)
+    {
+        var mitigationSteps = new List<string>();
+        if (statusCode == 403)
+        {
+            mitigationSteps.Add($"Ask a tenant administrator to grant your account the '{AuthenticationConstants.ApplicationReadAllScope}' Microsoft Graph permission, or run the command as a Global Administrator or Application Administrator.");
+        }
+
+        mitigationSteps.Add("Confirm you are signed in to the intended tenant with 'az login --tenant <tenantId>'.");
+        mitigationSteps.Add("Confirm network connectivity to Microsoft Graph and retry — the failure may be transient.");
+        mitigationSteps.Add("Do not change 'clientAppId' in a365.config.json based on this error; the app was never confirmed absent.");
+        mitigationSteps.Add($"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}");
+
+        return new ClientAppValidationException(
+            issueDescription: "Unable to verify the client app registration in the tenant",
+            errorDetails: new List<string>
+            {
+                reason,
+                $"Application lookup for client app '{clientAppId}' failed in tenant '{tenantId}'.",
+                "The lookup did not complete, so the app's presence or absence is unknown."
+            },
+            mitigationSteps: mitigationSteps,
+            context: new Dictionary<string, string>
+            {
+                ["clientAppId"] = clientAppId,
+                ["tenantId"] = tenantId,
+                ["statusCode"] = statusCode.ToString(CultureInfo.InvariantCulture)
             });
     }
 

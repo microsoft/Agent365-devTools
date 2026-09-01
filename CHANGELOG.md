@@ -59,6 +59,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- `setup requirements` no longer fails against a correctly configured custom client app, and no longer reports the app as missing when Microsoft Graph cannot complete the lookup (#489).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
 - `setup all --authmode s2s` no longer prints spurious "Action Required" PowerShell steps when the agent identity already inherits its app roles from the blueprint, and now retries the grant automatically before falling back to manual steps (#460).

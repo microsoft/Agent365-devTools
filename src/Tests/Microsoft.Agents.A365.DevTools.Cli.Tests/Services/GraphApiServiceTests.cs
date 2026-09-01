@@ -540,6 +540,63 @@ public class GraphApiServiceTests
     }
 
     [Fact]
+    public async Task GraphGetWithResponseAsync_AmbientMode_DoesNotRequestATokenForTheResolvedClientApp()
+    {
+        // Issue #489: a token issued for the app being probed cannot prove that app's own
+        // absence, and it carries only User.Read — Graph rejects /applications with 403.
+        using var handler = new TestHttpMessageHandler();
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("custom-app-token"));
+        var service = new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            FakeAuth(), handler, tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null))
+        {
+            CustomClientAppId = "11111111-1111-1111-1111-111111111111"
+        };
+
+        await service.GraphGetWithResponseAsync(
+            "tenant-123", "/v1.0/applications", ct: default,
+            authenticationMode: GraphAuthenticationMode.Ambient);
+
+        await tokenProvider.DidNotReceive().GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+            Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>());
+    }
+
+    [Fact]
+    public async Task GraphGetWithResponseAsync_ResolvedClientAppMode_RequestsATokenForTheResolvedClientApp()
+    {
+        // Counter-test to the ambient case: without it, a regression that stops using the token
+        // provider entirely would still satisfy the DidNotReceive assertion above.
+        const string customAppId = "11111111-1111-1111-1111-111111111111";
+        using var handler = new TestHttpMessageHandler();
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("custom-app-token"));
+        var service = new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            FakeAuth(), handler, tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null))
+        {
+            CustomClientAppId = customAppId
+        };
+
+        await service.GraphGetWithResponseAsync("tenant-123", "/v1.0/applications");
+
+        await tokenProvider.Received().GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+            customAppId, Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>());
+    }
+
+    [Fact]
     public async Task GraphGetWithResponseAsync_WhenHttpClientTimesOut_ReturnsFailureInsteadOfThrowing()
     {
         // HttpClient surfaces its own timeout as TaskCanceledException with no cancellation

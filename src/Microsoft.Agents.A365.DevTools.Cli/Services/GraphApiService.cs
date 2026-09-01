@@ -363,9 +363,9 @@ public class GraphApiService
     /// Executes a GET request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null, GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return null;
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct, authenticationMode: authenticationMode)) return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         try
         {
@@ -553,9 +553,9 @@ public class GraphApiService
     /// Executes a PATCH request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return false;
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct, authenticationMode: authenticationMode)) return false;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         try

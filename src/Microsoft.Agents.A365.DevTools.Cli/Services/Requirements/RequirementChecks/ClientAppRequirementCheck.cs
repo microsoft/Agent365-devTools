@@ -82,7 +82,7 @@ public class ClientAppRequirementCheck : RequirementCheck
             return RequirementCheckResult.Failure(
                 errorMessage: string.Join("\n", errorLines),
                 resolutionGuidance: string.Join("\n", ex.MitigationSteps),
-                details: $"Client app validation failed for {config.ClientAppId}. Please ensure the app exists and has the required configuration."
+                details: $"Client app validation failed for {config.ClientAppId}."
             );
         }
         catch (OperationCanceledException)

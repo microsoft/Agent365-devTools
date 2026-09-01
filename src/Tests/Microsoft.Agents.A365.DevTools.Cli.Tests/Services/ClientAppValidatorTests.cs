@@ -8,6 +8,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using System.Globalization;
 using System.Text.Json;
 using Xunit;
 
@@ -45,6 +46,13 @@ public class ClientAppValidatorTests
     // Separate SP object ID used only by the consent-grant path (GetConsentedPermissionsAsync)
     // so it does not conflict with SetupAdminConsentSp / SetupAdminConsentGrantsEmpty.
     private const string ConsentSpObjId = "consent-check-sp-id-999";
+
+    // Pinning the exact issue descriptions keeps "inconclusive lookup" and "confirmed absent"
+    // distinguishable: asserting only the absence of "not found" is satisfied by every other
+    // failure factory in ClientAppValidationException.
+    private const string AppNotFoundIssue = "Client app not found in tenant";
+    private const string LookupFailedIssue = "Unable to verify the client app registration in the tenant";
+    private const string TokenRevokedIssue = "Azure authentication token revoked — re-authentication required";
 
     public ClientAppValidatorTests()
     {
@@ -122,8 +130,11 @@ public class ClientAppValidatorTests
     {
         SetupAppInfoGetEmpty();
 
-        await Assert.ThrowsAsync<ClientAppValidationException>(async () =>
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(async () =>
             await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Be(AppNotFoundIssue,
+            because: "a successful Graph response with an empty result set is the only proof that the app is absent");
     }
 
     [Fact]
@@ -131,26 +142,300 @@ public class ClientAppValidatorTests
     {
         // Simulate a 401 on both the first attempt and the retry after cache invalidation.
         // TokenRevoked is only thrown when the failure is specifically a 401 (auth error),
-        // not for transient failures like 503 — which would produce AppNotFound instead.
-        _graphApiService.GraphGetWithResponseAsync(
-            Arg.Any<string>(),
-            Arg.Is<string>(p => p.Contains("displayName")),
-            Arg.Any<bool>(),
-            Arg.Any<IEnumerable<string>?>(),
-            Arg.Any<CancellationToken>())
-            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
-            {
-                IsSuccess = false,
-                StatusCode = 401,
-                ReasonPhrase = "Unauthorized"
-            }));
+        // not for transient failures like 503 — which report an inconclusive lookup instead.
+        SetupAppInfoGetFailure(401, "Unauthorized");
 
         var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
             () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
 
         exception.ErrorCode.Should().Be(ErrorCodes.ClientAppValidationFailed);
-        exception.IssueDescription.Should().Contain("revoked",
+        exception.IssueDescription.Should().Be(TokenRevokedIssue,
             because: "a persistent 401 from Graph indicates a CAE token revocation, not a transient error");
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenApplicationLookupIsForbidden_DoesNotReportAppNotFound()
+    {
+        // Regression (#489): reading application metadata requires Application.Read.All. A 403
+        // leaves the app's existence unknown; reporting "not found" sends operators to re-create
+        // an app registration that is already present in the tenant.
+        SetupAppInfoGetFailure(403, "Forbidden");
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Be(LookupFailedIssue,
+            because: "HTTP 403 is an authorization failure and must be reported as an inconclusive lookup, never as proof the app is absent");
+        exception.ErrorDetails.Should().Contain(d => d.Contains("403", StringComparison.Ordinal),
+            because: "the HTTP status must be preserved so operators can identify the authorization failure");
+        exception.MitigationSteps.Should().Contain(s => s.Contains(AuthenticationConstants.ApplicationReadAllScope, StringComparison.Ordinal),
+            because: "reading application metadata requires the Application.Read.All Microsoft Graph permission");
+        exception.MitigationSteps.Should().NotContain(s => s.Contains("from scratch", StringComparison.OrdinalIgnoreCase),
+            because: "the app-not-found remediation re-creates the app registration and must never be offered on an unproven absence");
+        exception.Context.Should().Contain(new KeyValuePair<string, string>("statusCode", "403"),
+            because: "the status must be machine-readable in the exception context, not only embedded in prose");
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenForbiddenAfter401Retry_DoesNotReportTokenRevoked()
+    {
+        // Regression (#489): a stale ambient token yields 401, and the refreshed retry then hits
+        // the real 403. Reporting revocation sends operators to 'az login', which cannot fix a
+        // missing Application.Read.All grant.
+        var attempts = 0;
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
+            .Returns(_ => Task.FromResult(Interlocked.Increment(ref attempts) == 1
+                ? new GraphApiService.GraphResponse { IsSuccess = false, StatusCode = 401, ReasonPhrase = "Unauthorized" }
+                : new GraphApiService.GraphResponse { IsSuccess = false, StatusCode = 403, ReasonPhrase = "Forbidden" }));
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Be(LookupFailedIssue,
+            because: "only a second 401 proves token revocation; the retry's own status must be reported instead");
+        exception.ErrorDetails.Should().Contain(d => d.Contains("403", StringComparison.Ordinal),
+            because: "the status returned by the refreshed attempt is the actionable one and must survive into the error");
+    }
+
+    [Theory]
+    [InlineData(429, "Too Many Requests")]
+    [InlineData(500, "Internal Server Error")]
+    [InlineData(503, "Service Unavailable")]
+    public async Task EnsureValidClientAppAsync_WhenApplicationLookupCannotComplete_PreservesStatusAndDoesNotReportAppNotFound(
+        int statusCode, string reasonPhrase)
+    {
+        SetupAppInfoGetFailure(statusCode, reasonPhrase);
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Be(LookupFailedIssue,
+            because: "throttling and server errors leave the app's existence unknown");
+        exception.ErrorDetails.Should().Contain(d => d.Contains(statusCode.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal),
+            because: "the HTTP status must survive into the error so operators can distinguish throttling from a server fault");
+        exception.MitigationSteps.Should().NotContain(s => s.Contains(AuthenticationConstants.ApplicationReadAllScope, StringComparison.Ordinal),
+            because: "only HTTP 403 indicates a permission gap; suggesting an admin grant for a transient failure misdirects the operator");
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenTokenAcquisitionFailsBeforeResponse_SurfacesTheUnderlyingReason()
+    {
+        // The shape GraphGetWithResponseAsync returns when no HTTP response was ever received.
+        SetupAppInfoGetFailure(0, "NoAuth");
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Be(LookupFailedIssue,
+            because: "a failure before any response leaves the app's existence unknown");
+        exception.ErrorDetails.Should().Contain(d => d.Contains("NoAuth", StringComparison.Ordinal),
+            because: "with no HTTP status available the reason phrase is the only diagnostic, so it must be preserved");
+    }
+
+    [Theory]
+    [InlineData("""{"unexpected": true}""", "a response without a 'value' array does not prove the application is absent")]
+    [InlineData("""{"value": {}}""", "a non-array 'value' is a malformed response, not a confirmed absence")]
+    [InlineData("""{"value": ["app"]}""", "a non-object array element is a malformed response, not a confirmed absence")]
+    [InlineData("""{"value": [{"displayName": "Test App"}]}""", "an application result without an object ID is unusable, not a confirmed absence")]
+    [InlineData("""{"value": [{"id": 42}]}""", "a non-string object ID is a malformed response, not a confirmed absence")]
+    public async Task EnsureValidClientAppAsync_WhenApplicationLookupResponseIsMalformed_DoesNotReportAppNotFound(
+        string body, string reason)
+    {
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDocument.Parse(body)
+            }));
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Be(LookupFailedIssue, because: reason);
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenCustomClientAppIdIsResolved_LooksUpApplicationAmbiently()
+    {
+        // Regression (#489): after the bootstrap resolves a tenant-owned client app,
+        // GraphApiService.CustomClientAppId is set. Authenticating the existence probe as that
+        // app yields a User.Read token that Graph rejects with 403 on /applications.
+        _graphApiService.CustomClientAppId = ValidClientAppId;
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+
+        await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
+
+        await _graphApiService.Received().GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("/v1.0/applications")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            GraphAuthenticationMode.Ambient);
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenApplicationLookupReturns401_RetriesAmbientlyWithFreshToken()
+    {
+        _graphApiService.CustomClientAppId = ValidClientAppId;
+        SetupAppInfoGetFailure(401, "Unauthorized");
+
+        await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        await _graphApiService.Received(1).GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("/v1.0/applications")),
+            true,
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            GraphAuthenticationMode.Ambient);
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenApplicationLookupSucceedsAfter401Retry_CompletesValidation()
+    {
+        SetupAppInfoWithAllPermissions(ValidClientAppId);
+        SetupPermissionResolution();
+
+        var appJson = BuildAppInfoJson(ValidClientAppId, BuildAllPermissionsResourceAccess());
+        var attempts = 0;
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
+            .Returns(_ => Task.FromResult(Interlocked.Increment(ref attempts) == 1
+                ? new GraphApiService.GraphResponse { IsSuccess = false, StatusCode = 401, ReasonPhrase = "Unauthorized" }
+                : new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = JsonDocument.Parse(appJson) }));
+
+        await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
+
+        await _graphApiService.Received(1).GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("/v1.0/applications")),
+            true,
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            GraphAuthenticationMode.Ambient);
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenApplicationLookupThrows_ReportsLookupFailureNotAppNotFound()
+    {
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
+            .Returns<GraphApiService.GraphResponse>(_ => throw new HttpRequestException("connection reset"));
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Be(LookupFailedIssue,
+            because: "a network failure leaves the app's existence unknown");
+        exception.ErrorDetails.Should().Contain(d => d.Contains("connection reset", StringComparison.Ordinal),
+            because: "the underlying transport failure must be surfaced so the operator can act on it");
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenApplicationLookupTimesOut_ReportsLookupFailureNotCancellation()
+    {
+        // HttpClient surfaces its own timeout as TaskCanceledException with no cancellation
+        // requested; treating it as a cancel would abort the command instead of reporting a
+        // recoverable lookup failure.
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
+            .Returns<GraphApiService.GraphResponse>(_ =>
+                throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"));
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId));
+
+        exception.IssueDescription.Should().Be(LookupFailedIssue,
+            because: "a transport timeout is a lookup failure, not a caller cancellation or a confirmed absence");
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenPostProvisioningRefetchFails_ReportsLookupFailureNotMissingPermissions()
+    {
+        // The confirming re-read after permission provisioning uses the same lookup. A throttled
+        // re-read must not be reported as a permission gap the operator has to fix by hand.
+        SetupAppInfoGet(ValidClientAppId, requiredResourceAccess: "[]");
+        SetupPermissionResolution();
+
+        var appJson = BuildAppInfoJson(ValidClientAppId, "[]");
+        var attempts = 0;
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
+            .Returns(_ => Task.FromResult(Interlocked.Increment(ref attempts) == 1
+                ? new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = JsonDocument.Parse(appJson) }
+                : new GraphApiService.GraphResponse { IsSuccess = false, StatusCode = 429, ReasonPhrase = "Too Many Requests" }));
+
+        // Permission provisioning succeeds so the flow reaches the confirming re-read.
+        _graphApiService.GraphPatchAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
+            .Returns(Task.FromResult(true));
+
+        var exception = await Assert.ThrowsAsync<ClientAppValidationException>(
+            () => _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId, skipConfirmation: true));
+
+        exception.IssueDescription.Should().Be(LookupFailedIssue,
+            because: "a throttled confirmation read leaves the provisioning outcome unknown and must not be reported as missing permissions");
+    }
+
+    [Fact]
+    public async Task EnsureValidClientAppAsync_WhenCallerCancelsDuringApplicationLookup_PropagatesCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
+            .Returns<GraphApiService.GraphResponse>(_ =>
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            });
+
+        Func<Task> act = async () => await _validator.EnsureValidClientAppAsync(
+            ValidClientAppId, ValidTenantId, ct: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "Ctrl+C must abort the command rather than being reported as a client app validation failure");
     }
 
     #endregion
@@ -389,12 +674,12 @@ public class ClientAppValidatorTests
 
         // No app-registration mutation of any kind must be attempted on a first-party application.
         await _graphApiService.DidNotReceive().GraphPatchAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
         await _graphApiService.DidNotReceive().GraphPostAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>());
         // A tenant-local oauth2PermissionGrant must not be required when the token itself proves authorization.
         await _graphApiService.DidNotReceive().GraphGetAsync(
-            Arg.Any<string>(), Arg.Is<string>(p => p.Contains("oauth2PermissionGrants")), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<string>(), Arg.Is<string>(p => p.Contains("oauth2PermissionGrants")), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -589,7 +874,7 @@ public class ClientAppValidatorTests
         await _validator.EnsureValidClientAppAsync(ValidClientAppId, ValidTenantId);
 
         await _graphApiService.Received().GraphGetWithResponseAsync(
-            Arg.Any<string>(), Arg.Is<string>(p => p.Contains("displayName")), Arg.Any<bool>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Is<string>(p => p.Contains("displayName")), Arg.Any<bool>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     #endregion
@@ -750,7 +1035,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Any<object>(),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>());
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -761,7 +1046,7 @@ public class ClientAppValidatorTests
         SetupPublicClientFlowsGet(enabled: false);
         _graphApiService.GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(true));
         // Redirect URIs GET returns null (unmatched) → no separate PATCH
 
@@ -773,7 +1058,7 @@ public class ClientAppValidatorTests
             Arg.Is<string>(p => p.Contains(AppObjId)),
             Arg.Any<object>(),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>());
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -830,7 +1115,8 @@ public class ClientAppValidatorTests
             Arg.Is<string>(p => p.Contains("displayName")),
             Arg.Any<bool>(),
             Arg.Any<IEnumerable<string>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true,
@@ -856,7 +1142,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("oauth2PermissionScopes")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(permJson)));
 
         return new ClientAppValidator(_logger, graphApiService, confirmationProvider);
@@ -890,7 +1176,8 @@ public class ClientAppValidatorTests
             Arg.Is<string>(p => p.Contains("displayName")),
             Arg.Any<bool>(),
             Arg.Any<IEnumerable<string>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true, StatusCode = 200, Json = JsonDocument.Parse(appJson)
@@ -911,7 +1198,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("oauth2PermissionScopes")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(permJson)));
 
         graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -928,7 +1215,7 @@ public class ClientAppValidatorTests
         // Confirm no Graph mutations were attempted after the decline
         await graphApiService.DidNotReceive().GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -957,7 +1244,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("publicClient") && !p.Contains("displayName")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(redirectUriJson)));
 
         // Build a fresh validator wired to _graphApiService so the redirect URI mock is reachable
@@ -975,7 +1262,7 @@ public class ClientAppValidatorTests
 
         await _graphApiService.DidNotReceive().GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -1000,7 +1287,7 @@ public class ClientAppValidatorTests
 
         await _graphApiService.DidNotReceive().GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -1026,7 +1313,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("publicClient") && !p.Contains("displayName")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(redirectUriJson)));
 
         _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -1054,7 +1341,7 @@ public class ClientAppValidatorTests
         SetupPublicClientFlowsGet(enabled: false);
         _graphApiService.GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(true));
         _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(Cli.Models.RoleCheckResult.HasRole));
@@ -1069,7 +1356,7 @@ public class ClientAppValidatorTests
             Arg.Is<string>(p => p.Contains(AppObjId)),
             Arg.Any<object>(),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>());
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     // ── Unknown-role probe tests ────────────────────────────────────────────────
@@ -1099,7 +1386,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("optionalClaims")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(
                 _ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(noWidsJson)),    // pre-flight read
                 _ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(noWidsJson)),    // inside EnsureWids read
@@ -1107,7 +1394,7 @@ public class ClientAppValidatorTests
 
         _graphApiService.GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(true));
 
         // First call returns Unknown to exercise the probe path; subsequent calls (if any)
@@ -1133,7 +1420,7 @@ public class ClientAppValidatorTests
 
         await _graphApiService.Received().GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
 
         // Cache must be invalidated after the successful wids PATCH (per D1) so subsequent
         // token acquisitions pick up the new claim.
@@ -1154,12 +1441,12 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("optionalClaims")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(noWidsJson)));
 
         _graphApiService.GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(false));  // PATCH returns false — wids does not land
 
         _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -1252,7 +1539,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("optionalClaims")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(noWidsJson)));
 
         // PATCH succeeds (so the probe's success-path LogInformation is reached and our injected
@@ -1261,7 +1548,7 @@ public class ClientAppValidatorTests
         // is what forces Inconclusive, not the PATCH outcome.
         _graphApiService.GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(true));
 
         _graphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -1308,7 +1595,7 @@ public class ClientAppValidatorTests
         SetupPublicClientFlowsGet(enabled: false);
         _graphApiService.GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(true));
 
         var confirmationProvider = Substitute.For<IConfirmationProvider>();
@@ -1322,7 +1609,7 @@ public class ClientAppValidatorTests
         // But fix must still be applied
         await _graphApiService.Received(1).GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     #endregion
@@ -1349,7 +1636,7 @@ public class ClientAppValidatorTests
 
         await _graphApiService.DidNotReceive().GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -1368,7 +1655,7 @@ public class ClientAppValidatorTests
         SetupRedirectUrisGet(appResponseJson);
         _graphApiService.GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(true));
 
         await _validator.EnsureRedirectUrisAsync(ValidClientAppId, ValidTenantId);
@@ -1378,7 +1665,7 @@ public class ClientAppValidatorTests
             Arg.Is<string>(p => p.Contains(AppObjId)),
             Arg.Any<object>(),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>());
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -1397,14 +1684,14 @@ public class ClientAppValidatorTests
         SetupRedirectUrisGet(appResponseJson);
         _graphApiService.GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(true));
 
         await _validator.EnsureRedirectUrisAsync(ValidClientAppId, ValidTenantId);
 
         await _graphApiService.Received(1).GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -1416,7 +1703,7 @@ public class ClientAppValidatorTests
 
         await _graphApiService.DidNotReceive().GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     [Fact]
@@ -1439,7 +1726,7 @@ public class ClientAppValidatorTests
 
         await _graphApiService.Received(1).GraphPatchAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<object>(),
-            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+            Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>());
     }
 
     #endregion
@@ -1452,7 +1739,26 @@ public class ClientAppValidatorTests
     /// </summary>
     private void SetupAppInfoGet(string appId, string requiredResourceAccess = "[]")
     {
-        var json = $$"""
+        var json = BuildAppInfoJson(appId, requiredResourceAccess);
+
+        // GetClientAppInfoAsync now calls GraphGetWithResponseAsync; GraphGetAsync is used by
+        // subsequent steps (permission resolution, consent checks, redirect URIs, etc.).
+        _graphApiService.GraphGetWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Is<string>(p => p.Contains("displayName")),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
+            .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDocument.Parse(json)
+            }));
+    }
+
+    private static string BuildAppInfoJson(string appId, string requiredResourceAccess) => $$"""
         {
             "value": [
                 {
@@ -1465,19 +1771,24 @@ public class ClientAppValidatorTests
         }
         """;
 
-        // GetClientAppInfoAsync now calls GraphGetWithResponseAsync; GraphGetAsync is used by
-        // subsequent steps (permission resolution, consent checks, redirect URIs, etc.).
+    /// <summary>
+    /// Sets up the app info GET to fail with the given HTTP status. Status 0 models a
+    /// token-acquisition or network failure where no response was received.
+    /// </summary>
+    private void SetupAppInfoGetFailure(int statusCode, string reasonPhrase)
+    {
         _graphApiService.GraphGetWithResponseAsync(
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("displayName")),
             Arg.Any<bool>(),
             Arg.Any<IEnumerable<string>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
-                IsSuccess = true,
-                StatusCode = 200,
-                Json = JsonDocument.Parse(json)
+                IsSuccess = false,
+                StatusCode = statusCode,
+                ReasonPhrase = reasonPhrase
             }));
     }
 
@@ -1491,7 +1802,8 @@ public class ClientAppValidatorTests
             Arg.Is<string>(p => p.Contains("displayName")),
             Arg.Any<bool>(),
             Arg.Any<IEnumerable<string>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true,
@@ -1500,14 +1812,7 @@ public class ClientAppValidatorTests
             }));
     }
 
-    /// <summary>
-    /// Sets up the app info GET with all required permissions. The 5 GUID-resolvable permissions
-    /// match those returned by SetupPermissionResolution; AgentIdentity.Read.All and
-    /// AgentIdentity.DeleteRestore.All are resolved via the GetConsentedPermissionsAsync fallback.
-    /// </summary>
-    private void SetupAppInfoWithAllPermissions(string appId)
-    {
-        var requiredResourceAccess = $$"""
+    private static string BuildAllPermissionsResourceAccess() => $$"""
         [
             {
                 "resourceAppId": "{{AuthenticationConstants.MicrosoftGraphResourceAppId}}",
@@ -1522,7 +1827,14 @@ public class ClientAppValidatorTests
         ]
         """;
 
-        SetupAppInfoGet(appId, requiredResourceAccess: requiredResourceAccess);
+    /// <summary>
+    /// Sets up the app info GET with all required permissions. The 5 GUID-resolvable permissions
+    /// match those returned by SetupPermissionResolution; AgentIdentity.Read.All and
+    /// AgentIdentity.DeleteRestore.All are resolved via the GetConsentedPermissionsAsync fallback.
+    /// </summary>
+    private void SetupAppInfoWithAllPermissions(string appId)
+    {
+        SetupAppInfoGet(appId, requiredResourceAccess: BuildAllPermissionsResourceAccess());
         SetupConsentGrantForAgentIdentityCreate();
     }
 
@@ -1553,7 +1865,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("oauth2PermissionScopes")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(json)));
     }
 
@@ -1572,7 +1884,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("servicePrincipals") && p.EndsWith("&$select=id")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(spJson)));
 
         // Grants for ConsentSpObjId — contains all four no-GUID scopes so they are removed from missingPermissions.
@@ -1581,7 +1893,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(ConsentSpObjId)),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(grantsJson)));
         // Also mock GraphGetWithResponseAsync for the same grants endpoint — production code now
         // uses this method to detect 403 (caller lacks DelegatedPermissionGrant.Read.All) without
@@ -1592,7 +1904,8 @@ public class ClientAppValidatorTests
             Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(ConsentSpObjId)),
             Arg.Any<bool>(),
             Arg.Any<IEnumerable<string>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true,
@@ -1621,7 +1934,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("servicePrincipals") && p.Contains("id,appId")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(json)));
     }
 
@@ -1634,7 +1947,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(spObjectId)),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse("""{"value": []}""")));
         // Mirror for GraphGetWithResponseAsync (used by GetConsentedPermissionsAsync to detect 403).
         _graphApiService.GraphGetWithResponseAsync(
@@ -1642,7 +1955,8 @@ public class ClientAppValidatorTests
             Arg.Is<string>(p => p.Contains("oauth2PermissionGrants") && p.Contains(spObjectId)),
             Arg.Any<bool>(),
             Arg.Any<IEnumerable<string>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult(new GraphApiService.GraphResponse
             {
                 IsSuccess = true,
@@ -1660,7 +1974,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("publicClient") && !p.Contains("displayName")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(appResponseJson)));
     }
 
@@ -1682,7 +1996,7 @@ public class ClientAppValidatorTests
             Arg.Any<string>(),
             Arg.Is<string>(p => p.Contains("isFallbackPublicClient")),
             Arg.Any<CancellationToken>(),
-            Arg.Any<IEnumerable<string>?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(_ => Task.FromResult<JsonDocument?>(JsonDocument.Parse(json)));
     }
 
