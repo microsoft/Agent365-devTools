@@ -149,7 +149,9 @@ For security and flexibility, the CLI supports environment variable overrides:
 |----------|---------|
 | `A365_MCP_APP_ID` | Override Agent 365 Tools App ID for authentication |
 | `A365_MCP_APP_ID_{ENV}` | Per-environment MCP Platform App ID |
-| `A365_DISCOVER_ENDPOINT_{ENV}` | Per-environment discover endpoint URL |
+| `A365_DISCOVER_ENDPOINT_{ENV}` | Canonical per-environment Agent 365 endpoint; discover uses the configured URL, while create and delete use its validated HTTPS origin with fixed routes |
+| `A365_CREATE_ENDPOINT_{ENV}` | Higher-precedence per-environment create endpoint override |
+| `A365_DELETE_ENDPOINT_{ENV}` | Higher-precedence per-environment delete endpoint override |
 | `POWERPLATFORM_API_URL` | Override Power Platform API URL |
 
 **Design Decision:** All test/preprod App IDs and URLs have been removed from the codebase. The production App ID is the only hardcoded value. Internal Microsoft developers use environment variables for non-production testing.

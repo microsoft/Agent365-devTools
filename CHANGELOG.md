@@ -59,6 +59,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- Cloud-specific Agent 365 discover endpoint overrides now also select the messaging endpoint create and delete hosts unless explicit overrides are set.
 - Repeated `publish --aiteammate` runs now preserve customized manifest names instead of restoring an overlong blueprint name.
 - Repeated `setup blueprint --agent-name` runs now reuse the stored valid client secret instead of creating duplicate credentials.
 - `a365 query-entra blueprint-scopes` and `inheritance` now report permission-grant read failures, and `a365 create-instance` now stops safely instead of continuing when existing grants cannot be read.

@@ -11,6 +11,10 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
 /// </summary>
 public static class ConfigConstants
 {
+    private const string ProductionAgent365ToolsOrigin = "https://agent365.svc.cloud.microsoft";
+    internal const string CreateAgentBlueprintPath = "/agents/botManagement/createAgentBlueprint";
+    internal const string DeleteAgentBlueprintPath = "/agents/botManagement/deleteAgentBlueprint";
+
     /// <summary>
     /// Commercial-cloud OAuth authority host. Used as the fallback when no cloud-specific
     /// override is configured.
@@ -62,12 +66,12 @@ public static class ConfigConstants
     /// <summary>
     /// Production Agent 365 Tools Create endpoint URL
     /// </summary>
-    public const string ProductionCreateEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/botManagement/createAgentBlueprint";
+    public const string ProductionCreateEndpointUrl = ProductionAgent365ToolsOrigin + CreateAgentBlueprintPath;
 
     /// <summary>
     /// Production Agent 365 Tools Delete endpoint URL
     /// </summary>
-    public const string ProductionDeleteEndpointUrl = "https://agent365.svc.cloud.microsoft/agents/botManagement/deleteAgentBlueprint";
+    public const string ProductionDeleteEndpointUrl = ProductionAgent365ToolsOrigin + DeleteAgentBlueprintPath;
 
     /// <summary>
     /// Messaging Bot API App ID
@@ -160,18 +164,13 @@ public static class ConfigConstants
     /// Get Discover endpoint URL based on environment
     /// </summary>
     public static string GetDiscoverEndpointUrl(string environment)
-    {
-        // Check for custom endpoint in environment variable first
-        var customEndpoint = GetEnvironmentScopedSetting("A365_DISCOVER_ENDPOINT", environment);
-        if (!string.IsNullOrEmpty(customEndpoint))
-            return customEndpoint;
+        => ResolveDiscoverEndpointUri(environment).AbsoluteUri;
 
-        // Default to production endpoint
-        return environment?.ToLower() switch
-        {
-            _ => ProductionDiscoverEndpointUrl
-        };
-    }
+    internal static string GetAgent365ToolsOrigin(string environment)
+        => ResolveDiscoverEndpointUri(environment).GetLeftPart(UriPartial.Authority);
+
+    internal static string BuildAgent365ToolsEndpointUrl(string environment, string endpointPath)
+        => $"{GetAgent365ToolsOrigin(environment)}{endpointPath}";
 
     /// <summary>
     /// environment-aware Agent 365 Tools resource Application ID
@@ -229,18 +228,19 @@ public static class ConfigConstants
     }
 
     private static string? GetEnvironmentScopedSetting(string prefix, string? environment)
-        => Environment.GetEnvironmentVariable($"{prefix}_{NormalizeEnvironmentKey(environment)}") is { } value
+        => GetEnvironmentScopedValue(prefix, environment) is { } value
             && !string.IsNullOrWhiteSpace(value)
                 ? value.Trim()
                 : null;
 
+    private static string? GetEnvironmentScopedValue(string prefix, string? environment)
+        => Environment.GetEnvironmentVariable($"{prefix}_{NormalizeEnvironmentKey(environment)}");
+
     private static string NormalizeHttpsOrigin(string? value, string fallback, string settingName)
     {
         var candidate = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
-        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri) ||
-            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
-            !string.IsNullOrEmpty(uri.UserInfo) ||
-            !string.IsNullOrEmpty(uri.Query) ||
+        var uri = ParseHttpsUri(candidate, settingName);
+        if (!string.IsNullOrEmpty(uri.Query) ||
             !string.IsNullOrEmpty(uri.Fragment) ||
             uri.AbsolutePath != "/")
         {
@@ -249,5 +249,34 @@ public static class ConfigConstants
         }
 
         return uri.GetLeftPart(UriPartial.Authority);
+    }
+
+    private static Uri ResolveDiscoverEndpointUri(string environment)
+    {
+        var configuredEndpoint = GetEnvironmentScopedValue("A365_DISCOVER_ENDPOINT", environment);
+        var candidate = configuredEndpoint is null
+            ? ProductionDiscoverEndpointUrl
+            : configuredEndpoint.Trim();
+        var uri = ParseHttpsUri(candidate, "Agent 365 Tools discover endpoint");
+        if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+        {
+            throw new ArgumentException(
+                "Agent 365 Tools discover endpoint must not contain a query or fragment.");
+        }
+
+        return uri;
+    }
+
+    private static Uri ParseHttpsUri(string value, string settingName)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(uri.UserInfo))
+        {
+            throw new ArgumentException(
+                $"{settingName} must be an absolute HTTPS URL without user info.");
+        }
+
+        return uri;
     }
 }

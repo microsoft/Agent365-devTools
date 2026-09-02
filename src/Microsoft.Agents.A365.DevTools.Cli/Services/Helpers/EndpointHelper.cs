@@ -115,12 +115,9 @@ public static class EndpointHelper
         if (!string.IsNullOrEmpty(customEndpoint))
             return customEndpoint;
 
-        // Default to production endpoint
-        return environment?.ToLower() switch
-        {
-            "prod" => ConfigConstants.ProductionCreateEndpointUrl,
-            _ => ConfigConstants.ProductionCreateEndpointUrl
-        };
+        return ConfigConstants.BuildAgent365ToolsEndpointUrl(
+            environment,
+            ConfigConstants.CreateAgentBlueprintPath);
     }
 
     /// <summary>
@@ -134,12 +131,9 @@ public static class EndpointHelper
         if (!string.IsNullOrEmpty(customEndpoint))
             return customEndpoint;
 
-        // Default to production endpoint
-        return environment?.ToLower() switch
-        {
-            "prod" => ConfigConstants.ProductionDeleteEndpointUrl,
-            _ => ConfigConstants.ProductionDeleteEndpointUrl
-        };
+        return ConfigConstants.BuildAgent365ToolsEndpointUrl(
+            environment,
+            ConfigConstants.DeleteAgentBlueprintPath);
     }
 
     /// <summary>
