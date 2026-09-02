@@ -9,6 +9,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 public interface IMicrosoftGraphTokenProvider
 {
     /// <summary>
+    /// Clears access tokens cached in memory by this provider.
+    /// </summary>
+    void ClearTokenCache();
+
+    /// <summary>
     /// Acquires a delegated access token for Microsoft Graph using PowerShell authentication.
     /// </summary>
     /// <param name="tenantId">The Azure AD tenant ID (GUID or domain name).</param>

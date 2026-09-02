@@ -136,6 +136,17 @@ public class SetupHelpersAdminConsentInstructionsTests
     }
 
     [Fact]
+    public void GetNonDwAdminConsentSpecs_ForGcc_UsesGccObservabilityResource()
+    {
+        var specs = SetupHelpers.GetNonDwAdminConsentSpecs("gcc");
+
+        specs.Where(spec => spec.ResourceName == "Observability API")
+            .Should().OnlyContain(
+                spec => spec.ResourceAppId == ConfigConstants.GccObservabilityApiAppId,
+                because: "manual GCC consent instructions must target the GCC Observability resource");
+    }
+
+    [Fact]
     public void NonDwAdminConsentSpecs_PowerPlatformApi_IsDelegatedOnly()
     {
         var specs = SetupHelpers.NonDwAdminConsentSpecs;

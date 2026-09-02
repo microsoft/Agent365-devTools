@@ -86,6 +86,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
+    public void ClearTokenCache() => _tokenCache.Clear();
+
     public async Task<string?> GetMgGraphAccessTokenAsync(
         string tenantId,
         IEnumerable<string> scopes,

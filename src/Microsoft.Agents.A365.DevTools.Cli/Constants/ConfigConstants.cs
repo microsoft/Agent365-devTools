@@ -84,12 +84,27 @@ public static class ConfigConstants
     public const string MessagingBotApiIdentifierUri = "https://botapi.skype.com";
 
     /// <summary>
-    /// Observability API App ID
+    /// Commercial Observability API App ID
     /// </summary>
     public const string ObservabilityApiAppId = "9b975845-388f-4429-889e-eab1ef63949c";
 
     /// <summary>
-    /// Observability API identifier URI (uses api:// scheme — no public https URI registered).
+    /// GCC Moderate Observability API App ID
+    /// </summary>
+    public const string GccObservabilityApiAppId = "2c672ad5-b104-44ed-8069-bb68dd138546";
+
+    /// <summary>
+    /// GCC High Observability API App ID
+    /// </summary>
+    public const string GccHighObservabilityApiAppId = "009c6bd0-82e4-4466-95b3-4c996521f3d7";
+
+    /// <summary>
+    /// DoD Observability API App ID
+    /// </summary>
+    public const string DodObservabilityApiAppId = "a9e04047-c6a7-430b-a7ae-faf8f8eed1b7";
+
+    /// <summary>
+    /// Commercial Observability API identifier URI.
     /// </summary>
     public const string ObservabilityApiIdentifierUri = "api://9b975845-388f-4429-889e-eab1ef63949c";
 
@@ -178,6 +193,38 @@ public static class ConfigConstants
     public static string GetAgent365ToolsResourceAppId(string environment)
         => GetEnvironmentScopedSetting("A365_MCP_APP_ID", environment)
             ?? McpConstants.WorkIQToolsProdAppId;
+
+    /// <summary>
+    /// Returns the Observability resource Application ID for the selected cloud.
+    /// </summary>
+    public static string GetObservabilityApiAppId(string? environment)
+        => NormalizeEnvironmentKey(environment) switch
+        {
+            "GCC" or "GCC_MODERATE" => GccObservabilityApiAppId,
+            "GCC_HIGH" => GccHighObservabilityApiAppId,
+            "DOD" => DodObservabilityApiAppId,
+            "AZUREUSGOVERNMENT" => throw new ArgumentException(
+                "AzureUSGovernment does not distinguish GCC Moderate, GCC High, and DoD. " +
+                "Set the environment to gcc, gcc-high, or dod.",
+                nameof(environment)),
+            _ => ObservabilityApiAppId,
+        };
+
+    /// <summary>
+    /// Returns the Observability resource identifier URI for the selected cloud.
+    /// </summary>
+    public static string GetObservabilityApiIdentifierUri(string? environment)
+        => BuildObservabilityApiIdentifierUri(GetObservabilityApiAppId(environment));
+
+    internal static string BuildObservabilityApiIdentifierUri(string appId)
+        => $"api://{appId}";
+
+    internal static bool IsObservabilityApiAppId(string? appId)
+        => appId is not null &&
+           (appId.Equals(ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase) ||
+            appId.Equals(GccObservabilityApiAppId, StringComparison.OrdinalIgnoreCase) ||
+            appId.Equals(GccHighObservabilityApiAppId, StringComparison.OrdinalIgnoreCase) ||
+            appId.Equals(DodObservabilityApiAppId, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Returns the authority host for the selected cloud environment.

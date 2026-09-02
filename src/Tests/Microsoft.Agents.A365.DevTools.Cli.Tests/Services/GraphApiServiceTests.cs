@@ -30,6 +30,25 @@ public class GraphApiServiceTests
         _mockTokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
     }
 
+    [Fact]
+    public async Task ClearTokenCacheAsync_ClearsProviderAndAuthenticationCaches()
+    {
+        // Arrange
+        var authService = FakeAuth();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            authService,
+            tokenProvider: _mockTokenProvider);
+
+        // Act
+        await service.ClearTokenCacheAsync();
+
+        // Assert
+        _mockTokenProvider.Received(1).ClearTokenCache();
+        await authService.Received(1).ClearTokenCacheAsync();
+    }
+
 
     [Fact]
     public async Task GetClientAppAccessTokenAsync_PassesExplicitClientIdAndScopesToTokenProvider()

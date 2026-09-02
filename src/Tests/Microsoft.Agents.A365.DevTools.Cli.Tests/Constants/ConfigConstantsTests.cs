@@ -65,6 +65,40 @@ public class ConfigConstantsTests
     }
 
     [Theory]
+    [InlineData("prod", ConfigConstants.ObservabilityApiAppId)]
+    [InlineData("commercial", ConfigConstants.ObservabilityApiAppId)]
+    [InlineData("gcc", ConfigConstants.GccObservabilityApiAppId)]
+    [InlineData("GCC Moderate", ConfigConstants.GccObservabilityApiAppId)]
+    [InlineData("gcc-moderate", ConfigConstants.GccObservabilityApiAppId)]
+    [InlineData("gcc-high", ConfigConstants.GccHighObservabilityApiAppId)]
+    [InlineData("GCC High", ConfigConstants.GccHighObservabilityApiAppId)]
+    [InlineData("dod", ConfigConstants.DodObservabilityApiAppId)]
+    public void GetObservabilityApiAppId_ReturnsCloudSpecificResource(
+        string environment,
+        string expected)
+    {
+        ConfigConstants.GetObservabilityApiAppId(environment).Should().Be(expected,
+            because: "Observability tokens and permission grants must target the resource deployed in the selected cloud");
+    }
+
+    [Fact]
+    public void GetObservabilityApiIdentifierUri_UsesResolvedCloudResource()
+    {
+        ConfigConstants.GetObservabilityApiIdentifierUri("gcc")
+            .Should().Be($"api://{ConfigConstants.GccObservabilityApiAppId}",
+                because: "the admin-consent scope prefix must match the GCC Observability application ID");
+    }
+
+    [Fact]
+    public void GetObservabilityApiAppId_WithAmbiguousAzureGovernmentCloud_Throws()
+    {
+        var act = () => ConfigConstants.GetObservabilityApiAppId("AzureUSGovernment");
+
+        act.Should().Throw<ArgumentException>(
+            because: "the Azure CLI government cloud name cannot distinguish GCC Moderate, GCC High, and DoD resources");
+    }
+
+    [Theory]
     [InlineData("http://graph.example")]
     [InlineData("https://user@graph.example")]
     [InlineData("https://graph.example/path")]

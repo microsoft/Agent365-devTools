@@ -230,6 +230,26 @@ public class SetupHelpersConsentUrlTests
     }
 
     [Fact]
+    public void BuildCombinedConsentUrl_WithGccObservabilityResource_UsesGccAudience()
+    {
+        var url = SetupHelpers.BuildCombinedConsentUrl(
+            TenantId,
+            BlueprintClientId,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            observabilityResourceAppId: ConfigConstants.GccObservabilityApiAppId);
+
+        url.Should().Contain(
+            Uri.EscapeDataString(
+                $"api://{ConfigConstants.GccObservabilityApiAppId}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
+            because: "GCC admin consent must grant the OtelWrite scope on the GCC Observability resource");
+        url.Should().NotContain(
+            Uri.EscapeDataString(
+                $"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
+            because: "a GCC consent URL must not request the commercial Observability audience");
+    }
+
+    [Fact]
     public void BuildCombinedConsentUrl_ScopesJoinedWithEncodedSpaceNotAmpersand()
     {
         var url = SetupHelpers.BuildCombinedConsentUrl(

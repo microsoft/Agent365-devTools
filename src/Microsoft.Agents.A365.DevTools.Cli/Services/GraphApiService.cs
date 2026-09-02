@@ -183,7 +183,11 @@ public class GraphApiService
     /// can invalidate after an operation that makes cached tokens stale — most commonly after adding
     /// the <c>wids</c> optional claim to the client app registration.
     /// </summary>
-    public virtual Task ClearTokenCacheAsync() => _authService.ClearTokenCacheAsync();
+    public virtual async Task ClearTokenCacheAsync()
+    {
+        _tokenProvider?.ClearTokenCache();
+        await _authService.ClearTokenCacheAsync();
+    }
 
     /// <summary>
     /// Acquires an access token for Microsoft Graph API via MSAL (WAM on Windows,

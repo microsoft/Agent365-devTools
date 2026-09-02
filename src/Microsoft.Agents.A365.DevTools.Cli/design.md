@@ -154,11 +154,20 @@ For security and flexibility, the CLI supports environment variable overrides:
 | `A365_DELETE_ENDPOINT_{ENV}` | Higher-precedence per-environment delete endpoint override |
 | `POWERPLATFORM_API_URL` | Override Power Platform API URL |
 
-**Design Decision:** All test/preprod App IDs and URLs have been removed from the codebase. The production App ID is the only hardcoded value. Internal Microsoft developers use environment variables for non-production testing.
+**Design Decision:** Test and preproduction App IDs and URLs are supplied through environment variables. Public production resource IDs that differ by sovereign cloud, including Observability, are selected from the configured environment.
+
+| Cloud | `environment` value | Observability resource app ID |
+|-------|---------------------|-------------------------------|
+| Commercial | `prod` | `9b975845-388f-4429-889e-eab1ef63949c` |
+| GCC Moderate | `gcc` | `2c672ad5-b104-44ed-8069-bb68dd138546` |
+| GCC High | `gcc-high` | `009c6bd0-82e4-4466-95b3-4c996521f3d7` |
+| DoD | `dod` | `a9e04047-c6a7-430b-a7ae-faf8f8eed1b7` |
 
 ### Sovereign / Government Cloud Configuration
 
-By default the CLI targets the commercial Microsoft Graph endpoint. For sovereign or government cloud tenants, set `graphBaseUrl` in `a365.config.json`:
+Set `environment` explicitly for every government cloud because it selects cloud-specific Agent 365 endpoints, authentication audiences, and Observability resources. The Graph endpoint alone cannot distinguish GCC High from DoD.
+
+By default the CLI targets the commercial Microsoft Graph endpoint. For GCC High, DoD, or other sovereign tenants, also set `graphBaseUrl` in `a365.config.json`:
 
 | Cloud | `graphBaseUrl` value |
 |-------|----------------------|

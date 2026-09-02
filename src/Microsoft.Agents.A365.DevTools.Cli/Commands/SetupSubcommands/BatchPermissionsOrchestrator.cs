@@ -87,6 +87,13 @@ internal static class BatchPermissionsOrchestrator
         // Filter out specs with no scopes — they would produce empty OAuth2 grants (HTTP 400).
         // This can happen when the MCP manifest is missing or contains no required scopes.
         var effectiveSpecs = specs.Where(s => s.Scopes.Length > 0).ToList();
+        if (setupResults is not null)
+        {
+            setupResults.ObservabilityResourceAppId = effectiveSpecs
+                .FirstOrDefault(spec => ConfigConstants.IsObservabilityApiAppId(spec.ResourceAppId))
+                ?.ResourceAppId;
+        }
+
         if (effectiveSpecs.Count < specs.Count)
         {
             var skipped = specs.Count - effectiveSpecs.Count;
@@ -920,11 +927,23 @@ internal static class BatchPermissionsOrchestrator
     /// Updates config.ResourceConsents in-memory for each spec based on phase results.
     /// The caller is responsible for persisting the config via configService.SaveStateAsync.
     /// </summary>
-    private static void UpdateResourceConsents(
+    internal static void UpdateResourceConsents(
         Agent365Config config,
         IReadOnlyList<ResourcePermissionSpec> specs,
         Dictionary<string, (bool configured, bool alreadyExisted)> inheritedResults)
     {
+        var configuredObservabilityAppIds = specs
+            .Where(spec => ConfigConstants.IsObservabilityApiAppId(spec.ResourceAppId))
+            .Select(spec => spec.ResourceAppId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (configuredObservabilityAppIds.Count > 0)
+        {
+            config.ResourceConsents.RemoveAll(resourceConsent =>
+                ConfigConstants.IsObservabilityApiAppId(resourceConsent.ResourceAppId) &&
+                !configuredObservabilityAppIds.Contains(resourceConsent.ResourceAppId));
+        }
+
         foreach (var spec in specs)
         {
             inheritedResults.TryGetValue(spec.ResourceAppId, out var inherited);

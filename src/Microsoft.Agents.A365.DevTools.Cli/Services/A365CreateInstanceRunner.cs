@@ -162,6 +162,7 @@ public sealed class A365CreateInstanceRunner
         if (!string.IsNullOrWhiteSpace(configuredClientAppId))
             _graphService.CustomClientAppId = configuredClientAppId;
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
+        var observabilityResourceAppId = ConfigConstants.GetObservabilityApiAppId(environment);
 
         var usageLocation = GetConfig("agentUserUsageLocation");
 
@@ -342,7 +343,7 @@ public sealed class A365CreateInstanceRunner
                             "McpServers.Mail.All",
                             "McpServersMetadata.Read.All"
                         }),
-                    [ConfigConstants.ObservabilityApiAppId] = (
+                    [observabilityResourceAppId] = (
                         "Observability API",
                         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                         {

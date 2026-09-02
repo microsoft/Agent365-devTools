@@ -889,6 +889,9 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Best-effort: also extend the existing oauth2PermissionGrant so consent takes effect immediately
             await TryExtendConsentGrantScopesAsync(clientAppId, missingPermissions, tenantId, ct);
 
+            // Tokens issued before the permission update cannot carry the newly consented scopes.
+            await _graphApiService.ClearTokenCacheAsync();
+
             return true;
         }
         catch (Exception ex)

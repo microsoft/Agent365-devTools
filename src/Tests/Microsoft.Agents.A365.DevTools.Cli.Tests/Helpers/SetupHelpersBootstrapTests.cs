@@ -232,7 +232,7 @@ public class SetupHelpersBootstrapTests : IDisposable
     [Fact]
     public async Task ResolveBootstrapEnvironmentAsync_WhenEnvironmentVariableIsSet_UsesItWithoutCallingAzureCli()
     {
-        const string expectedEnvironment = "AzureUSGovernment";
+        const string expectedEnvironment = "gcc";
         var originalEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
         Environment.SetEnvironmentVariable("A365_ENVIRONMENT", $" {expectedEnvironment} ");
         try
@@ -265,15 +265,44 @@ public class SetupHelpersBootstrapTests : IDisposable
                 .Returns(new CommandResult
                 {
                     ExitCode = 0,
-                    StandardOutput = "AzureUSGovernment\n",
+                    StandardOutput = "AzureCloud\n",
                     StandardError = string.Empty
                 });
 
             var result = await SetupHelpers.ResolveBootstrapEnvironmentAsync(
                 _mockExecutor, NullLogger.Instance, CancellationToken.None);
 
-            result.Should().Be("AzureUSGovernment",
+            result.Should().Be("AzureCloud",
                 because: "config-free bootstrap must target the active Azure CLI cloud before resolving the client application");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("A365_ENVIRONMENT", originalEnvironment);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapEnvironmentAsync_WhenAzureCliUsesUsGovernment_RequiresExplicitEnvironment()
+    {
+        var originalEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
+        Environment.SetEnvironmentVariable("A365_ENVIRONMENT", null);
+        try
+        {
+            _mockExecutor.ExecuteAsync(
+                    "az", "cloud show --query name -o tsv",
+                    Arg.Any<string?>(), true, true, Arg.Any<CancellationToken>())
+                .Returns(new CommandResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = "AzureUSGovernment\n",
+                    StandardError = string.Empty
+                });
+
+            var act = () => SetupHelpers.ResolveBootstrapEnvironmentAsync(
+                _mockExecutor, NullLogger.Instance, CancellationToken.None);
+
+            await act.Should().ThrowAsync<SetupValidationException>(
+                because: "AzureUSGovernment cannot identify whether the tenant is GCC Moderate, GCC High, or DoD");
         }
         finally
         {

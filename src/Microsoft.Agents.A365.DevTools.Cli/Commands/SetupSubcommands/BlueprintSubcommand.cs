@@ -942,7 +942,11 @@ internal static class BlueprintSubcommand
         if (!string.IsNullOrWhiteSpace(displayName))
         {
             logger.LogDebug("Searching for existing blueprint by display name: {DisplayName}...", displayName);
-            var lookupResult = await blueprintLookupService.GetApplicationByDisplayNameAsync(tenantId, displayName, cancellationToken: ct);
+            var lookupResult = await blueprintLookupService.GetApplicationByDisplayNameAsync(
+                tenantId,
+                displayName,
+                preferredObjectId: setupConfig.AgentBlueprintObjectId,
+                cancellationToken: ct);
 
             if (lookupResult.Found)
             {
@@ -957,6 +961,17 @@ internal static class BlueprintSubcommand
                 existingAppId = lookupResult.AppId;
                 blueprintAlreadyExists = true;
                 requiresPersistence = lookupResult.RequiresPersistence;
+            }
+            else if (!string.IsNullOrWhiteSpace(lookupResult.ErrorMessage))
+            {
+                throw new SetupValidationException(
+                    "Could not determine whether the blueprint already exists.",
+                    errorDetails: [lookupResult.ErrorMessage],
+                    mitigationSteps:
+                    [
+                        "Confirm the CLI application has Microsoft Graph Application.Read.All consent.",
+                        "Sign in again, then retry setup."
+                    ]);
             }
         }
 

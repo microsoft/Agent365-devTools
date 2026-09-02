@@ -764,7 +764,11 @@ internal static class PermissionsSubcommand
 
         try
         {
-            var specs = new List<ResourcePermissionSpec>(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true, isM365: true));
+            var specs = new List<ResourcePermissionSpec>(
+                SetupHelpers.GetFixedApiPermissionSpecs(
+                    setInheritable: true,
+                    isM365: true,
+                    setupConfig.Environment));
 
             var localResults = setupResults ?? new SetupResults();
             var (_, _, consentGranted, adminConsentUrl) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
@@ -838,11 +842,12 @@ internal static class PermissionsSubcommand
     {
         // Resource app IDs owned by standard setup subcommands — never remove these
         var envAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+        var observabilityAppId = ConfigConstants.GetObservabilityApiAppId(setupConfig.Environment);
         var protectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             envAtgAppId,
             ConfigConstants.MessagingBotApiAppId,
-            ConfigConstants.ObservabilityApiAppId,
+            observabilityAppId,
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };

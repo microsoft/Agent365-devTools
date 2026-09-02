@@ -260,16 +260,11 @@ public static class AuthenticationConstants
         .ToArray();
 
     /// <summary>
-    /// Explicit delegated scopes passed to EnsureGraphHeadersAsync for permission-grant operations.
-    /// Intentionally empty: the operations that previously needed explicit scopes here
-    /// (DelegatedPermissionGrant.ReadWrite.All for oauth2 grant CRUD,
-    /// AgentIdentityBlueprint.UpdateAuthProperties.All for inheritable permissions) are now
-    /// covered by the AgentIdentityBlueprint.ReadWrite.All umbrella in RequiredClientAppPermissions.
-    /// An empty array causes EnsureGraphHeadersAsync to route through the standard token path
-    /// (GetGraphAccessTokenAsync / AuthenticationService), which already carries all required scopes.
-    /// Validated end-to-end across all 4 setup variants (PR #409).
+    /// Delegated scopes requested for permission and blueprint-resource operations.
+    /// These calls include application and service-principal reads, so they must not fall back to
+    /// the custom app's default User.Read token.
     /// </summary>
-    public static readonly string[] RequiredPermissionGrantScopes = [];
+    public static readonly string[] RequiredPermissionGrantScopes = BlueprintOperationScopes.ToArray();
 
     /// <summary>
     /// Additional scopes for S2S app role assignment calls in BatchPermissionsOrchestrator.
