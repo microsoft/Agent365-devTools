@@ -110,16 +110,14 @@ public static class EndpointHelper
     public static string GetCreateEndpointUrl(string environment)
     {
         // Check for custom endpoint in environment variable first
-        var customEndpoint = Environment.GetEnvironmentVariable($"A365_CREATE_ENDPOINT_{environment?.ToUpper()}");
+        var customEndpoint = Environment.GetEnvironmentVariable(
+            $"A365_CREATE_ENDPOINT_{ConfigConstants.NormalizeEnvironmentKey(environment)}");
         if (!string.IsNullOrEmpty(customEndpoint))
             return customEndpoint;
 
-        // Default to production endpoint
-        return environment?.ToLower() switch
-        {
-            "prod" => ConfigConstants.ProductionCreateEndpointUrl,
-            _ => ConfigConstants.ProductionCreateEndpointUrl
-        };
+        return ConfigConstants.BuildAgent365ToolsEndpointUrl(
+            environment,
+            ConfigConstants.CreateAgentBlueprintPath);
     }
 
     /// <summary>
@@ -128,16 +126,14 @@ public static class EndpointHelper
     public static string GetDeleteEndpointUrl(string environment)
     {
         // Check for custom endpoint in environment variable first
-        var customEndpoint = Environment.GetEnvironmentVariable($"A365_DELETE_ENDPOINT_{environment?.ToUpper()}");
+        var customEndpoint = Environment.GetEnvironmentVariable(
+            $"A365_DELETE_ENDPOINT_{ConfigConstants.NormalizeEnvironmentKey(environment)}");
         if (!string.IsNullOrEmpty(customEndpoint))
             return customEndpoint;
 
-        // Default to production endpoint
-        return environment?.ToLower() switch
-        {
-            "prod" => ConfigConstants.ProductionDeleteEndpointUrl,
-            _ => ConfigConstants.ProductionDeleteEndpointUrl
-        };
+        return ConfigConstants.BuildAgent365ToolsEndpointUrl(
+            environment,
+            ConfigConstants.DeleteAgentBlueprintPath);
     }
 
     /// <summary>
@@ -146,7 +142,8 @@ public static class EndpointHelper
     public static string GetDeploymentEnvironment(string environment)
     {
         // Check for custom deployment environment in environment variable first
-        var customDeploymentEnvironment = Environment.GetEnvironmentVariable($"A365_DEPLOYMENT_ENVIRONMENT_{environment?.ToUpper()}");
+        var customDeploymentEnvironment = Environment.GetEnvironmentVariable(
+            $"A365_DEPLOYMENT_ENVIRONMENT_{ConfigConstants.NormalizeEnvironmentKey(environment)}");
         if (!string.IsNullOrEmpty(customDeploymentEnvironment))
             return customDeploymentEnvironment;
 
@@ -164,7 +161,8 @@ public static class EndpointHelper
     public static string GetClusterCategory(string environment)
     {
         // Check for custom cluster category in environment variable first
-        var customClusterCategory = Environment.GetEnvironmentVariable($"A365_CLUSTER_CATEGORY_{environment?.ToUpper()}");
+        var customClusterCategory = Environment.GetEnvironmentVariable(
+            $"A365_CLUSTER_CATEGORY_{ConfigConstants.NormalizeEnvironmentKey(environment)}");
         if (!string.IsNullOrEmpty(customClusterCategory))
             return customClusterCategory;
 

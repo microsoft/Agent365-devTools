@@ -174,12 +174,14 @@ public class AzRestS2SRunnerTests
             .Returns(Task.FromResult(new CommandResult { ExitCode = 0 }));
 
         var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
-            _executor, BlueprintSpId, new[] { ObsSpec() }, _logger, ct: default);
+            _executor, BlueprintSpId, new[] { ObsSpec() }, _logger,
+            ct: default, graphBaseUrl: "https://graph.example");
 
         attempted.Should().BeTrue();
         succeeded.Should().BeTrue();
         await _executor.Received().ExecuteAsync(
-            "az", Arg.Is<string>(s => s.Contains("--method POST") && s.Contains($"/servicePrincipals/{BlueprintSpId}/appRoleAssignments")),
+            "az", Arg.Is<string>(s => s.Contains("https://graph.example/v1.0")
+                && s.Contains("--method POST") && s.Contains($"/servicePrincipals/{BlueprintSpId}/appRoleAssignments")),
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 

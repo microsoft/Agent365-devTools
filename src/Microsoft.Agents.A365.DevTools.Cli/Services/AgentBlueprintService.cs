@@ -547,7 +547,18 @@ public class AgentBlueprintService
                      ?? new List<string>();
         if (appIds.Count == 0) return result;
 
-        var blueprintSpObjectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, blueprintAppId, ct, requiredScopes);
+        var blueprintLookup = await _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+            tenantId,
+            blueprintAppId,
+            ct,
+            GraphAuthenticationMode.Ambient);
+        if (!blueprintLookup.IsSuccess)
+        {
+            throw new InvalidOperationException(
+                $"Microsoft Graph could not look up the blueprint service principal for app ID '{blueprintAppId}': {blueprintLookup.FailureReason}");
+        }
+
+        var blueprintSpObjectId = blueprintLookup.ServicePrincipalId;
         if (string.IsNullOrWhiteSpace(blueprintSpObjectId))
         {
             _logger.LogWarning("Blueprint service principal not found for app ID {BlueprintAppId} — cannot enumerate granted permissions.", blueprintAppId);
@@ -556,10 +567,12 @@ public class AgentBlueprintService
 
         // One bulk fetch each — by resource SP object ID, not by app ID, so we'll need a resolution table.
         var delegatedByResourceSpId = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        var allGrants = await _graphApiService.GetOauth2PermissionGrantsAsync(tenantId, blueprintSpObjectId, ct);
+        var allGrants = await _graphApiService.GetOauth2PermissionGrantsAsync(
+            tenantId,
+            blueprintSpObjectId,
+            ct);
         foreach (var (resourceSpId, scope, _) in allGrants)
         {
-            if (string.IsNullOrWhiteSpace(resourceSpId)) continue;
             if (!delegatedByResourceSpId.TryGetValue(resourceSpId, out var list))
             {
                 list = new List<string>();
@@ -571,31 +584,75 @@ public class AgentBlueprintService
         }
 
         var appRoleIdsByResourceSpId = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        using (var assignmentsDoc = await _graphApiService.GraphGetAsync(
-            tenantId, $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments", ct, scopes: requiredScopes))
+        var assignmentsResponse = await _graphApiService.GraphGetWithResponseAsync(
+            tenantId,
+            $"/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
+            ct: ct,
+            authenticationMode: GraphAuthenticationMode.Ambient);
+        using (var assignmentsDoc = assignmentsResponse.Json)
         {
-            if (assignmentsDoc != null &&
-                assignmentsDoc.RootElement.TryGetProperty("value", out var assignmentsArr) &&
-                assignmentsArr.ValueKind == JsonValueKind.Array)
+            if (!assignmentsResponse.IsSuccess)
             {
-                foreach (var assignment in assignmentsArr.EnumerateArray())
+                var status = assignmentsResponse.StatusCode > 0
+                    ? $"HTTP {assignmentsResponse.StatusCode} {assignmentsResponse.ReasonPhrase}".TrimEnd()
+                    : assignmentsResponse.ReasonPhrase;
+                throw new InvalidOperationException(
+                    $"Microsoft Graph could not read app role assignments for blueprint service principal '{blueprintSpObjectId}': {status}.");
+            }
+
+            if (assignmentsDoc is null ||
+                assignmentsDoc.RootElement.ValueKind != JsonValueKind.Object ||
+                !assignmentsDoc.RootElement.TryGetProperty("value", out var assignmentsArr) ||
+                assignmentsArr.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidOperationException(
+                    $"Microsoft Graph returned an invalid app role assignments response for blueprint service principal '{blueprintSpObjectId}'.");
+            }
+
+            foreach (var assignment in assignmentsArr.EnumerateArray())
+            {
+                if (assignment.ValueKind != JsonValueKind.Object ||
+                    !assignment.TryGetProperty("resourceId", out var resourceIdElement) ||
+                    resourceIdElement.ValueKind != JsonValueKind.String ||
+                    !assignment.TryGetProperty("appRoleId", out var appRoleIdElement) ||
+                    appRoleIdElement.ValueKind != JsonValueKind.String)
                 {
-                    var resId = assignment.TryGetProperty("resourceId", out var r) ? r.GetString() : null;
-                    var roleId = assignment.TryGetProperty("appRoleId", out var ar) ? ar.GetString() : null;
-                    if (string.IsNullOrWhiteSpace(resId) || string.IsNullOrWhiteSpace(roleId)) continue;
-                    if (!appRoleIdsByResourceSpId.TryGetValue(resId, out var list))
-                    {
-                        list = new List<string>();
-                        appRoleIdsByResourceSpId[resId] = list;
-                    }
-                    list.Add(roleId);
+                    throw new InvalidOperationException(
+                        $"Microsoft Graph returned an invalid app role assignment for blueprint service principal '{blueprintSpObjectId}'.");
                 }
+
+                var resourceId = resourceIdElement.GetString()!;
+                var appRoleId = appRoleIdElement.GetString()!;
+                if (!Guid.TryParse(resourceId, out _) ||
+                    !Guid.TryParse(appRoleId, out _))
+                {
+                    throw new InvalidOperationException(
+                        $"Microsoft Graph returned an invalid app role assignment for blueprint service principal '{blueprintSpObjectId}'.");
+                }
+
+                if (!appRoleIdsByResourceSpId.TryGetValue(resourceId, out var list))
+                {
+                    list = new List<string>();
+                    appRoleIdsByResourceSpId[resourceId] = list;
+                }
+                list.Add(appRoleId);
             }
         }
 
         foreach (var resourceAppId in appIds)
         {
-            var resourceSpId = await _graphApiService.LookupServicePrincipalByAppIdAsync(tenantId, resourceAppId, ct, requiredScopes);
+            var resourceLookup = await _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                tenantId,
+                resourceAppId,
+                ct,
+                GraphAuthenticationMode.Ambient);
+            if (!resourceLookup.IsSuccess)
+            {
+                throw new InvalidOperationException(
+                    $"Microsoft Graph could not look up the resource service principal for app ID '{resourceAppId}': {resourceLookup.FailureReason}");
+            }
+
+            var resourceSpId = resourceLookup.ServicePrincipalId;
             if (string.IsNullOrWhiteSpace(resourceSpId))
             {
                 _logger.LogDebug("Resource SP not found for app ID {ResourceAppId} — granted permissions cannot be enumerated.", resourceAppId);
@@ -613,18 +670,56 @@ public class AgentBlueprintService
                 // role IDs fall back to a "<role-id>" placeholder so the operator can still see them.
                 var roleIdSet = new HashSet<string>(roleIds, StringComparer.OrdinalIgnoreCase);
                 var nameById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                using var resourceSpDoc = await _graphApiService.GraphGetAsync(
-                    tenantId, $"/v1.0/servicePrincipals/{resourceSpId}?$select=appRoles", ct, scopes: requiredScopes);
-                if (resourceSpDoc != null &&
-                    resourceSpDoc.RootElement.TryGetProperty("appRoles", out var rolesEl) &&
-                    rolesEl.ValueKind == JsonValueKind.Array)
+                var roleMetadataResponse = await _graphApiService.GraphGetWithResponseAsync(
+                    tenantId,
+                    $"/v1.0/servicePrincipals/{resourceSpId}?$select=appRoles",
+                    ct: ct,
+                    authenticationMode: GraphAuthenticationMode.Ambient);
+                using var resourceSpDoc = roleMetadataResponse.Json;
+                if (!roleMetadataResponse.IsSuccess)
                 {
-                    foreach (var role in rolesEl.EnumerateArray())
+                    var status = roleMetadataResponse.StatusCode > 0
+                        ? $"HTTP {roleMetadataResponse.StatusCode} {roleMetadataResponse.ReasonPhrase}".TrimEnd()
+                        : roleMetadataResponse.ReasonPhrase;
+                    throw new InvalidOperationException(
+                        $"Microsoft Graph could not read app role metadata for resource service principal '{resourceSpId}': {status}.");
+                }
+
+                if (resourceSpDoc is null ||
+                    resourceSpDoc.RootElement.ValueKind != JsonValueKind.Object ||
+                    !resourceSpDoc.RootElement.TryGetProperty("appRoles", out var rolesEl) ||
+                    rolesEl.ValueKind != JsonValueKind.Array)
+                {
+                    throw new InvalidOperationException(
+                        $"Microsoft Graph returned invalid app role metadata for resource service principal '{resourceSpId}'.");
+                }
+
+                foreach (var role in rolesEl.EnumerateArray())
+                {
+                    if (role.ValueKind != JsonValueKind.Object ||
+                        !role.TryGetProperty("id", out var idElement) ||
+                        idElement.ValueKind != JsonValueKind.String ||
+                        !role.TryGetProperty("value", out var valueElement) ||
+                        (valueElement.ValueKind != JsonValueKind.String &&
+                         valueElement.ValueKind != JsonValueKind.Null))
                     {
-                        var id = role.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
-                        var name = role.TryGetProperty("value", out var valEl) ? valEl.GetString() : null;
-                        if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(name))
-                            nameById[id] = name;
+                        throw new InvalidOperationException(
+                            $"Microsoft Graph returned invalid app role metadata for resource service principal '{resourceSpId}'.");
+                    }
+
+                    var roleId = idElement.GetString()!;
+                    if (!Guid.TryParse(roleId, out _))
+                    {
+                        throw new InvalidOperationException(
+                            $"Microsoft Graph returned invalid app role metadata for resource service principal '{resourceSpId}'.");
+                    }
+
+                    var roleValue = valueElement.ValueKind == JsonValueKind.String
+                        ? valueElement.GetString()
+                        : null;
+                    if (!string.IsNullOrWhiteSpace(roleValue))
+                    {
+                        nameById[roleId] = roleValue;
                     }
                 }
                 appRoleNames = roleIdSet

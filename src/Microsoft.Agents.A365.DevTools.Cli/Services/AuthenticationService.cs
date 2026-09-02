@@ -27,7 +27,8 @@ public interface IAuthenticationService
         IEnumerable<string>? scopes = null,
         bool useInteractiveBrowser = true,
         string? userId = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? authorityHost = null);
 
     Task<string?> ResolveLoginHintFromCacheAsync();
 
@@ -118,14 +119,18 @@ public class AuthenticationService : IAuthenticationService
         IEnumerable<string>? scopes = null,
         bool useInteractiveBrowser = true,
         string? userId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? authorityHost = null)
     {
         // Access tokens are no longer cached to disk by this service. Token persistence and
         // silent re-acquisition are delegated entirely to the OS-protected MSAL persistent cache
         // (managed by MsalBrowserCredential). When forceRefresh is requested, the underlying
         // credential is configured to bypass MSAL's silent cache and acquire a fresh token.
         _logger.LogDebug("Authentication required for Agent 365 Tools");
-        var token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, forceRefresh: forceRefresh, ct: ct);
+        var token = await AuthenticateInteractivelyAsync(
+            resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser,
+            loginHint: userId, forceRefresh: forceRefresh, ct: ct,
+            authorityHost: authorityHost);
 
         // Self-heal: validate the tid claim in the returned JWT against the requested tenant.
         // WAM may silently select a cached work account from a different tenant when multiple
@@ -147,7 +152,10 @@ public class AuthenticationService : IAuthenticationService
                 await ClearMsalCacheAsync();
                 // Retry once with the same parameters — MSAL disk cache is now empty so WAM
                 // gets a clean slate and will either pick the correct account or prompt.
-                token = await AuthenticateInteractivelyAsync(resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser, loginHint: userId, forceRefresh: forceRefresh, ct: ct);
+                token = await AuthenticateInteractivelyAsync(
+                    resourceUrl, tenantId, clientId, scopes, useInteractiveBrowser,
+                    loginHint: userId, forceRefresh: forceRefresh, ct: ct,
+                    authorityHost: authorityHost);
                 var retryTid = JwtHelper.TryDecodeClaim(token.AccessToken, "tid");
                 if (!string.IsNullOrWhiteSpace(retryTid) &&
                     !string.Equals(retryTid, tenantId, StringComparison.OrdinalIgnoreCase))
@@ -195,7 +203,8 @@ public class AuthenticationService : IAuthenticationService
         bool useInteractiveBrowser = false,
         string? loginHint = null,
         bool forceRefresh = false,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? authorityHost = null)
     {
         // Declare variables outside try block so they're available in catch for logging
         string effectiveTenantId = tenantId ?? "unknown";
@@ -274,14 +283,16 @@ public class AuthenticationService : IAuthenticationService
                 // Use MsalBrowserCredential which handles WAM on Windows and browser on other platforms
                 _logger.LogDebug("Using interactive authentication (browser/WAM)...");
 
-                credential = CreateBrowserCredential(effectiveClientId, effectiveTenantId, loginHint: loginHint, forceRefresh: forceRefresh);
+                credential = CreateBrowserCredentialForAuthority(
+                    effectiveClientId, effectiveTenantId, authorityHost, loginHint, forceRefresh);
             }
             else
             {
                 // Device code flow - works in all environments including SSH/remote sessions
                 _logger.LogDebug("Using device code authentication...");
                 _logger.LogDebug("Please sign in with your Microsoft account");
-                credential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
+                credential = CreateDeviceCodeCredentialForAuthority(
+                    effectiveClientId, effectiveTenantId, authorityHost);
             }
 
             var tokenRequestContext = new TokenRequestContext(scopes);
@@ -295,7 +306,8 @@ public class AuthenticationService : IAuthenticationService
                 _logger.LogWarning("Browser authentication is not supported on this platform, falling back to device code flow...");
                 _logger.LogDebug("Using device code authentication...");
                 _logger.LogDebug("Please sign in with your Microsoft account");
-                var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
+                var deviceCodeCredential = CreateDeviceCodeCredentialForAuthority(
+                    effectiveClientId, effectiveTenantId, authorityHost);
                 tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, ct);
             }
             _logger.LogDebug("Authentication successful!");
@@ -368,6 +380,7 @@ public class AuthenticationService : IAuthenticationService
     /// <param name="clientId">Optional client ID for authentication. If not provided, uses PowerShell client ID</param>
     /// <param name="userId">Optional UPN/email to pre-select the account for WAM and silent acquisition.
     /// When provided, WAM will target this identity instead of the first cached account.</param>
+    /// <param name="authorityHost">Optional OAuth authority host for sovereign cloud authentication.</param>
     /// <returns>Access token with the requested scopes</returns>
     public async Task<string> GetAccessTokenWithScopesAsync(
         string resourceAppId,
@@ -376,7 +389,8 @@ public class AuthenticationService : IAuthenticationService
         bool forceRefresh = false,
         string? clientId = null,
         bool useInteractiveBrowser = true,
-        string? userId = null)
+        string? userId = null,
+        string? authorityHost = null)
     {
         if (string.IsNullOrWhiteSpace(resourceAppId))
             throw new ArgumentException("Resource App ID cannot be empty", nameof(resourceAppId));
@@ -388,7 +402,15 @@ public class AuthenticationService : IAuthenticationService
             resourceAppId, string.Join(", ", scopes));
 
         // Delegate to the consolidated GetAccessTokenAsync method
-        return await GetAccessTokenAsync(resourceAppId, tenantId, forceRefresh, clientId, scopes, useInteractiveBrowser, userId);
+        return await GetAccessTokenAsync(
+            resourceAppId,
+            tenantId,
+            forceRefresh,
+            clientId,
+            scopes,
+            useInteractiveBrowser,
+            userId,
+            authorityHost: authorityHost);
     }
 
     /// <summary>
@@ -545,6 +567,18 @@ public class AuthenticationService : IAuthenticationService
     protected virtual TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null, bool forceRefresh = false)
         => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, loginHint: loginHint, forceRefresh: forceRefresh);
 
+    private TokenCredential CreateBrowserCredentialForAuthority(
+        string clientId, string tenantId, string? authorityHost, string? loginHint, bool forceRefresh)
+    {
+        var host = ConfigConstants.NormalizeAuthorityHost(authorityHost);
+        if (string.Equals(host, ConfigConstants.DefaultAuthorityHost, StringComparison.OrdinalIgnoreCase))
+            return CreateBrowserCredential(clientId, tenantId, loginHint, forceRefresh);
+
+        return new MsalBrowserCredential(
+            clientId, tenantId, redirectUri: null, _logger, authority: $"{host}/{tenantId}",
+            loginHint: loginHint, forceRefresh: forceRefresh);
+    }
+
     /// <summary>
     /// Creates a DeviceCodeCredential configured for interactive device code authentication.
     /// This flow works in all environments including SSH, remote sessions, and platforms where
@@ -552,12 +586,26 @@ public class AuthenticationService : IAuthenticationService
     /// Protected virtual to allow substitution in tests.
     /// </summary>
     protected virtual TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
+        => CreateDeviceCodeCredentialCore(clientId, tenantId, AzureAuthorityHosts.AzurePublicCloud);
+
+    private TokenCredential CreateDeviceCodeCredentialForAuthority(
+        string clientId, string tenantId, string? authorityHost)
+    {
+        var host = ConfigConstants.NormalizeAuthorityHost(authorityHost);
+        if (string.Equals(host, ConfigConstants.DefaultAuthorityHost, StringComparison.OrdinalIgnoreCase))
+            return CreateDeviceCodeCredential(clientId, tenantId);
+
+        return CreateDeviceCodeCredentialCore(clientId, tenantId, new Uri(host));
+    }
+
+    private DeviceCodeCredential CreateDeviceCodeCredentialCore(
+        string clientId, string tenantId, Uri authorityHost)
     {
         return new DeviceCodeCredential(new DeviceCodeCredentialOptions
         {
             TenantId = tenantId,
             ClientId = clientId,
-            AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+            AuthorityHost = authorityHost,
             TokenCachePersistenceOptions = new TokenCachePersistenceOptions
             {
                 Name = AuthenticationConstants.ApplicationName

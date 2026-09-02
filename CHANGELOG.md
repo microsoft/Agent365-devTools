@@ -15,7 +15,11 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option A — Entra portal** (no config files required):
 
 1. [Entra portal](https://entra.microsoft.com) > **App registrations** > select your **Blueprint** app > **API permissions**
-2. **Add a permission** > **APIs my organization uses** > search `9b975845-388f-4429-889e-eab1ef63949c`
+2. **Add a permission** > **APIs my organization uses** > search for the Observability app ID for your cloud:
+   - Commercial: `9b975845-388f-4429-889e-eab1ef63949c`
+   - GCC Moderate: `2c672ad5-b104-44ed-8069-bb68dd138546`
+   - GCC High: `009c6bd0-82e4-4466-95b3-4c996521f3d7`
+   - DoD: `a9e04047-c6a7-430b-a7ae-faf8f8eed1b7`
 3. **Delegated permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 4. Repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 5. **Grant admin consent for \<tenant\>** > confirm
@@ -59,6 +63,14 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- Setup now requests the required Graph scopes and stops safely when existing blueprint discovery is inconclusive, preventing duplicate blueprints after CLI permission changes.
+- GCC Moderate, GCC High, and DoD setup now grant permissions to each cloud's Observability service instead of the commercial service.
+- Cloud-specific Agent 365 discover endpoint overrides now also select the messaging endpoint create and delete hosts unless explicit overrides are set.
+- Repeated `publish --aiteammate` runs now preserve customized manifest names instead of restoring an overlong blueprint name.
+- Repeated `setup blueprint --agent-name` runs now reuse the stored valid client secret instead of creating duplicate credentials.
+- `a365 query-entra blueprint-scopes` and `inheritance` now report permission-grant read failures, and `a365 create-instance` now stops safely instead of continuing when existing grants cannot be read.
+- `setup requirements` now validates and repairs tenant-owned fallback CLI apps with the administrator bootstrap identity, preventing false "app not found" failures when the first-party CLI app is unavailable.
+- Cloud-specific Graph, authority, and Agent 365 Tools endpoint overrides now apply consistently across setup, consent, authentication, query, and create-instance flows for sovereign and custom clouds. (#478)
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
 - `setup all --authmode s2s` no longer prints spurious "Action Required" PowerShell steps when the agent identity already inherits its app roles from the blueprint, and now retries the grant automatically before falling back to manual steps (#460).

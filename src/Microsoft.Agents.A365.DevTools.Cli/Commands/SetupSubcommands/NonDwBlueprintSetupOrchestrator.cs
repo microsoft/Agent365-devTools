@@ -224,7 +224,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         if (roleCheck == Models.RoleCheckResult.DoesNotHaveRole)
         {
             ctx.Logger.LogWarning("Granting tenant-wide consent requires a tenant administrator. Setup will continue and may fail if these permissions are required at runtime.");
-            var url = Exceptions.ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+            var url = Exceptions.ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId, ctx.GraphApiService.AuthorityHost);
             if (!string.IsNullOrWhiteSpace(url))
             {
                 ctx.Logger.LogInformation("Share the following URL with a tenant administrator so they can grant consent:");
@@ -423,7 +423,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // IsNonDwBlueprintFlow=true was set at the top of this method; DisplaySetupSummary reads that
         // flag directly to pick the non-DW step layout and action-required content.
         ctx.Logger.LogInformation("");
-        SetupHelpers.DisplaySetupSummary(ctx.Results, ctx.Logger);
+        SetupHelpers.DisplaySetupSummary(ctx.Results, ctx.Logger, ctx.GraphApiService.GraphBaseUrl);
 
         return ctx.Results.HasErrors ? 1 : 0;
     }
@@ -746,7 +746,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Issue #460: Graph token lacks AppRoleAssignment.ReadWrite.All; retry via az rest (a GA's az token carries it) before PowerShell.
         ctx.Logger.LogDebug("S2S app role assignments on the agent identity could not be completed via the Graph API; falling back to az rest.");
         var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
-            ctx.Executor, agentIdentitySpObjectId, failedSpecs, ctx.Logger, ctx.CancellationToken);
+            ctx.Executor, agentIdentitySpObjectId, failedSpecs, ctx.Logger, ctx.CancellationToken, ctx.GraphApiService.GraphBaseUrl);
         if (attempted && succeeded)
         {
             using (ctx.Logger.Indent())

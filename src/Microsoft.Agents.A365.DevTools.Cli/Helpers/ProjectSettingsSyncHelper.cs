@@ -19,8 +19,6 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Helpers;
 /// </summary>
 public static class ProjectSettingsSyncHelper
 {
-    private const string DEFAULT_AUTHORITY_ENDPOINT = "https://login.microsoftonline.com";
-    private const string DEFAULT_USER_AUTHORIZATION_SCOPE = "https://graph.microsoft.com/.default";
     // Messaging Bot API Application GUID
     private const string DEFAULT_SERVICE_CONNECTION_SCOPE = $"{ConfigConstants.MessagingBotApiAppId}/.default";
 
@@ -459,7 +457,8 @@ public static class ProjectSettingsSyncHelper
 
         var agenticSettings = RequireObj(agentic, "Settings");
         agenticSettings["AlternateBlueprintConnectionName"] = "ServiceConnection";
-        var uaScopes = new JsonArray(DEFAULT_USER_AUTHORIZATION_SCOPE);
+        var userAuthorizationScope = GetUserAuthorizationScope(pkgConfig);
+        var uaScopes = new JsonArray(userAuthorizationScope);
         agenticSettings["Scopes"] = uaScopes;
         
         // -- Connections --
@@ -470,7 +469,7 @@ public static class ProjectSettingsSyncHelper
         
         if (!string.IsNullOrWhiteSpace(pkgConfig.TenantId))
         {
-            var authority = $"{DEFAULT_AUTHORITY_ENDPOINT}/{pkgConfig.TenantId}";
+            var authority = $"{ConfigConstants.GetAuthorityHost(pkgConfig.Environment, pkgConfig.AuthorityHost)}/{pkgConfig.TenantId}";
             svcSettings["AuthorityEndpoint"] = authority;
         }
 
@@ -579,7 +578,7 @@ public static class ProjectSettingsSyncHelper
         Set("AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__ALT_BLUEPRINT_NAME",
             "SERVICE_CONNECTION");
         Set("AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__SCOPES",
-            DEFAULT_USER_AUTHORIZATION_SCOPE);
+            GetUserAuthorizationScope(pkgConfig));
 
         // --- ConnectionsMap[0] ---
         Set("CONNECTIONSMAP__0__SERVICEURL", "*");
@@ -651,7 +650,7 @@ public static class ProjectSettingsSyncHelper
 
         // --- AgenticAuthentication Options ---
         Set("agentic_altBlueprintConnectionName", "service_connection");
-        Set("agentic_scopes", DEFAULT_USER_AUTHORIZATION_SCOPE);
+        Set("agentic_scopes", GetUserAuthorizationScope(pkgConfig));
         Set("agentic_connectionName", "AgenticAuthConnection");
 
         // --- Agent365 Observability ---
@@ -693,5 +692,11 @@ public static class ProjectSettingsSyncHelper
             return $"\"{escaped}\"";
         }
         return value;
+    }
+
+    private static string GetUserAuthorizationScope(Agent365Config pkgConfig)
+    {
+        var graphBaseUrl = ConfigConstants.GetGraphBaseUrl(pkgConfig.Environment, pkgConfig.GraphBaseUrl);
+        return $"{graphBaseUrl}/.default";
     }
 }

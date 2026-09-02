@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
+using System.Text.Json.Nodes;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
@@ -169,6 +170,75 @@ public class PublishCommandTests : IDisposable
 
             exitCode.Should().Be(0);
             _logger.Received().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("EXCEEDS 30 chars")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task PublishCommand_WithCustomizedManifestNames_PreservesNamesAndPackagesThem()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var manifestDir = Path.Combine(tempDir, "manifest");
+        Directory.CreateDirectory(manifestDir);
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(manifestDir, "manifest.json"),
+                """
+                {
+                  "id": "old-id",
+                  "name": {
+                    "short": "Custom Short Name",
+                    "full": "Custom Full Name"
+                  }
+                }
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(manifestDir, "agenticUserTemplateManifest.json"),
+                "{\"agentIdentityBlueprintId\":\"old-id\"}");
+
+            _configService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(new Agent365Config
+            {
+                AgentBlueprintId = "test-blueprint-id",
+                AgentBlueprintDisplayName = "This Blueprint Display Name Is Longer Than Thirty Characters",
+                TenantId = "test-tenant",
+                DeploymentProjectPath = tempDir
+            });
+
+            var root = new RootCommand();
+            root.AddCommand(PublishCommand.CreateCommand(_logger, _configService, _manifestTemplateService));
+
+            var exitCode = await root.InvokeAsync("publish");
+
+            exitCode.Should().Be(0, because: "a customized manifest should remain publishable on subsequent runs");
+            var savedManifest = JsonNode.Parse(
+                await File.ReadAllTextAsync(Path.Combine(manifestDir, "manifest.json")))!;
+            savedManifest["name"]!["short"]!.GetValue<string>().Should().Be(
+                "Custom Short Name",
+                because: "publish must not overwrite a user-customized short name with an invalid blueprint display name");
+            savedManifest["name"]!["full"]!.GetValue<string>().Should().Be(
+                "Custom Full Name",
+                because: "publish must preserve the user-facing full name customized in the manifest");
+
+            using var archive = System.IO.Compression.ZipFile.OpenRead(Path.Combine(manifestDir, "manifest.zip"));
+            var manifestEntry = archive.GetEntry("manifest.json");
+            manifestEntry.Should().NotBeNull(because: "the published package must contain the customized manifest");
+            using var reader = new StreamReader(manifestEntry!.Open());
+            var packagedManifest = JsonNode.Parse(await reader.ReadToEndAsync())!;
+            packagedManifest["name"]!["short"]!.GetValue<string>().Should().Be(
+                "Custom Short Name",
+                because: "the package must contain the preserved valid short name");
+
+            _logger.DidNotReceive().Log(
                 LogLevel.Warning,
                 Arg.Any<EventId>(),
                 Arg.Is<object>(o => o.ToString()!.Contains("EXCEEDS 30 chars")),

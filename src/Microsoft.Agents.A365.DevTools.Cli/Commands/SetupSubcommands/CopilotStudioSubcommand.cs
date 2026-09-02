@@ -99,10 +99,7 @@ internal static class CopilotStudioSubcommand
             }
 
             // Configure GraphApiService with custom client app ID if available
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
+            graphApiService.ConfigureCloudEndpoints(setupConfig);
 
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,

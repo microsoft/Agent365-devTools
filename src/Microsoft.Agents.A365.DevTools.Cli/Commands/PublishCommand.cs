@@ -221,6 +221,8 @@ public class PublishCommand
 
                 var updatedManifest = await UpdateManifestFileAsync(displayName, blueprintId, manifestPath);
                 var updatedAgenticUserManifest = await UpdateAgenticUserManifestTemplateFileAsync(blueprintId, agenticUserManifestPath);
+                var updatedManifestNode = JsonNode.Parse(updatedManifest);
+                var shortName = updatedManifestNode?["name"]?["short"]?.GetValue<string>();
 
                 if (dryRun)
                 {
@@ -238,12 +240,12 @@ public class PublishCommand
                 logger.LogInformation("Customize before packaging:");
                 logger.LogInformation("  version              - increment for republishing (e.g., 1.0.1), must be higher than previous");
 
-                if (string.IsNullOrWhiteSpace(displayName))
+                if (string.IsNullOrWhiteSpace(shortName))
                     logger.LogWarning("  name.short           - not set; edit manifest.json to provide a short name (30 chars max) before packaging");
-                else if (displayName.Length > 30)
-                    logger.LogWarning("  name.short           - EXCEEDS 30 chars ({Length}), currently: \"{Name}\" -- shorten before packaging", displayName.Length, displayName);
+                else if (shortName.Length > 30)
+                    logger.LogWarning("  name.short           - EXCEEDS 30 chars ({Length}), currently: \"{Name}\" -- shorten before packaging", shortName.Length, shortName);
                 else
-                    logger.LogInformation("  name.short           - 30 chars max, currently: \"{Name}\"", displayName);
+                    logger.LogInformation("  name.short           - 30 chars max, currently: \"{Name}\"", shortName);
 
                 logger.LogInformation("  name.full            - displayed in Microsoft 365");
                 logger.LogInformation("  description.short    - 1-2 sentences");
@@ -340,8 +342,8 @@ public class PublishCommand
                 node["name"] = nameObj;
             }
 
-            nameObj["short"] = displayName;
-            nameObj["full"] = displayName;
+            SetManifestNameDefault(nameObj, "short", "Your Agent Name", displayName);
+            SetManifestNameDefault(nameObj, "full", "Your Agent Full Name", displayName);
         }
 
         if (node["bots"] is JsonArray bots && bots.Count > 0 && bots[0] is JsonObject botObj)
@@ -357,6 +359,24 @@ public class PublishCommand
             ceObj["id"] = blueprintId;
 
         return node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static void SetManifestNameDefault(
+        JsonObject name,
+        string propertyName,
+        string templateValue,
+        string displayName)
+    {
+        var currentValue = name[propertyName] is JsonValue valueNode &&
+            valueNode.TryGetValue<string>(out var value)
+                ? value
+                : null;
+
+        if (string.IsNullOrWhiteSpace(currentValue) ||
+            string.Equals(currentValue, templateValue, StringComparison.Ordinal))
+        {
+            name[propertyName] = displayName;
+        }
     }
 
     private static async Task<string> UpdateAgenticUserManifestTemplateFileAsync(string blueprintId, string agenticUserManifestPath)

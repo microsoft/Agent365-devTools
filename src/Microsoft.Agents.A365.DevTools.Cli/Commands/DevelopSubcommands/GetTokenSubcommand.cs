@@ -139,7 +139,7 @@ internal static class GetTokenSubcommand
                 }
 
                 // Determine environment
-                var environment = setupConfig?.Environment ?? "prod";
+                var environment = ResolveEnvironment(setupConfig);
 
                 // Resolve resource app ID
                 string resourceAppId;
@@ -283,7 +283,10 @@ internal static class GetTokenSubcommand
                 forceRefresh,
                 clientAppId,
                 useInteractiveBrowser: !useDeviceCode,
-                userId: loginHint);
+                userId: loginHint,
+                authorityHost: ConfigConstants.GetAuthorityHost(
+                    ResolveEnvironment(setupConfig),
+                    setupConfig?.AuthorityHost));
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -394,7 +397,7 @@ internal static class GetTokenSubcommand
 
         logger.LogInformation("");
 
-        var tokenAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig?.Environment ?? "prod");
+        var tokenAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(ResolveEnvironment(setupConfig));
         var scopesByAudience = await ManifestHelper.GetScopesByAudienceAsync(manifestPath, resolvedAtgAppId: tokenAtgAppId);
         var serverNamesByAudience = await ManifestHelper.GetServerNamesByAudienceAsync(manifestPath, resolvedAtgAppId: tokenAtgAppId);
 
@@ -454,6 +457,11 @@ internal static class GetTokenSubcommand
             return setupConfig.ClientAppId;
         throw new InvalidOperationException("No client application ID specified. Use --app-id or ensure ClientAppId is set in config.");
     }
+
+    private static string ResolveEnvironment(Agent365Config? setupConfig) =>
+        setupConfig?.Environment
+        ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT")
+        ?? "prod";
 
     private static async Task SaveAndReportTokenAsync(
         string token,

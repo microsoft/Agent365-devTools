@@ -16,8 +16,8 @@ public enum GraphAuthenticationMode
 
     /// <summary>
     /// Force the ambient bootstrap identity, ignoring the resolved client app and any requested
-    /// scopes. Required when probing whether a client app exists: authenticating as the app being
-    /// probed makes its own absence unverifiable.
+    /// scopes. Required when reading or repairing a client app registration so an underconfigured
+    /// app does not need to authorize its own diagnosis.
     /// </summary>
     Ambient = 1
 }

@@ -1858,6 +1858,125 @@ public class BlueprintSubcommandTests
         }
     }
 
+    [Fact]
+    public void RestoreExistingBlueprintSecret_WhenResolvedBlueprintMatches_ReusesStoredSecret()
+    {
+        var setupConfig = new Agent365Config();
+        var generatedConfig = new JsonObject
+        {
+            ["agentBlueprintId"] = "BLUEPRINT-ID",
+            ["agentBlueprintClientSecret"] = "stored-secret",
+            ["agentBlueprintClientSecretProtected"] = true
+        };
+
+        BlueprintSubcommand.RestoreExistingBlueprintSecret(
+            setupConfig,
+            generatedConfig,
+            "blueprint-id",
+            _mockLogger);
+
+        setupConfig.AgentBlueprintClientSecret.Should().Be(
+            "stored-secret",
+            because: "an idempotent setup run must validate and reuse the credential stored for the existing blueprint");
+        setupConfig.AgentBlueprintClientSecretProtected.Should().BeTrue(
+            because: "the stored protection mode is required to validate the existing credential");
+    }
+
+    [Fact]
+    public void RestoreExistingBlueprintSecret_WhenResolvedBlueprintDiffers_DoesNotReuseStoredSecret()
+    {
+        var setupConfig = new Agent365Config();
+        var generatedConfig = new JsonObject
+        {
+            ["agentBlueprintId"] = "different-blueprint-id",
+            ["agentBlueprintClientSecret"] = "stored-secret",
+            ["agentBlueprintClientSecretProtected"] = false
+        };
+
+        BlueprintSubcommand.RestoreExistingBlueprintSecret(
+            setupConfig,
+            generatedConfig,
+            "resolved-blueprint-id",
+            _mockLogger);
+
+        setupConfig.AgentBlueprintClientSecret.Should().BeNull(
+            because: "a credential must never be reused for a different blueprint");
+    }
+
+    [Fact]
+    public void RestoreExistingBlueprintSecret_WhenSetupConfigAlreadyHasSecret_PreservesResolvedValue()
+    {
+        var setupConfig = new Agent365Config
+        {
+            AgentBlueprintClientSecret = "resolved-secret",
+            AgentBlueprintClientSecretProtected = false
+        };
+        var generatedConfig = new JsonObject
+        {
+            ["agentBlueprintId"] = "blueprint-id",
+            ["agentBlueprintClientSecret"] = "stored-secret",
+            ["agentBlueprintClientSecretProtected"] = true
+        };
+
+        BlueprintSubcommand.RestoreExistingBlueprintSecret(
+            setupConfig,
+            generatedConfig,
+            "blueprint-id",
+            _mockLogger);
+
+        setupConfig.AgentBlueprintClientSecret.Should().Be(
+            "resolved-secret",
+            because: "an explicitly resolved credential takes precedence over generated state");
+        setupConfig.AgentBlueprintClientSecretProtected.Should().BeFalse(
+            because: "the protection flag must remain paired with the resolved credential");
+    }
+
+    [Fact]
+    public void RestoreExistingBlueprintSecret_WhenProtectionFlagIsMissing_TreatsStoredSecretAsPlaintext()
+    {
+        var setupConfig = new Agent365Config();
+        var generatedConfig = new JsonObject
+        {
+            ["agentBlueprintId"] = "blueprint-id",
+            ["agentBlueprintClientSecret"] = "stored-secret"
+        };
+
+        BlueprintSubcommand.RestoreExistingBlueprintSecret(
+            setupConfig,
+            generatedConfig,
+            "blueprint-id",
+            _mockLogger);
+
+        setupConfig.AgentBlueprintClientSecret.Should().Be(
+            "stored-secret",
+            because: "generated configurations created before the protection flag was added may contain plaintext secrets");
+        setupConfig.AgentBlueprintClientSecretProtected.Should().BeFalse(
+            because: "a missing protection flag represents the legacy plaintext storage format");
+    }
+
+    [Fact]
+    public void RestoreExistingBlueprintSecret_WhenStoredBlueprintIdIsNotAString_DoesNotReuseStoredSecret()
+    {
+        var setupConfig = new Agent365Config();
+        var generatedConfig = new JsonObject
+        {
+            ["agentBlueprintId"] = 42,
+            ["agentBlueprintClientSecret"] = "stored-secret",
+            ["agentBlueprintClientSecretProtected"] = false
+        };
+
+        var act = () => BlueprintSubcommand.RestoreExistingBlueprintSecret(
+            setupConfig,
+            generatedConfig,
+            "blueprint-id",
+            _mockLogger);
+
+        act.Should().NotThrow(
+            because: "malformed generated state must not crash an idempotent setup run");
+        setupConfig.AgentBlueprintClientSecret.Should().BeNull(
+            because: "a credential cannot be safely associated with a malformed blueprint identifier");
+    }
+
     #endregion
 
     #region Ownership Check Tests

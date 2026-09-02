@@ -273,6 +273,33 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "when no consent URL is available the non-DW summary must fall back to the LogNonDwAdminConsentInstructions portal walkthrough so the user still has a recovery path");
     }
 
+    [Fact]
+    public void DisplaySetupSummary_NonDwGccAdminConsentPending_UsesGccObservabilityResource()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            ObservabilityResourceAppId = ConfigConstants.GccObservabilityApiAppId,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(ConfigConstants.GccObservabilityApiAppId,
+            because: "manual GCC recovery instructions must target the GCC Observability service");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
+            because: "manual GCC recovery instructions must not target the commercial Observability service");
+    }
+
     /// <summary>
     /// B2 regression — non-admin AID developer running `setup all` as OBO must see the consent URL
     /// surfaced as an action item. Pre-refactor, the orchestrator wrote a misleading

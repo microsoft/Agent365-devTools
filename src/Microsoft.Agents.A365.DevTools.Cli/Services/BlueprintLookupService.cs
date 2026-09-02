@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Extensions.Logging;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 
@@ -102,6 +103,7 @@ public class BlueprintLookupService
         string tenantId,
         string displayName,
         string signInAudience = "AzureADMultipleOrgs",
+        string? preferredObjectId = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -112,18 +114,37 @@ public class BlueprintLookupService
             var escapedDisplayName = displayName.Replace("'", "''");
             var filter = $"displayName eq '{escapedDisplayName}' and signInAudience eq '{signInAudience}'";
 
-            var doc = await _graphApiService.GraphGetAsync(
+            var response = await _graphApiService.GraphGetWithResponseAsync(
                 tenantId,
                 $"/beta/applications?$filter={Uri.EscapeDataString(filter)}",
-                cancellationToken);
+                scopes: [AuthenticationConstants.ApplicationReadAllScope],
+                ct: cancellationToken);
 
-            if (doc == null)
+            if (!response.IsSuccess)
             {
-                _logger.LogDebug("No blueprints found with displayName: {DisplayName}", displayName);
+                response.Json?.Dispose();
+                var errorMessage = $"Graph application lookup failed with HTTP {response.StatusCode} {response.ReasonPhrase}.";
+                _logger.LogDebug(
+                    "Blueprint lookup by displayName failed with HTTP {StatusCode} {ReasonPhrase}: {Body}",
+                    response.StatusCode,
+                    response.ReasonPhrase,
+                    response.Body);
                 return new BlueprintLookupResult
                 {
                     Found = false,
-                    LookupMethod = "displayName"
+                    LookupMethod = "displayName",
+                    ErrorMessage = errorMessage
+                };
+            }
+
+            using var doc = response.Json;
+            if (doc == null)
+            {
+                return new BlueprintLookupResult
+                {
+                    Found = false,
+                    LookupMethod = "displayName",
+                    ErrorMessage = "Graph application lookup returned an empty response."
                 };
             }
 
@@ -138,17 +159,44 @@ public class BlueprintLookupService
                 };
             }
 
-            // Take first match (if multiple exist, log warning)
-            var firstMatch = valueElement[0];
-            var objectId = firstMatch.GetProperty("id").GetString();
-            var appId = firstMatch.GetProperty("appId").GetString();
-            var foundDisplayName = firstMatch.GetProperty("displayName").GetString();
-
-            if (valueElement.GetArrayLength() > 1)
+            JsonElement? selectedMatch = null;
+            if (!string.IsNullOrWhiteSpace(preferredObjectId))
             {
-                _logger.LogWarning("Multiple blueprints found with displayName '{DisplayName}'. Using first match: {ObjectId}", 
-                    displayName, objectId);
+                foreach (var candidate in valueElement.EnumerateArray())
+                {
+                    if (string.Equals(
+                            candidate.GetProperty("id").GetString(),
+                            preferredObjectId,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        selectedMatch = candidate;
+                        break;
+                    }
+                }
             }
+
+            if (selectedMatch is null && valueElement.GetArrayLength() == 1)
+            {
+                selectedMatch = valueElement[0];
+            }
+
+            if (selectedMatch is null)
+            {
+                var errorMessage = string.IsNullOrWhiteSpace(preferredObjectId)
+                    ? $"Multiple blueprints were found with display name '{displayName}'."
+                    : $"Multiple blueprints were found with display name '{displayName}', but none matched the stored object ID '{preferredObjectId}'.";
+                _logger.LogWarning("{ErrorMessage}", errorMessage);
+                return new BlueprintLookupResult
+                {
+                    Found = false,
+                    LookupMethod = "displayName",
+                    ErrorMessage = errorMessage
+                };
+            }
+
+            var objectId = selectedMatch.Value.GetProperty("id").GetString();
+            var appId = selectedMatch.Value.GetProperty("appId").GetString();
+            var foundDisplayName = selectedMatch.Value.GetProperty("displayName").GetString();
 
             _logger.LogDebug("Found blueprint: {DisplayName} (ObjectId: {ObjectId}, AppId: {AppId})", 
                 foundDisplayName, objectId, appId);
@@ -162,6 +210,10 @@ public class BlueprintLookupService
                 LookupMethod = "displayName",
                 RequiresPersistence = true
             };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

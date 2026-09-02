@@ -1337,6 +1337,10 @@ public class CleanupCommand
             return null;
         }
 
+        var environment = await SetupHelpers.ResolveBootstrapEnvironmentAsync(
+            executor, logger, CancellationToken.None);
+        graphApiService?.ConfigureCloudEndpoints(new Agent365Config { Environment = environment });
+
         // Step 2: Resolve client app ID.
         // Prefer a365.config.json when it exists locally and its tenant matches the current tenant.
         // Otherwise prefer the first-party service principal, then the named custom-app fallback.
@@ -1423,6 +1427,9 @@ public class CleanupCommand
         {
             TenantId = tenantId,
             ClientAppId = clientAppId ?? string.Empty,
+            Environment = environment,
+            GraphBaseUrl = graphApiService?.GraphBaseUrl ?? ConfigConstants.GetGraphBaseUrl(environment),
+            AuthorityHost = graphApiService?.AuthorityHost ?? ConfigConstants.GetAuthorityHost(environment),
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = blueprintDisplayName,
             AgentDescription = agentName,

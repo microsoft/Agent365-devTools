@@ -177,10 +177,14 @@ public class SetupHelpersConsentUrlTests
     {
         var url = SetupHelpers.BuildCombinedConsentUrl(
             TenantId, BlueprintClientId,
-            new[] { "Mail.Send" }, new[] { "McpServers.Mail.All" });
+            new[] { "Mail.Send" }, new[] { "McpServers.Mail.All" },
+            graphResourceUri: "https://graph.example",
+            authorityHost: "https://login.example");
 
-        url.Should().StartWith($"https://login.microsoftonline.com/{TenantId}/v2.0/adminconsent");
+        url.Should().StartWith($"https://login.example/{TenantId}/v2.0/adminconsent");
         url.Should().Contain($"client_id={BlueprintClientId}");
+        url.Should().Contain(Uri.EscapeDataString("https://graph.example/Mail.Send"),
+            because: "Graph scopes in the consent URL must be fully-qualified resource URIs and URI-encoded — AAD rejects bare scope names or unencoded URIs in the adminconsent query string");
         url.Should().Contain($"redirect_uri={Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri)}",
             because: "redirect_uri must be registered on the blueprint app — AADSTS500113 is returned if absent or unregistered");
     }
@@ -223,6 +227,26 @@ public class SetupHelpersConsentUrlTests
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
             because: "OtelWrite is the published delegated scope on the Observability API used for admin consent");
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
+    }
+
+    [Fact]
+    public void BuildCombinedConsentUrl_WithGccObservabilityResource_UsesGccAudience()
+    {
+        var url = SetupHelpers.BuildCombinedConsentUrl(
+            TenantId,
+            BlueprintClientId,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            observabilityResourceAppId: ConfigConstants.GccObservabilityApiAppId);
+
+        url.Should().Contain(
+            Uri.EscapeDataString(
+                $"api://{ConfigConstants.GccObservabilityApiAppId}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
+            because: "GCC admin consent must grant the OtelWrite scope on the GCC Observability resource");
+        url.Should().NotContain(
+            Uri.EscapeDataString(
+                $"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
+            because: "a GCC consent URL must not request the commercial Observability audience");
     }
 
     [Fact]

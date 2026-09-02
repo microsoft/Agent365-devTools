@@ -30,9 +30,15 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
                 .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = grantsJson }));
 
             var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var result = await AdminConsentHelper.PollAdminConsentAsync(executor, logger, "appId-1", "Test", 10, 1, cts.Token);
+            var result = await AdminConsentHelper.PollAdminConsentAsync(
+                executor, logger, "appId-1", "Test", 10, 1, cts.Token,
+                graphBaseUrl: "https://graph.example");
 
             result.Should().BeTrue();
+            await executor.Received(2).ExecuteAsync(
+                "az",
+                Arg.Is<string>(args => args.Contains("https://graph.example/v1.0", StringComparison.Ordinal)),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         }
 
         [Fact]
@@ -464,4 +470,3 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
         }
     }
 }
-

@@ -376,9 +376,10 @@ public class BatchPermissionsOrchestratorMissingSpTests
         // (first party token-to-self). This URL has the blueprint as the CLIENT and the
         // resource as the SCOPE target — a normal cross-app consent that Entra accepts.
         var spec = new ResourcePermissionSpec(TeamsMcpAppId, "Work IQ Teams MCP", new[] { "Tools.ListInvoke.All" }, SetInheritable: true);
-        var url = BatchPermissionsOrchestrator.BuildPerSpBlueprintConsentUrl(TenantId, BlueprintAppId, spec);
+        var url = BatchPermissionsOrchestrator.BuildPerSpBlueprintConsentUrl(
+            TenantId, BlueprintAppId, spec, authorityHost: "https://login.example");
 
-        url.Should().StartWith($"https://login.microsoftonline.com/{TenantId}/v2.0/adminconsent",
+        url.Should().StartWith($"https://login.example/{TenantId}/v2.0/adminconsent",
             because: "the per-SP recovery URL targets the v2 admin-consent endpoint scoped to the operator's tenant");
         url.Should().Contain($"client_id={BlueprintAppId}",
             because: "the BLUEPRINT must be the client so this is a normal cross-app consent — using the resource as client would hit AADSTS65003 token-to-self");

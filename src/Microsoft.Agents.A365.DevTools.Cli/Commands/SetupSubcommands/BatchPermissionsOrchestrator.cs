@@ -87,6 +87,13 @@ internal static class BatchPermissionsOrchestrator
         // Filter out specs with no scopes — they would produce empty OAuth2 grants (HTTP 400).
         // This can happen when the MCP manifest is missing or contains no required scopes.
         var effectiveSpecs = specs.Where(s => s.Scopes.Length > 0).ToList();
+        if (setupResults is not null)
+        {
+            setupResults.ObservabilityResourceAppId = effectiveSpecs
+                .FirstOrDefault(spec => ConfigConstants.IsObservabilityApiAppId(spec.ResourceAppId))
+                ?.ResourceAppId;
+        }
+
         if (effectiveSpecs.Count < specs.Count)
         {
             var skipped = specs.Count - effectiveSpecs.Count;
@@ -238,7 +245,7 @@ internal static class BatchPermissionsOrchestrator
                             {
                                 logger.LogDebug("S2S app role assignments could not be completed via the Graph API; falling back to az rest.");
                                 var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
-                                    commandExecutor, phase1Result.BlueprintSpObjectId, specs, logger, ct);
+                                    commandExecutor, phase1Result.BlueprintSpObjectId, specs, logger, ct, graph.GraphBaseUrl);
                                 if (attempted && succeeded)
                                 {
                                     logger.LogInformation("Application permissions granted.");
@@ -472,8 +479,12 @@ internal static class BatchPermissionsOrchestrator
     /// emit identical scope identifiers (e.g. <c>https://agent365.svc.cloud.microsoft/Tools.Execute</c>,
     /// not <c>api://{appId}/Tools.Execute</c>).
     /// </summary>
-    private static string BuildFullyQualifiedScope(string resourceAppId, string scope, bool isMcpAudience = false)
-        => SetupHelpers.BuildFullyQualifiedScope(resourceAppId, scope, isMcpAudience);
+    private static string BuildFullyQualifiedScope(
+        string resourceAppId, string scope, bool isMcpAudience = false,
+        string graphResourceUri = AuthenticationConstants.MicrosoftGraphResourceUri,
+        string? sharedMcpResourceAppId = null)
+        => SetupHelpers.BuildFullyQualifiedScope(
+            resourceAppId, scope, isMcpAudience, graphResourceUri, sharedMcpResourceAppId);
 
     /// <summary>
     /// Grants S2S app role assignments for all specs that carry <see cref="ResourcePermissionSpec.AppRoleScopes"/>.
@@ -656,16 +667,19 @@ internal static class BatchPermissionsOrchestrator
             ? specs.Where(s => resolvedSpAppIds.Contains(s.ResourceAppId)).ToList()
             : specs.ToList();
 
+        var sharedMcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
         var allScopes = specsForUrl
             .Where(s => s.Scopes is { Length: > 0 })
             .SelectMany(s => s.Scopes.Select(scope => BuildFullyQualifiedScope(
                 s.ResourceAppId, scope,
-                isMcpAudience: knownMcpAudienceAppIds?.Contains(s.ResourceAppId) ?? false)))
+                isMcpAudience: knownMcpAudienceAppIds?.Contains(s.ResourceAppId) ?? false,
+                graphResourceUri: graph.GraphBaseUrl,
+                sharedMcpResourceAppId: sharedMcpResourceAppId)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         string? consentUrl = allScopes.Count > 0
-            ? SetupHelpers.BuildAdminConsentUrl(tenantId, blueprintAppId, allScopes)
+            ? SetupHelpers.BuildAdminConsentUrl(tenantId, blueprintAppId, allScopes, graph.AuthorityHost)
             : null;
 
         // No delegated scopes to consent at all — nothing to do. The caller still surfaces
@@ -728,7 +742,8 @@ internal static class BatchPermissionsOrchestrator
                             ct,
                             consentType: "AllPrincipals",
                             blueprintSpObjectId: phase1Result.BlueprintSpObjectId,
-                            resourceSpObjectId: resourceSpId);
+                            resourceSpObjectId: resourceSpId,
+                            graphBaseUrl: graph.GraphBaseUrl);
                     }
                     else
                     {
@@ -802,7 +817,8 @@ internal static class BatchPermissionsOrchestrator
                 // longer holds since PR #409 removed that scope from the CLI client app registration.
                 var found = await AdminConsentHelper.PollAdminConsentAsync(
                     commandExecutor, logger, blueprintAppId,
-                    "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct);
+                    "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct,
+                    graphBaseUrl: graph.GraphBaseUrl);
                 consentVerified = found;
                 // Browser was opened regardless — either the grant was directly observed (Verified)
                 // or the timeout elapsed without observing it (AssumedComplete). Either way, setup
@@ -877,7 +893,7 @@ internal static class BatchPermissionsOrchestrator
             else
             {
                 var (attempted, succeeded) = await AzRestConsentRunner.TryRunAsync(
-                    commandExecutor, p.BlueprintSpObjectId, originalSpecs, logger, ct);
+                    commandExecutor, p.BlueprintSpObjectId, originalSpecs, logger, ct, graph.GraphBaseUrl);
                 if (attempted && succeeded)
                 {
                     logger.LogInformation("Delegated admin consent granted.");
@@ -911,11 +927,23 @@ internal static class BatchPermissionsOrchestrator
     /// Updates config.ResourceConsents in-memory for each spec based on phase results.
     /// The caller is responsible for persisting the config via configService.SaveStateAsync.
     /// </summary>
-    private static void UpdateResourceConsents(
+    internal static void UpdateResourceConsents(
         Agent365Config config,
         IReadOnlyList<ResourcePermissionSpec> specs,
         Dictionary<string, (bool configured, bool alreadyExisted)> inheritedResults)
     {
+        var configuredObservabilityAppIds = specs
+            .Where(spec => ConfigConstants.IsObservabilityApiAppId(spec.ResourceAppId))
+            .Select(spec => spec.ResourceAppId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (configuredObservabilityAppIds.Count > 0)
+        {
+            config.ResourceConsents.RemoveAll(resourceConsent =>
+                ConfigConstants.IsObservabilityApiAppId(resourceConsent.ResourceAppId) &&
+                !configuredObservabilityAppIds.Contains(resourceConsent.ResourceAppId));
+        }
+
         foreach (var spec in specs)
         {
             inheritedResults.TryGetValue(spec.ResourceAppId, out var inherited);
@@ -1054,7 +1082,7 @@ internal static class BatchPermissionsOrchestrator
                 "{Count} resource(s) require service principal provisioning. Auto-provisioning is disabled; steps will be listed in the setup summary.",
                 stillMissing.Count);
             foreach (var spec in stillMissing)
-                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds, graph.AuthorityHost);
             return;
         }
 
@@ -1102,7 +1130,7 @@ internal static class BatchPermissionsOrchestrator
                     logger.LogWarning(
                         "{Idx}. {Name} ({AppId}): skipping — resource app id is not a valid GUID.",
                         i + 1, spec.ResourceName, spec.ResourceAppId);
-                    RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                    RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds, graph.AuthorityHost);
                     continue;
                 }
 
@@ -1120,7 +1148,7 @@ internal static class BatchPermissionsOrchestrator
                     if (!shouldProvision)
                     {
                         logger.LogInformation("Skipped.");
-                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds, graph.AuthorityHost);
                         continue;
                     }
 
@@ -1136,7 +1164,7 @@ internal static class BatchPermissionsOrchestrator
                     {
                         var stderr = string.IsNullOrWhiteSpace(azResult.StandardError) ? azResult.StandardOutput : azResult.StandardError;
                         logger.LogWarning("Failed: {Error}", (stderr ?? string.Empty).Trim());
-                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds, graph.AuthorityHost);
                         continue;
                     }
 
@@ -1159,7 +1187,7 @@ internal static class BatchPermissionsOrchestrator
                         logger.LogWarning(
                             "az exited 0 but the output did not contain a service principal id. Output: {Output}",
                             (azResult.StandardOutput ?? string.Empty).Trim());
-                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds);
+                        RecordMissingSpAction(spec, tenantId, blueprintAppId, logger, setupResults, knownMcpAudienceAppIds, graph.AuthorityHost);
                     }
                 }
             }
@@ -1238,7 +1266,8 @@ internal static class BatchPermissionsOrchestrator
         string blueprintAppId,
         ILogger logger,
         SetupResults? setupResults,
-        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
+        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null,
+        string? authorityHost = null)
     {
         _ = logger; // intentionally unused — caller already emits a one-line inline marker
                     // ("Skipped." / "Failed: <error>" / "...invalid GUID...") immediately
@@ -1248,7 +1277,7 @@ internal static class BatchPermissionsOrchestrator
 
         var azCommand = BuildAzAdSpCreateCommand(spec.ResourceAppId);
         var isMcpAudience = knownMcpAudienceAppIds?.Contains(spec.ResourceAppId) ?? false;
-        var perSpConsentUrl = BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec, isMcpAudience);
+        var perSpConsentUrl = BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec, isMcpAudience, authorityHost);
 
         setupResults?.MissingSpActions.Add(new MissingSpAction(
             ResourceName: spec.ResourceName,
@@ -1270,14 +1299,16 @@ internal static class BatchPermissionsOrchestrator
         string tenantId,
         string blueprintAppId,
         ResourcePermissionSpec spec,
-        bool isMcpAudience = false)
+        bool isMcpAudience = false,
+        string? authorityHost = null)
     {
         var scopes = spec.Scopes ?? Array.Empty<string>();
         var fullyQualified = scopes
             .Select(s => $"{GetResourceUriForBlueprintConsent(spec.ResourceAppId, isMcpAudience)}/{s}");
         var scopeParam = string.Join("%20", fullyQualified.Select(Uri.EscapeDataString));
         var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
-        return $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent" +
+        var consentBaseUrl = ConfigConstants.BuildAdminConsentEndpointUrl(authorityHost, tenantId);
+        return consentBaseUrl +
                $"?client_id={blueprintAppId}" +
                $"&scope={scopeParam}" +
                $"&redirect_uri={redirectEncoded}" +

@@ -224,16 +224,26 @@ public class MicrosoftGraphTokenProviderTests
         var clientAppId = "87654321-4321-4321-4321-cba987654321";
         var msalToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWxsYWsifQ.signature";
 
+        string[]? requestedScopes = null;
         var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
         {
-            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(msalToken)
+            MsalTokenAcquirerOverride = (_, resolvedScopes, _, _) =>
+            {
+                requestedScopes = resolvedScopes;
+                return Task.FromResult<string?>(msalToken);
+            }
         };
 
         // Act
-        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
+        var token = await provider.GetMgGraphAccessTokenAsync(
+            tenantId, scopes, false, clientAppId, graphBaseUrl: "https://graph.example",
+            authorityHost: "https://login.example");
 
         // Assert
         token.Should().Be(msalToken);
+        requestedScopes.Should().Equal(
+            new[] { "https://graph.example/AgentIdentityBlueprint.DeleteRestore.All" },
+            because: "short scope names must be normalized to fully-qualified URIs by prepending the configured Graph base URL before being passed to MSAL");
         await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),

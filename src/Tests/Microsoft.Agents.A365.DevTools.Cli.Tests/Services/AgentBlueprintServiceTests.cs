@@ -243,6 +243,9 @@ public class AgentBlueprintServiceTests
     [Fact]
     public async Task GetBlueprintSpGrantsAsync_ReturnsScopesAndResolvedRoleNames()
     {
+        const string resourceSpId = "33333333-3333-3333-3333-333333333333";
+        const string appRoleId = "44444444-4444-4444-4444-444444444444";
+
         // Arrange — single resource with one delegated scope grant and one app role assignment on
         // the blueprint SP. The role assignment's appRoleId must be resolved to a human-readable
         // name via a lookup of the resource SP's appRoles array (the same shape Graph returns).
@@ -268,38 +271,123 @@ public class AgentBlueprintServiceTests
         // 2) GetOauth2PermissionGrantsAsync — one delegated grant for the resource
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { resourceId = "obs-sp-id", scope = "otel-write extra-scope", consentType = "AllPrincipals" } } }))
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { resourceId = resourceSpId, scope = "otel-write extra-scope", consentType = "AllPrincipals" } } }))
         });
         // 3) appRoleAssignments on the blueprint SP — one assignment for the resource
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { resourceId = "obs-sp-id", appRoleId = "role-guid-1" } } }))
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { resourceId = resourceSpId, appRoleId } } }))
         });
         // 4) LookupServicePrincipalByAppIdAsync(resourceAppId) -> resource SP id
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = "obs-sp-id" } } }))
+            Content = new StringContent(JsonSerializer.Serialize(new { value = new[] { new { id = resourceSpId } } }))
         });
         // 5) GET resource SP appRoles to resolve the role id to a human-readable name
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(new
             {
-                appRoles = new[] { new { id = "role-guid-1", value = "Agent365.Observability.OtelWrite" } }
+                appRoles = new[] { new { id = appRoleId, value = "Agent365.Observability.OtelWrite" } }
             }))
         });
 
         // Act
+        const string blueprintAppId = "11111111-1111-1111-1111-111111111111";
+        const string resourceAppId = "22222222-2222-2222-2222-222222222222";
+
         var grants = await service.GetBlueprintSpGrantsAsync(
-            "tid", "blueprint-app-id", new[] { "observability-app-id" });
+            "tid", blueprintAppId, new[] { resourceAppId });
 
         // Assert
-        grants.Should().ContainKey("observability-app-id");
-        var (delegatedScopes, appRoleNames) = grants["observability-app-id"];
+        grants.Should().ContainKey(resourceAppId);
+        var (delegatedScopes, appRoleNames) = grants[resourceAppId];
         delegatedScopes.Should().BeEquivalentTo(new[] { "extra-scope", "otel-write" },
             because: "the space-delimited Graph scope string must be split into individual scopes and returned sorted");
         appRoleNames.Should().BeEquivalentTo(new[] { "Agent365.Observability.OtelWrite" },
             because: "app role IDs must be resolved to their human-readable values via the resource SP's appRoles array");
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WithUnrelatedNullValuedRole_ResolvesAssignedRole()
+    {
+        const string resourceSpId = "33333333-3333-3333-3333-333333333333";
+        const string assignedRoleId = "44444444-4444-4444-4444-444444444444";
+        const string unrelatedRoleId = "55555555-5555-5555-5555-555555555555";
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "value": [
+                        { "resourceId": "{{resourceSpId}}", "appRoleId": "{{assignedRoleId}}" }
+                      ]
+                    }
+                    """)
+            });
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "resource-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = resourceSpId,
+                StatusCode = 200
+            });
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains($"/servicePrincipals/{resourceSpId}?$select=appRoles", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "appRoles": [
+                        { "id": "{{assignedRoleId}}", "value": "Assigned.Role" },
+                        { "id": "{{unrelatedRoleId}}", "value": null }
+                      ]
+                    }
+                    """)
+            });
+
+        var result = await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        result["resource-app-id"].AppRoleNames.Should().Equal(new[] { "Assigned.Role" },
+            because: "an unrelated app role with no value must not invalidate otherwise usable role metadata");
     }
 
     [Fact]
@@ -1149,10 +1237,15 @@ public class AgentBlueprintServiceTests
         result.Should().BeEmpty(
             because: "no resource app IDs means there's nothing to enumerate — the method must short-circuit to an empty dict");
 
-        await graph.DidNotReceive().LookupServicePrincipalByAppIdAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+        await graph.DidNotReceive().LookupServicePrincipalByAppIdWithResponseAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<GraphAuthenticationMode>());
         await graph.DidNotReceive().GetOauth2PermissionGrantsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -1163,9 +1256,16 @@ public class AgentBlueprintServiceTests
         // answer would otherwise come back empty without explanation.
         var (service, graph) = BuildServiceWithMockedGraph();
 
-        graph.LookupServicePrincipalByAppIdAsync(
-                "tenant-id", "blueprint-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns((string?)null);
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = 200
+            });
 
         var result = await service.GetBlueprintSpGrantsAsync(
             "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
@@ -1175,7 +1275,9 @@ public class AgentBlueprintServiceTests
 
         // No grant enumeration must occur after the SP lookup failed.
         await graph.DidNotReceive().GetOauth2PermissionGrantsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
 
         _mockLogger.Received().Log(
             LogLevel.Warning,
@@ -1183,6 +1285,235 @@ public class AgentBlueprintServiceTests
             Arg.Is<object>(o => o.ToString()!.Contains("Blueprint service principal not found")),
             Arg.Any<Exception>(),
             Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenBlueprintSpLookupFails_Throws()
+    {
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = 403,
+                FailureReason = "Microsoft Graph service-principal lookup failed: HTTP 403 Forbidden."
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*HTTP 403 Forbidden*",
+                because: "an unreadable blueprint lookup must not masquerade as a successfully absent service principal");
+        await graph.DidNotReceive().GetOauth2PermissionGrantsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenAppRoleAssignmentsReadFails_Throws()
+    {
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = false,
+                StatusCode = 403,
+                ReasonPhrase = "Forbidden"
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*app role assignments*HTTP 403 Forbidden*",
+                because: "a failed assignments read must remain distinct from a successful empty value array");
+        await graph.DidNotReceive().LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-id",
+            "resource-app-id",
+            Arg.Any<CancellationToken>(),
+            GraphAuthenticationMode.Ambient);
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenAppRoleAssignmentsTransportFails_ThrowsWithFailureReason()
+    {
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = false,
+                StatusCode = 0,
+                ReasonPhrase = "connection reset"
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        var exception = await act.Should().ThrowAsync<InvalidOperationException>(
+            because: "a transport failure while reading assignments must not be treated as a successful empty assignment list");
+        exception.Which.Message.Should().Contain("connection reset",
+            because: "the status-zero response reason is the only visible transport diagnostic");
+        exception.Which.Message.Should().NotContain("HTTP 0",
+            because: "no HTTP response exists when Graph reports status zero");
+        await graph.DidNotReceive().LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-id",
+            "resource-app-id",
+            Arg.Any<CancellationToken>(),
+            GraphAuthenticationMode.Ambient);
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenAppRoleAssignmentsShapeIsMalformed_Throws()
+    {
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Any<string>(),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc(@"{ ""value"": {} }")
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*invalid app role assignments response*",
+                because: "an unexpected successful response shape must not be treated as an empty assignments collection");
+    }
+
+    [Theory]
+    [InlineData("not-a-guid", "44444444-4444-4444-4444-444444444444")]
+    [InlineData("33333333-3333-3333-3333-333333333333", "not-a-guid")]
+    public async Task GetBlueprintSpGrantsAsync_WhenAppRoleAssignmentIdentifierIsNotGuid_Throws(
+        string resourceId,
+        string appRoleId)
+    {
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "value": [
+                        { "resourceId": "{{resourceId}}", "appRoleId": "{{appRoleId}}" }
+                      ]
+                    }
+                    """)
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*invalid app role assignment*",
+                because: "Graph app role assignment identifiers must be GUIDs rather than arbitrary non-empty strings");
+        await graph.DidNotReceive().LookupServicePrincipalByAppIdWithResponseAsync(
+            "tenant-id",
+            "resource-app-id",
+            Arg.Any<CancellationToken>(),
+            GraphAuthenticationMode.Ambient);
     }
 
     [Fact]
@@ -1194,23 +1525,47 @@ public class AgentBlueprintServiceTests
         // and the inheritance command surfaces the two cases differently.
         var (service, graph) = BuildServiceWithMockedGraph();
 
-        graph.LookupServicePrincipalByAppIdAsync(
-                "tenant-id", "blueprint-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns("bp-sp-id");
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
         graph.GetOauth2PermissionGrantsAsync(
-                "tenant-id", "bp-sp-id", Arg.Any<CancellationToken>())
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
             .Returns(new List<(string resourceId, string scope, string consentType)>());
         // appRoleAssignments — empty
-        graph.GraphGetAsync(
+        graph.GraphGetWithResponseAsync(
                 "tenant-id",
                 Arg.Is<string>(s => s.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
                 Arg.Any<CancellationToken>(),
-                Arg.Any<IEnumerable<string>?>())
-            .Returns(JsonDoc(@"{ ""value"": [] }"));
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc(@"{ ""value"": [] }")
+            });
         // Resource SP lookup returns null — this resource is unprovisioned.
-        graph.LookupServicePrincipalByAppIdAsync(
-                "tenant-id", "missing-resource-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns((string?)null);
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "missing-resource-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = 200
+            });
 
         var result = await service.GetBlueprintSpGrantsAsync(
             "tenant-id", "blueprint-app-id", new[] { "missing-resource-app-id" });
@@ -1222,6 +1577,60 @@ public class AgentBlueprintServiceTests
     }
 
     [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenResourceSpLookupFails_Throws()
+    {
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Any<string>(),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc(@"{ ""value"": [] }")
+            });
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "resource-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = false,
+                StatusCode = 503,
+                FailureReason = "Microsoft Graph service-principal lookup failed: HTTP 503 Service Unavailable."
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*HTTP 503 Service Unavailable*",
+                because: "a failed resource lookup must not be omitted as though Graph successfully found no service principal");
+    }
+
+    [Fact]
     public async Task GetBlueprintSpGrantsAsync_WhenResourceHasZeroGrants_IncludesResourceWithEmptyArrays()
     {
         // The contract documented on the method: "Resources with no grants on the blueprint SP
@@ -1230,22 +1639,47 @@ public class AgentBlueprintServiceTests
         // tell "this resource has no grants" apart from "we couldn't look this resource up".
         var (service, graph) = BuildServiceWithMockedGraph();
 
-        graph.LookupServicePrincipalByAppIdAsync(
-                "tenant-id", "blueprint-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns("bp-sp-id");
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
         graph.GetOauth2PermissionGrantsAsync(
-                "tenant-id", "bp-sp-id", Arg.Any<CancellationToken>())
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
             .Returns(new List<(string resourceId, string scope, string consentType)>());
-        graph.GraphGetAsync(
+        graph.GraphGetWithResponseAsync(
                 "tenant-id",
                 Arg.Is<string>(s => s.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
                 Arg.Any<CancellationToken>(),
-                Arg.Any<IEnumerable<string>?>())
-            .Returns(JsonDoc(@"{ ""value"": [] }"));
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc(@"{ ""value"": [] }")
+            });
         // Resource SP exists but has no delegated grants or app role assignments.
-        graph.LookupServicePrincipalByAppIdAsync(
-                "tenant-id", "zero-grants-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns("zero-grants-sp-id");
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "zero-grants-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "zero-grants-sp-id",
+                StatusCode = 200
+            });
 
         var result = await service.GetBlueprintSpGrantsAsync(
             "tenant-id", "blueprint-app-id", new[] { "zero-grants-app-id" });
@@ -1257,11 +1691,19 @@ public class AgentBlueprintServiceTests
             because: "no delegated grants were issued on the blueprint SP for this resource");
         appRoleNames.Should().BeEmpty(
             because: "no app role assignments were issued on the blueprint SP for this resource");
+        await graph.Received(1).GetOauth2PermissionGrantsAsync(
+            "tenant-id",
+            "bp-sp-id",
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task GetBlueprintSpGrantsAsync_WhenAppRoleIdIsUnknown_FallsBackToAngleBracketPlaceholder()
     {
+        const string resourceSpId = "33333333-3333-3333-3333-333333333333";
+        const string unknownRoleId = "44444444-4444-4444-4444-444444444444";
+        const string otherRoleId = "55555555-5555-5555-5555-555555555555";
+
         // When the blueprint SP has an app role assignment but the resource SP's appRoles array
         // does not contain a matching entry (e.g. the role was removed from the resource after
         // assignment, or the resource SP doc was fetched with a $select that elided it), the
@@ -1270,45 +1712,473 @@ public class AgentBlueprintServiceTests
         // to flag the entry as unresolved.
         var (service, graph) = BuildServiceWithMockedGraph();
 
-        graph.LookupServicePrincipalByAppIdAsync(
-                "tenant-id", "blueprint-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns("bp-sp-id");
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
         graph.GetOauth2PermissionGrantsAsync(
-                "tenant-id", "bp-sp-id", Arg.Any<CancellationToken>())
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
             .Returns(new List<(string resourceId, string scope, string consentType)>());
         // App role assignment exists on the blueprint SP for our resource.
-        graph.GraphGetAsync(
+        graph.GraphGetWithResponseAsync(
                 "tenant-id",
                 Arg.Is<string>(s => s.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
                 Arg.Any<CancellationToken>(),
-                Arg.Any<IEnumerable<string>?>())
-            .Returns(JsonDoc(@"{
-              ""value"": [
-                { ""resourceId"": ""resource-sp-id"", ""appRoleId"": ""unknown-role-guid"" }
-              ]
-            }"));
-        graph.LookupServicePrincipalByAppIdAsync(
-                "tenant-id", "resource-app-id", Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
-            .Returns("resource-sp-id");
-        // Resource SP appRoles does NOT contain "unknown-role-guid".
-        graph.GraphGetAsync(
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "value": [
+                        { "resourceId": "{{resourceSpId}}", "appRoleId": "{{unknownRoleId}}" }
+                      ]
+                    }
+                    """)
+            });
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
                 "tenant-id",
-                Arg.Is<string>(s => s.Contains("/servicePrincipals/resource-sp-id?$select=appRoles", StringComparison.Ordinal)),
+                "resource-app-id",
                 Arg.Any<CancellationToken>(),
-                Arg.Any<IEnumerable<string>?>())
-            .Returns(JsonDoc(@"{
-              ""appRoles"": [
-                { ""id"": ""some-other-role-id"", ""value"": ""Some.Other.Role"" }
-              ]
-            }"));
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = resourceSpId,
+                StatusCode = 200
+            });
+        // Resource SP appRoles does not contain the assigned role ID.
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(s => s.Contains($"/servicePrincipals/{resourceSpId}?$select=appRoles", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "appRoles": [
+                        { "id": "{{otherRoleId}}", "value": "Some.Other.Role" }
+                      ]
+                    }
+                    """)
+            });
 
         var result = await service.GetBlueprintSpGrantsAsync(
             "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
 
         result.Should().ContainKey("resource-app-id");
         var (_, appRoleNames) = result["resource-app-id"];
-        appRoleNames.Should().Equal(new[] { "<unknown-role-guid>" },
+        appRoleNames.Should().Equal(new[] { $"<{unknownRoleId}>" },
             because: "an unresolvable role ID must surface as '<role-id>' so operators can still see and investigate the assignment — silently dropping it would hide a real grant");
+        await graph.Received(1).GraphGetWithResponseAsync(
+            "tenant-id",
+            Arg.Is<string>(path => path.Contains($"/servicePrincipals/{resourceSpId}?$select=appRoles", StringComparison.Ordinal)),
+            Arg.Any<bool>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            GraphAuthenticationMode.Ambient);
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenAssignedRoleMetadataIsEmpty_ReturnsAngleBracketPlaceholder()
+    {
+        const string resourceSpId = "33333333-3333-3333-3333-333333333333";
+        const string assignedRoleId = "44444444-4444-4444-4444-444444444444";
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "value": [
+                        { "resourceId": "{{resourceSpId}}", "appRoleId": "{{assignedRoleId}}" }
+                      ]
+                    }
+                    """)
+            });
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "resource-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = resourceSpId,
+                StatusCode = 200
+            });
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains($"/servicePrincipals/{resourceSpId}?$select=appRoles", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc("""{ "appRoles": [] }""")
+            });
+
+        var result = await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        result["resource-app-id"].AppRoleNames.Should().Equal(new[] { $"<{assignedRoleId}>" },
+            because: "a successful empty metadata array cannot erase a real assignment and must use the documented unresolved-role placeholder");
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"appRoles\":{}}")]
+    public async Task GetBlueprintSpGrantsAsync_WhenRoleMetadataTopLevelPayloadIsMalformed_Throws(string responseBody)
+    {
+        const string resourceSpId = "33333333-3333-3333-3333-333333333333";
+        const string assignedRoleId = "44444444-4444-4444-4444-444444444444";
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "value": [
+                        { "resourceId": "{{resourceSpId}}", "appRoleId": "{{assignedRoleId}}" }
+                      ]
+                    }
+                    """)
+            });
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "resource-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = resourceSpId,
+                StatusCode = 200
+            });
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains($"/servicePrincipals/{resourceSpId}?$select=appRoles", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc(responseBody)
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*invalid app role metadata*",
+                because: "a successful response without an array-valued 'appRoles' member cannot resolve a real assignment safely");
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenAppRoleMetadataIdIsNotGuid_Throws()
+    {
+        const string resourceSpId = "33333333-3333-3333-3333-333333333333";
+        const string assignedRoleId = "44444444-4444-4444-4444-444444444444";
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "value": [
+                        { "resourceId": "{{resourceSpId}}", "appRoleId": "{{assignedRoleId}}" }
+                      ]
+                    }
+                    """)
+            });
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "resource-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = resourceSpId,
+                StatusCode = 200
+            });
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains($"/servicePrincipals/{resourceSpId}?$select=appRoles", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc("""
+                    {
+                      "appRoles": [
+                        { "id": "not-a-guid", "value": "Malformed.Role" }
+                      ]
+                    }
+                    """)
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*invalid app role metadata*",
+                because: "Graph app role metadata identifiers must be GUIDs rather than arbitrary non-empty strings");
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenRoleMetadataReadFails_Throws()
+    {
+        const string resourceSpId = "33333333-3333-3333-3333-333333333333";
+        const string appRoleId = "44444444-4444-4444-4444-444444444444";
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "value": [
+                        { "resourceId": "{{resourceSpId}}", "appRoleId": "{{appRoleId}}" }
+                      ]
+                    }
+                    """)
+            });
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "resource-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = resourceSpId,
+                StatusCode = 200
+            });
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains($"/servicePrincipals/{resourceSpId}?$select=appRoles", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = false,
+                StatusCode = 503,
+                ReasonPhrase = "Service Unavailable"
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*app role metadata*HTTP 503 Service Unavailable*",
+                because: "unreadable role metadata must not turn known assignments into unresolved placeholders");
+    }
+
+    [Fact]
+    public async Task GetBlueprintSpGrantsAsync_WhenRoleMetadataTransportFails_ThrowsWithFailureReason()
+    {
+        const string resourceSpId = "33333333-3333-3333-3333-333333333333";
+        const string appRoleId = "44444444-4444-4444-4444-444444444444";
+        var (service, graph) = BuildServiceWithMockedGraph();
+
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "blueprint-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = "bp-sp-id",
+                StatusCode = 200
+            });
+        graph.GetOauth2PermissionGrantsAsync(
+                "tenant-id",
+                "bp-sp-id",
+                Arg.Any<CancellationToken>())
+            .Returns(new List<(string resourceId, string scope, string consentType)>());
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains("/servicePrincipals/bp-sp-id/appRoleAssignments", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Json = JsonDoc($$"""
+                    {
+                      "value": [
+                        { "resourceId": "{{resourceSpId}}", "appRoleId": "{{appRoleId}}" }
+                      ]
+                    }
+                    """)
+            });
+        graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                "tenant-id",
+                "resource-app-id",
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                ServicePrincipalId = resourceSpId,
+                StatusCode = 200
+            });
+        graph.GraphGetWithResponseAsync(
+                "tenant-id",
+                Arg.Is<string>(path => path.Contains($"/servicePrincipals/{resourceSpId}?$select=appRoles", StringComparison.Ordinal)),
+                Arg.Any<bool>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>(),
+                GraphAuthenticationMode.Ambient)
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = false,
+                StatusCode = 0,
+                ReasonPhrase = "connection reset"
+            });
+
+        Func<Task> act = async () => await service.GetBlueprintSpGrantsAsync(
+            "tenant-id", "blueprint-app-id", new[] { "resource-app-id" });
+
+        var exception = await act.Should().ThrowAsync<InvalidOperationException>(
+            because: "a role metadata transport failure must remain distinct from a successful empty metadata array");
+        exception.Which.Message.Should().Contain("connection reset",
+            because: "the status-zero Graph response reason must remain visible to the operator");
+        exception.Which.Message.Should().NotContain("HTTP 0",
+            because: "status zero represents absence of an HTTP response rather than an HTTP protocol status");
     }
 }
 

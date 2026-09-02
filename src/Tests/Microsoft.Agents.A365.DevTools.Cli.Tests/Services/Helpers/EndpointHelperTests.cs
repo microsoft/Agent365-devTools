@@ -2,11 +2,13 @@
 // Licensed under the MIT License.
 
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services.Helpers;
 
+[Collection("ConfigTests")]
 public class EndpointHelperTests
 {
     [Fact]
@@ -336,5 +338,176 @@ public class EndpointHelperTests
         // Assert - suffix is "abcd" (4 chars), shorter than the 8-char uniqueness target
         result.Should().Be("myapp-example-com-abcd");
         result.Should().NotEndWith("-");
+    }
+
+    [Fact]
+    public void Agent365Endpoints_WithoutOverrides_PreserveCommercialUrls()
+    {
+        WithEnvironmentVariables(
+            "PROD",
+            discoverEndpoint: null,
+            createEndpoint: null,
+            deleteEndpoint: null,
+            () =>
+            {
+                ConfigConstants.GetDiscoverEndpointUrl("prod").Should().Be(
+                    ConfigConstants.ProductionDiscoverEndpointUrl,
+                    because: "commercial discover behavior must remain unchanged without overrides");
+                EndpointHelper.GetCreateEndpointUrl("prod").Should().Be(
+                    ConfigConstants.ProductionCreateEndpointUrl,
+                    because: "commercial create behavior must remain unchanged without overrides");
+                EndpointHelper.GetDeleteEndpointUrl("prod").Should().Be(
+                    ConfigConstants.ProductionDeleteEndpointUrl,
+                    because: "commercial delete behavior must remain unchanged without overrides");
+            });
+    }
+
+    [Fact]
+    public void Agent365Endpoints_WithOnlyGccDiscoverOverride_UseItsHttpsOrigin()
+    {
+        const string discoverEndpoint =
+            "https://gcc.agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers";
+
+        WithEnvironmentVariables(
+            "GCC",
+            discoverEndpoint,
+            createEndpoint: null,
+            deleteEndpoint: null,
+            () =>
+            {
+                ConfigConstants.GetDiscoverEndpointUrl("gcc").Should().Be(
+                    discoverEndpoint,
+                    because: "the configured cloud discover endpoint is canonical");
+                EndpointHelper.GetCreateEndpointUrl("gcc").Should().Be(
+                    "https://gcc.agent365.svc.cloud.microsoft/agents/botManagement/createAgentBlueprint",
+                    because: "create uses the canonical discover endpoint's HTTPS origin and fixed route");
+                EndpointHelper.GetDeleteEndpointUrl("gcc").Should().Be(
+                    "https://gcc.agent365.svc.cloud.microsoft/agents/botManagement/deleteAgentBlueprint",
+                    because: "delete uses the canonical discover endpoint's HTTPS origin and fixed route");
+            });
+    }
+
+    [Fact]
+    public void Agent365Endpoints_ExplicitCreateAndDeleteOverrides_TakeIndependentPrecedence()
+    {
+        const string discoverEndpoint =
+            "https://gcc.agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers";
+        const string createEndpoint = "https://create.example/custom";
+        const string deleteEndpoint = "https://delete.example/custom";
+
+        WithEnvironmentVariables(
+            "GCC",
+            discoverEndpoint,
+            createEndpoint,
+            deleteEndpoint,
+            () =>
+            {
+                EndpointHelper.GetCreateEndpointUrl("gcc").Should().Be(
+                    createEndpoint,
+                    because: "the explicit create override is an independent higher-precedence escape hatch");
+                EndpointHelper.GetDeleteEndpointUrl("gcc").Should().Be(
+                    deleteEndpoint,
+                    because: "the explicit delete override is an independent higher-precedence escape hatch");
+            });
+    }
+
+    [Fact]
+    public void Agent365Endpoints_ExplicitOverrides_BypassMalformedDiscoverIndependently()
+    {
+        const string createEndpoint = "https://create.example/custom";
+        const string deleteEndpoint = "https://delete.example/custom";
+
+        WithEnvironmentVariables(
+            "GCC",
+            discoverEndpoint: "not-a-url",
+            createEndpoint,
+            deleteEndpoint: null,
+            () =>
+            {
+                EndpointHelper.GetCreateEndpointUrl("gcc").Should().Be(
+                    createEndpoint,
+                    because: "the explicit create override must not depend on discover URL validity");
+                FluentActions.Invoking(() => EndpointHelper.GetDeleteEndpointUrl("gcc"))
+                    .Should().Throw<ArgumentException>(
+                        because: "delete must still validate discover when it has no explicit override");
+            });
+
+        WithEnvironmentVariables(
+            "GCC",
+            discoverEndpoint: "not-a-url",
+            createEndpoint: null,
+            deleteEndpoint,
+            () =>
+            {
+                FluentActions.Invoking(() => EndpointHelper.GetCreateEndpointUrl("gcc"))
+                    .Should().Throw<ArgumentException>(
+                        because: "create must still validate discover when it has no explicit override");
+                EndpointHelper.GetDeleteEndpointUrl("gcc").Should().Be(
+                    deleteEndpoint,
+                    because: "the explicit delete override must not depend on discover URL validity");
+            });
+    }
+
+    [Theory]
+    [InlineData("   ")]
+    [InlineData("not-a-url")]
+    [InlineData("http://gcc.agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers")]
+    [InlineData("https://user@gcc.agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers")]
+    [InlineData("https://gcc.agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers?version=2")]
+    [InlineData("https://gcc.agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers#section")]
+    public void Agent365Endpoints_MalformedDiscoverOverride_FailsVisibly(string discoverEndpoint)
+    {
+        WithEnvironmentVariables(
+            "GCC",
+            discoverEndpoint,
+            createEndpoint: null,
+            deleteEndpoint: null,
+            () =>
+            {
+                FluentActions.Invoking(() => ConfigConstants.GetDiscoverEndpointUrl("gcc"))
+                    .Should().Throw<ArgumentException>(
+                        because: "discover must reject malformed or non-HTTPS endpoint URLs");
+                FluentActions.Invoking(() => EndpointHelper.GetCreateEndpointUrl("gcc"))
+                    .Should().Throw<ArgumentException>(
+                        because: "create must not silently fall back when the canonical discover endpoint is invalid");
+                FluentActions.Invoking(() => EndpointHelper.GetDeleteEndpointUrl("gcc"))
+                    .Should().Throw<ArgumentException>(
+                        because: "delete must not silently fall back when the canonical discover endpoint is invalid");
+            });
+    }
+
+    private static void WithEnvironmentVariables(
+        string environmentKey,
+        string? discoverEndpoint,
+        string? createEndpoint,
+        string? deleteEndpoint,
+        Action assertion)
+    {
+        var values = new Dictionary<string, string?>
+        {
+            [$"A365_DISCOVER_ENDPOINT_{environmentKey}"] = discoverEndpoint,
+            [$"A365_CREATE_ENDPOINT_{environmentKey}"] = createEndpoint,
+            [$"A365_DELETE_ENDPOINT_{environmentKey}"] = deleteEndpoint,
+        };
+        var previousValues = values.Keys.ToDictionary(
+            name => name,
+            Environment.GetEnvironmentVariable);
+
+        try
+        {
+            foreach (var (name, value) in values)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
+
+            assertion();
+        }
+        finally
+        {
+            foreach (var (name, value) in previousValues)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
+        }
     }
 }

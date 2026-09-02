@@ -27,7 +27,7 @@ public class QueryEntraCommand
 
         // Add subcommands for different query types
         command.AddCommand(CreateBlueprintScopesSubcommand(logger, configService, executor, graphApiService, blueprintService, resolver));
-        command.AddCommand(CreateInstanceScopesSubcommand(logger, configService, executor, resolver));
+        command.AddCommand(CreateInstanceScopesSubcommand(logger, configService, executor, graphApiService, resolver));
         command.AddCommand(CreateInheritanceSubcommand(logger, configService, graphApiService, blueprintService, resolver));
 
         return command;
@@ -82,6 +82,7 @@ public class QueryEntraCommand
                     context.ExitCode = 1;
                     return;
                 }
+                graphApiService.ConfigureCloudEndpoints(setupConfig);
 
                 if (string.IsNullOrEmpty(setupConfig.AgentBlueprintId))
                 {
@@ -258,6 +259,7 @@ public class QueryEntraCommand
                     context.ExitCode = 1;
                     return;
                 }
+                graphApiService.ConfigureCloudEndpoints(setupConfig);
 
                 if (string.IsNullOrEmpty(setupConfig.AgentBlueprintId))
                 {
@@ -365,6 +367,7 @@ public class QueryEntraCommand
         ILogger<QueryEntraCommand> logger,
         IConfigService configService,
         CommandExecutor executor,
+        GraphApiService graphApiService,
         IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("instance-scopes", "List configured scopes and consent status for the agent instance");
@@ -407,6 +410,7 @@ public class QueryEntraCommand
                     context.ExitCode = 1;
                     return;
                 }
+                graphApiService.ConfigureCloudEndpoints(instanceConfig);
 
                 // Check for agent identity (could be AgentBlueprintId or specific instance identity)
                 string? agenticAppId = null;
@@ -476,7 +480,7 @@ public class QueryEntraCommand
                 
                 // Use Microsoft Graph API through Azure CLI to get OAuth2 permission grants
                 var grantsResult = await executor.ExecuteAsync("az",
-                    $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{agenticAppId}'\" --output json");
+                    $"rest --method GET --url \"{graphApiService.GraphBaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{agenticAppId}'\" --output json");
 
                 // Distinguish "API call failed" (can't read) from "API succeeded but returned no grants".
                 // Non-admin developers lack DelegatedPermissionGrant.Read.All and always get a failure here —
@@ -501,7 +505,7 @@ public class QueryEntraCommand
                                 
                                 // Get the resource display name using Graph API
                                 var resourceResult = await executor.ExecuteAsync("az", 
-                                    $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals/{resourceId}?$select=displayName,appId\" --output json");
+                                    $"rest --method GET --url \"{graphApiService.GraphBaseUrl}/v1.0/servicePrincipals/{resourceId}?$select=displayName,appId\" --output json");
                                 
                                 string resourceName = "Unknown Resource";
                                 string resourceAppId = "Unknown";
@@ -610,12 +614,14 @@ public class QueryEntraCommand
     /// </summary>
     private static string? GetWellKnownResourceName(string? resourceAppId)
     {
+        if (ConfigConstants.IsObservabilityApiAppId(resourceAppId))
+            return "Observability API";
+
         return resourceAppId switch
         {
             null or "" => null,
             AuthenticationConstants.MicrosoftGraphResourceAppId => "Microsoft Graph",
             ConfigConstants.MessagingBotApiAppId => "Messaging Bot API",
-            ConfigConstants.ObservabilityApiAppId => "Observability API",
             PowerPlatformConstants.PowerPlatformApiResourceAppId => "Power Platform API",
             "00000002-0000-0000-c000-000000000000" => "Azure Active Directory Graph",
             "797f4846-ba00-4fd7-ba43-dac1f8f63013" => "Azure Service Management",

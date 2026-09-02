@@ -332,6 +332,7 @@ class Program
 
             // Default to "prod". Override with A365_ENVIRONMENT env var or a365.config.json.
             string environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+            string? authorityHost = null;
 
             var configFilePath = ConfigService.GetConfigFilePath();
             if (configFilePath != null)
@@ -348,6 +349,8 @@ class Program
                             environment = envValue;
                         }
                     }
+                    if (doc.RootElement.TryGetProperty("authorityHost", out var authorityProp))
+                        authorityHost = authorityProp.GetString();
 
                     logger.LogDebug("Resolved environment from config: {Environment}", environment);
                 }
@@ -357,7 +360,7 @@ class Program
                 }
             }
 
-            return new Agent365ToolingService(configService, authService, logger, environment);
+            return new Agent365ToolingService(configService, authService, logger, environment, authorityHost);
         });
 
         // Add Azure validators (individual validators for composition)

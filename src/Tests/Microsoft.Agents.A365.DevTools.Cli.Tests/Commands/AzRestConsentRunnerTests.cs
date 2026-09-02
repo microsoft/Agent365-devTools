@@ -156,12 +156,14 @@ public class AzRestConsentRunnerTests
             .Returns(Task.FromResult(new CommandResult { ExitCode = 0 }));
 
         var (attempted, succeeded) = await AzRestConsentRunner.TryRunAsync(
-            _executor, BlueprintSpId, new[] { ObsSpec() }, _logger, ct: default);
+            _executor, BlueprintSpId, new[] { ObsSpec() }, _logger,
+            ct: default, graphBaseUrl: "https://graph.example");
 
         attempted.Should().BeTrue();
         succeeded.Should().BeTrue();
         await _executor.Received().ExecuteAsync(
-            "az", Arg.Is<string>(s => s.Contains("--method POST") && s.Contains("oauth2PermissionGrants") && !s.Contains($"/{ExistingGrantId}")),
+            "az", Arg.Is<string>(s => s.Contains("https://graph.example/v1.0/oauth2PermissionGrants")
+                && s.Contains("--method POST") && !s.Contains($"/{ExistingGrantId}")),
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         await _executor.DidNotReceive().ExecuteAsync(
             "az", Arg.Is<string>(s => s.Contains("--method PATCH")),

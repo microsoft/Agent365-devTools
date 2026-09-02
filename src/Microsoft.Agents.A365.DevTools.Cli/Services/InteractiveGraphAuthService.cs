@@ -28,6 +28,9 @@ public sealed class InteractiveGraphAuthService
     private readonly string _clientAppId;
     private readonly Func<string, string, TokenCredential>? _credentialFactory;
     private readonly Func<Task<string?>> _loginHintResolver;
+    private readonly string _graphBaseUrl;
+    private readonly string _authorityHost;
+    private readonly string[] _requiredScopes;
     private GraphServiceClient? _cachedClient;
     private string? _cachedTenantId;
 
@@ -37,7 +40,9 @@ public sealed class InteractiveGraphAuthService
         ILogger logger,
         string clientAppId,
         Func<string, string, TokenCredential>? credentialFactory = null,
-        Func<Task<string?>>? loginHintResolver = null)
+        Func<Task<string?>>? loginHintResolver = null,
+        string? graphBaseUrl = null,
+        string? authorityHost = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -58,6 +63,14 @@ public sealed class InteractiveGraphAuthService
         _clientAppId = clientAppId;
         _credentialFactory = credentialFactory;
         _loginHintResolver = loginHintResolver ?? ResolveAzLoginHintAsync;
+        _graphBaseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
+        _authorityHost = ConfigConstants.NormalizeAuthorityHost(authorityHost);
+        _requiredScopes = RequiredScopes
+            .Select(scope => scope.Replace(
+                AuthenticationConstants.MicrosoftGraphResourceUri,
+                _graphBaseUrl,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
     }
 
     /// <summary>
@@ -84,7 +97,7 @@ public sealed class InteractiveGraphAuthService
         // Eagerly acquire a token so authentication failures are detected here rather than
         // surfacing later from inside GraphServiceClient's lazy token acquisition.
         // Resolve credential inside try/catch so factory exceptions are wrapped consistently.
-        var tokenContext = new TokenRequestContext(RequiredScopes);
+        var tokenContext = new TokenRequestContext(_requiredScopes);
         TokenCredential? credential = null;
         try
         {
@@ -93,7 +106,13 @@ public sealed class InteractiveGraphAuthService
 
             // Resolve credential: use injected factory (for tests) or default MsalBrowserCredential
             credential = _credentialFactory?.Invoke(_clientAppId, tenantId)
-                ?? new MsalBrowserCredential(_clientAppId, tenantId, redirectUri: null, _logger, loginHint: loginHint);
+                ?? new MsalBrowserCredential(
+                    _clientAppId,
+                    tenantId,
+                    redirectUri: null,
+                    _logger,
+                    authority: $"{_authorityHost}/{tenantId}",
+                    loginHint: loginHint);
 
             await credential.GetTokenAsync(tokenContext, cancellationToken);
         }
@@ -137,7 +156,8 @@ public sealed class InteractiveGraphAuthService
         // from GraphServiceClient will hit the silent cache without re-prompting.
         _logger.LogInformation("Successfully authenticated to Microsoft Graph!");
 
-        var graphClient = new GraphServiceClient(credential!, RequiredScopes);
+        var graphClient = new GraphServiceClient(credential!, _requiredScopes);
+        graphClient.RequestAdapter.BaseUrl = $"{_graphBaseUrl}/{GraphApiConstants.Versions.V1}";
         _cachedClient = graphClient;
         _cachedTenantId = tenantId;
 

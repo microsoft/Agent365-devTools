@@ -554,14 +554,27 @@ public class ConfigService : IConfigService
 
             root.TryGetProperty("tenantId", out var tenantIdEl);
             root.TryGetProperty("clientAppId", out var clientAppIdEl);
+            root.TryGetProperty("environment", out var environmentEl);
+            root.TryGetProperty("graphBaseUrl", out var graphBaseUrlEl);
+            root.TryGetProperty("authorityHost", out var authorityHostEl);
             var tenantId = tenantIdEl.ValueKind == JsonValueKind.String ? tenantIdEl.GetString() : null;
             var configuredId = clientAppIdEl.ValueKind == JsonValueKind.String ? clientAppIdEl.GetString() : null;
+            var environment = environmentEl.ValueKind == JsonValueKind.String ? environmentEl.GetString() : null;
+            var graphBaseUrl = graphBaseUrlEl.ValueKind == JsonValueKind.String ? graphBaseUrlEl.GetString() : null;
+            var authorityHost = authorityHostEl.ValueKind == JsonValueKind.String ? authorityHostEl.GetString() : null;
 
             if (string.IsNullOrWhiteSpace(tenantId))
             {
                 _logger?.LogDebug("No tenantId in config — skipping client app ID resolution.");
                 return;
             }
+
+            graphApiService.ConfigureCloudEndpoints(new Agent365Config
+            {
+                Environment = string.IsNullOrWhiteSpace(environment) ? "prod" : environment,
+                GraphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl,
+                AuthorityHost = authorityHost,
+            });
 
             // Guard against OData injection: configuredId comes from a user-editable file, so it
             // must be a valid GUID before it is interpolated into any Graph $filter query below.

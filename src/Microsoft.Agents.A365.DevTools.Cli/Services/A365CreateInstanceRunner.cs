@@ -148,6 +148,22 @@ public sealed class A365CreateInstanceRunner
             _logger.LogInformation("Using environment from config: {Env}", environment);
         }
 
+        // Wire the sovereign/government cloud endpoints so all Graph calls and client-credential
+        // token acquisition target the correct national cloud (commercial by default).
+        var configuredGraphBaseUrl = GetConfig("graphBaseUrl");
+        _graphService.GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(
+            environment,
+            string.IsNullOrWhiteSpace(configuredGraphBaseUrl) ? null : configuredGraphBaseUrl);
+        var configuredAuthorityHost = GetConfig("authorityHost");
+        _graphService.AuthorityHost = ConfigConstants.GetAuthorityHost(
+            environment,
+            string.IsNullOrWhiteSpace(configuredAuthorityHost) ? null : configuredAuthorityHost);
+        var configuredClientAppId = GetConfig("clientAppId");
+        if (!string.IsNullOrWhiteSpace(configuredClientAppId))
+            _graphService.CustomClientAppId = configuredClientAppId;
+        var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
+        var observabilityResourceAppId = ConfigConstants.GetObservabilityApiAppId(environment);
+
         var usageLocation = GetConfig("agentUserUsageLocation");
 
         await SaveInstanceAsync(generatedConfigPath, instance, cancellationToken);
@@ -320,14 +336,14 @@ public sealed class A365CreateInstanceRunner
                     [AuthenticationConstants.MicrosoftGraphResourceAppId] = (
                         "Microsoft Graph",
                         new HashSet<string>(ConfigConstants.DefaultAgentIdentityScopes, StringComparer.OrdinalIgnoreCase)),
-                    [McpConstants.WorkIQToolsProdAppId] = (
+                    [mcpResourceAppId] = (
                         "Work IQ Tools",
                         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                         {
                             "McpServers.Mail.All",
                             "McpServersMetadata.Read.All"
                         }),
-                    [ConfigConstants.ObservabilityApiAppId] = (
+                    [observabilityResourceAppId] = (
                         "Observability API",
                         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                         {
@@ -384,8 +400,22 @@ public sealed class A365CreateInstanceRunner
                 _logger.LogInformation("Granting permissions to agent identity across {Count} resource(s)", requiredPermissions.Count);
 
                 // Get existing oauth2PermissionGrants on the agent identity
-                var existingGrants = await _graphService.GetOauth2PermissionGrantsAsync(
-                    tenantId, agenticSpObjectId, cancellationToken);
+                List<(string resourceId, string scope, string consentType)> existingGrants;
+                try
+                {
+                    existingGrants = await _graphService.GetOauth2PermissionGrantsAsync(
+                        tenantId,
+                        agenticSpObjectId,
+                        cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Failed to read existing OAuth2 permission grants for agent identity {ServicePrincipalId}; no grant changes were attempted.",
+                        agenticSpObjectId);
+                    return false;
+                }
 
                 // Build a lookup: resourceSpObjectId -> set of already-granted scopes
                 var existingScopesByResource = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
@@ -657,7 +687,7 @@ public sealed class A365CreateInstanceRunner
                 : correlationId;
 
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
-            var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
+            var tokenEndpoint = ConfigConstants.BuildTokenEndpointUrl(_graphService.AuthorityHost, tenantId);
             
             var requestBody = new FormUrlEncodedContent(new[]
             {

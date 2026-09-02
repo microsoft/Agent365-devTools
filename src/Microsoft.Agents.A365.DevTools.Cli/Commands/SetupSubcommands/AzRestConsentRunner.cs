@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
@@ -65,7 +66,8 @@ internal static partial class AzRestConsentRunner
         string blueprintSpObjectId,
         IReadOnlyList<ResourcePermissionSpec> specs,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        string graphBaseUrl = GraphApiConstants.BaseUrl)
     {
         if (!GuidPattern().IsMatch(blueprintSpObjectId))
         {
@@ -99,6 +101,10 @@ internal static partial class AzRestConsentRunner
             }
         }
 
+        // Resolve the Graph base URL once so every az rest call targets the configured
+        // (sovereign / commercial) cloud endpoint rather than a hardcoded commercial host.
+        var baseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
+
         logger.LogInformation("Granting delegated admin consent...");
 
         var allOk = true;
@@ -107,7 +113,7 @@ internal static partial class AzRestConsentRunner
             ct.ThrowIfCancellationRequested();
             try
             {
-                var ok = await GrantOneAsync(executor, blueprintSpObjectId, spec, logger, ct);
+                var ok = await GrantOneAsync(executor, blueprintSpObjectId, spec, baseUrl, logger, ct);
                 if (!ok) allOk = false;
             }
             catch (OperationCanceledException)
@@ -132,13 +138,14 @@ internal static partial class AzRestConsentRunner
         CommandExecutor executor,
         string blueprintSpObjectId,
         ResourcePermissionSpec spec,
+        string graphBaseUrl,
         ILogger logger,
         CancellationToken ct)
     {
         // 1. Resolve the resource SP object id.
         var resourceSpResult = await executor.ExecuteAsync(
             "az",
-            $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{spec.ResourceAppId}'&$select=id\"",
+            $"rest --method GET --url \"{graphBaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{spec.ResourceAppId}'&$select=id\"",
             captureOutput: true,
             suppressErrorLogging: true,
             cancellationToken: ct);
@@ -166,7 +173,7 @@ internal static partial class AzRestConsentRunner
         //    un-created. Filter on consentType to be precise.
         var grantQueryResult = await executor.ExecuteAsync(
             "az",
-            $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{blueprintSpObjectId}' and resourceId eq '{resourceSpId}' and consentType eq 'AllPrincipals'\"",
+            $"rest --method GET --url \"{graphBaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{blueprintSpObjectId}' and resourceId eq '{resourceSpId}' and consentType eq 'AllPrincipals'\"",
             captureOutput: true,
             suppressErrorLogging: true,
             cancellationToken: ct);
@@ -200,7 +207,7 @@ internal static partial class AzRestConsentRunner
             var patched = await ExecuteAzRestWithBodyAsync(
                 executor,
                 method: "PATCH",
-                url: $"https://graph.microsoft.com/v1.0/oauth2PermissionGrants/{existingGrantId}",
+                url: $"{graphBaseUrl}/v1.0/oauth2PermissionGrants/{existingGrantId}",
                 bodyJson: patchBody,
                 logger: logger,
                 ct: ct);
@@ -224,7 +231,7 @@ internal static partial class AzRestConsentRunner
         var created = await ExecuteAzRestWithBodyAsync(
             executor,
             method: "POST",
-            url: "https://graph.microsoft.com/v1.0/oauth2PermissionGrants",
+            url: $"{graphBaseUrl}/v1.0/oauth2PermissionGrants",
             bodyJson: createBody,
             logger: logger,
             ct: ct);

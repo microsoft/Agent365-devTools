@@ -104,6 +104,26 @@ public class PermissionSpecsTests : IDisposable
     }
 
     [Fact]
+    public async Task GccPath_UsesGccObservabilityResource()
+    {
+        var config = new Agent365Config
+        {
+            DeploymentProjectPath = _tempDir,
+            Environment = "gcc",
+        };
+
+        var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
+            config,
+            setInheritable: true,
+            isM365: true);
+
+        ResourceAppIds(specs).Should().Contain(ConfigConstants.GccObservabilityApiAppId,
+            because: "GCC blueprints must inherit permissions from the GCC Observability resource");
+        ResourceAppIds(specs).Should().NotContain(ConfigConstants.ObservabilityApiAppId,
+            because: "the commercial Observability resource must not be stamped on a GCC blueprint");
+    }
+
+    [Fact]
     public async Task DwPath_WithV1Manifest_CollapsesLegacyAudienceOntoAtgAppId()
     {
         // Arrange: a V1-style manifest entry with an api:// audience.
