@@ -59,6 +59,9 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- Repeated `publish --aiteammate` runs now preserve customized manifest names instead of restoring an overlong blueprint name.
+- Repeated `setup blueprint --agent-name` runs now reuse the stored valid client secret instead of creating duplicate credentials.
+- `a365 query-entra blueprint-scopes` and `inheritance` now report permission-grant read failures, and `a365 create-instance` now stops safely instead of continuing when existing grants cannot be read.
 - `setup requirements` now validates and repairs tenant-owned fallback CLI apps with the administrator bootstrap identity, preventing false "app not found" failures when the first-party CLI app is unavailable.
 - Cloud-specific Graph, authority, and Agent 365 Tools endpoint overrides now apply consistently across setup, consent, authentication, query, and create-instance flows for sovereign and custom clouds. (#478)
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).

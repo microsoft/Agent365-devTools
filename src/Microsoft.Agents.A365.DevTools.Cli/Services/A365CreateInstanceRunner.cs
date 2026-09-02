@@ -399,8 +399,22 @@ public sealed class A365CreateInstanceRunner
                 _logger.LogInformation("Granting permissions to agent identity across {Count} resource(s)", requiredPermissions.Count);
 
                 // Get existing oauth2PermissionGrants on the agent identity
-                var existingGrants = await _graphService.GetOauth2PermissionGrantsAsync(
-                    tenantId, agenticSpObjectId, cancellationToken);
+                List<(string resourceId, string scope, string consentType)> existingGrants;
+                try
+                {
+                    existingGrants = await _graphService.GetOauth2PermissionGrantsAsync(
+                        tenantId,
+                        agenticSpObjectId,
+                        cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Failed to read existing OAuth2 permission grants for agent identity {ServicePrincipalId}; no grant changes were attempted.",
+                        agenticSpObjectId);
+                    return false;
+                }
 
                 // Build a lookup: resourceSpObjectId -> set of already-granted scopes
                 var existingScopesByResource = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);

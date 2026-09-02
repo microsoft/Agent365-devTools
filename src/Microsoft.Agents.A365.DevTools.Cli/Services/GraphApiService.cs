@@ -1321,7 +1321,10 @@ public class GraphApiService
     /// <param name="tenantId">Azure AD tenant ID</param>
     /// <param name="clientSpObjectId">Object ID of the service principal to check grants for</param>
     /// <param name="ct">Cancellation token</param>
-    /// <returns>List of grants with their scope strings and consent types, or empty list on failure</returns>
+    /// <returns>List of grants with their scope strings and consent types.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Microsoft Graph could not return a valid permission-grants response.
+    /// </exception>
     public virtual async Task<List<(string resourceId, string scope, string consentType)>> GetOauth2PermissionGrantsAsync(
         string tenantId,
         string clientSpObjectId,
@@ -1329,22 +1332,58 @@ public class GraphApiService
     {
         var grants = new List<(string resourceId, string scope, string consentType)>();
 
-        using var doc = await GraphGetAsync(
+        var response = await GraphGetWithResponseAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}'",
-            ct);
+            ct: ct,
+            authenticationMode: GraphAuthenticationMode.Ambient);
+        using var doc = response.Json;
 
-        if (doc == null) return grants;
-
-        if (doc.RootElement.TryGetProperty("value", out var arr))
+        if (!response.IsSuccess)
         {
-            foreach (var grant in arr.EnumerateArray())
+            var status = response.StatusCode > 0
+                ? $"HTTP {response.StatusCode} {response.ReasonPhrase}".TrimEnd()
+                : response.ReasonPhrase;
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(status)
+                    ? $"Microsoft Graph could not read OAuth2 permission grants for service principal '{clientSpObjectId}'."
+                    : $"Microsoft Graph could not read OAuth2 permission grants for service principal '{clientSpObjectId}': {status}.");
+        }
+
+        if (doc is null ||
+            doc.RootElement.ValueKind != JsonValueKind.Object ||
+            !doc.RootElement.TryGetProperty("value", out var arr) ||
+            arr.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException(
+                $"Microsoft Graph returned an invalid OAuth2 permission grants response for service principal '{clientSpObjectId}'.");
+        }
+
+        foreach (var grant in arr.EnumerateArray())
+        {
+            if (grant.ValueKind != JsonValueKind.Object ||
+                !grant.TryGetProperty("resourceId", out var rid) ||
+                rid.ValueKind != JsonValueKind.String ||
+                !grant.TryGetProperty("scope", out var scopeElement) ||
+                scopeElement.ValueKind != JsonValueKind.String ||
+                !grant.TryGetProperty("consentType", out var consentTypeElement) ||
+                consentTypeElement.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(consentTypeElement.GetString()))
             {
-                var resourceId = grant.TryGetProperty("resourceId", out var rid) ? rid.GetString() ?? "" : "";
-                var scope = grant.TryGetProperty("scope", out var s) ? s.GetString() ?? "" : "";
-                var consentType = grant.TryGetProperty("consentType", out var ct2) ? ct2.GetString() ?? "" : "";
-                grants.Add((resourceId, scope, consentType));
+                throw new InvalidOperationException(
+                    $"Microsoft Graph returned an invalid OAuth2 permission grant for service principal '{clientSpObjectId}'.");
             }
+
+            var resourceId = rid.GetString()!;
+            if (!Guid.TryParse(resourceId, out _))
+            {
+                throw new InvalidOperationException(
+                    $"Microsoft Graph returned an invalid OAuth2 permission grant for service principal '{clientSpObjectId}'.");
+            }
+
+            var scope = scopeElement.GetString()!;
+            var consentType = consentTypeElement.GetString()!;
+            grants.Add((resourceId, scope, consentType));
         }
 
         return grants;

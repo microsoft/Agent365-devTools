@@ -638,6 +638,8 @@ internal static class BlueprintSubcommand
         logger.LogDebug("Blueprint created: {Name} (Object ID: {ObjectId}, App ID: {AppId})",
             setupConfig.AgentBlueprintDisplayName, blueprintObjectId, blueprintAppId);
 
+        RestoreExistingBlueprintSecret(setupConfig, generatedConfig, blueprintAppId, logger);
+
         // Update generated config with blueprint details, preserving all existing fields
         generatedConfig["agentBlueprintId"] = blueprintAppId;
         generatedConfig["agentBlueprintObjectId"] = blueprintObjectId;
@@ -787,6 +789,48 @@ internal static class BlueprintSubcommand
             FederatedCredentialError = blueprintResult.ficError,
             AdminConsentUrl = blueprintResult.adminConsentUrl
         };
+    }
+
+    internal static void RestoreExistingBlueprintSecret(
+        Agent365Config setupConfig,
+        JsonObject generatedConfig,
+        string? resolvedBlueprintId,
+        ILogger logger)
+    {
+        if (!string.IsNullOrWhiteSpace(setupConfig.AgentBlueprintClientSecret) ||
+            string.IsNullOrWhiteSpace(resolvedBlueprintId))
+        {
+            return;
+        }
+
+        var storedBlueprintId = generatedConfig["agentBlueprintId"] is JsonValue blueprintIdNode &&
+            blueprintIdNode.TryGetValue<string>(out var blueprintId)
+                ? blueprintId
+                : null;
+
+        if (!string.Equals(storedBlueprintId, resolvedBlueprintId, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogDebug(
+                "Stored blueprint ID does not match the resolved blueprint; the stored client secret will not be reused.");
+            return;
+        }
+
+        var storedSecret = generatedConfig["agentBlueprintClientSecret"] is JsonValue secretNode &&
+            secretNode.TryGetValue<string>(out var secret)
+                ? secret
+                : null;
+
+        if (string.IsNullOrWhiteSpace(storedSecret))
+        {
+            return;
+        }
+
+        setupConfig.AgentBlueprintClientSecret = storedSecret;
+        setupConfig.AgentBlueprintClientSecretProtected =
+            generatedConfig["agentBlueprintClientSecretProtected"] is JsonValue protectedNode &&
+            protectedNode.TryGetValue<bool>(out var isProtected) &&
+            isProtected;
+        logger.LogDebug("Loaded the existing blueprint client secret from generated configuration.");
     }
 
     /// <summary>

@@ -337,6 +337,193 @@ public class GraphApiServiceTests
     }
 
     [Fact]
+    public async Task GetOauth2PermissionGrantsAsync_WhenGraphReturnsForbidden_UsesAmbientAuthAndThrowsWithStatus()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent(
+                """{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges"}}""")
+        });
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        var authService = FakeAuth();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            authService,
+            handler,
+            tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0))
+        {
+            CustomClientAppId = AuthenticationConstants.WellKnownClientAppId
+        };
+
+        Func<Task> act = async () => await service.GetOauth2PermissionGrantsAsync(
+            "tenant-123",
+            "blueprint-sp-object-id");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*HTTP 403 Forbidden*",
+                because: "a denied administrative read must remain distinguishable from a successful empty grants response");
+        await tokenProvider.DidNotReceiveWithAnyArgs().GetMgGraphAccessTokenAsync(
+            default!, default!, default, default, default, default, default);
+        await authService.ReceivedWithAnyArgs(1).GetAccessTokenAsync(
+            default!, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
+    public async Task GetOauth2PermissionGrantsAsync_WhenTransportFails_ThrowsWithFailureReason()
+    {
+        using var handler = new ExceptionThrowingHttpMessageHandler(
+            () => new HttpRequestException("connection reset"));
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            FakeAuth(),
+            handler,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+
+        Func<Task> act = async () => await service.GetOauth2PermissionGrantsAsync(
+            "tenant-123",
+            "blueprint-sp-object-id");
+
+        var exception = await act.Should().ThrowAsync<InvalidOperationException>(
+            because: "a transport failure must remain distinguishable from a successful empty grants response");
+        exception.Which.Message.Should().Contain("connection reset",
+            because: "the status-zero Graph response reason is the only actionable transport diagnostic available to the operator");
+        exception.Which.Message.Should().NotContain("HTTP 0",
+            because: "status zero means no HTTP response was received and must not be rendered as a real protocol status");
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"value\":{}}")]
+    public async Task GetOauth2PermissionGrantsAsync_WhenTopLevelPayloadIsMalformed_Throws(string responseBody)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseBody)
+        });
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            FakeAuth(),
+            handler,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+
+        Func<Task> act = async () => await service.GetOauth2PermissionGrantsAsync(
+            "tenant-123",
+            "blueprint-sp-object-id");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*invalid OAuth2 permission grants response*",
+                because: "a successful response without an array-valued 'value' member is not authoritative evidence of zero grants");
+    }
+
+    [Fact]
+    public async Task GetOauth2PermissionGrantsAsync_WhenGraphReturnsEmptyValue_UsesAmbientAuthAndReturnsEmptyList()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"value":[]}""")
+        });
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        var authService = FakeAuth();
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            authService,
+            handler,
+            tokenProvider,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0))
+        {
+            CustomClientAppId = AuthenticationConstants.WellKnownClientAppId
+        };
+
+        var grants = await service.GetOauth2PermissionGrantsAsync(
+            "tenant-123",
+            "blueprint-sp-object-id");
+
+        grants.Should().BeEmpty(
+            because: "a successful Graph response with an empty value array is authoritative evidence that no grants exist");
+        await tokenProvider.DidNotReceiveWithAnyArgs().GetMgGraphAccessTokenAsync(
+            default!, default!, default, default, default, default, default);
+        await authService.ReceivedWithAnyArgs(1).GetAccessTokenAsync(
+            default!, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
+    public void GetOauth2PermissionGrantsAsync_PreservesOriginalPublicVirtualSignature()
+    {
+        var method = typeof(GraphApiService).GetMethod(
+            nameof(GraphApiService.GetOauth2PermissionGrantsAsync),
+            [typeof(string), typeof(string), typeof(CancellationToken)]);
+
+        method.Should().NotBeNull(
+            because: "existing callers and NSubstitute setups depend on the original three-parameter CLR signature");
+        method!.IsPublic.Should().BeTrue();
+        method.IsVirtual.Should().BeTrue(
+            because: "tests and downstream integrations substitute this administrative read API");
+    }
+
+    [Fact]
+    public async Task GetOauth2PermissionGrantsAsync_WhenGraphReturnsMalformedGrant_Throws()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"value":[{"resourceId":"11111111-1111-1111-1111-111111111111","scope":"User.Read"}]}""")
+        });
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            FakeAuth(),
+            handler,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+
+        Func<Task> act = async () => await service.GetOauth2PermissionGrantsAsync(
+            "tenant-123",
+            "blueprint-sp-object-id");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*invalid OAuth2 permission grant*",
+                because: "a malformed grant row must not be silently converted into a partial permissions result");
+    }
+
+    [Fact]
+    public async Task GetOauth2PermissionGrantsAsync_WhenResourceIdIsNotGuid_Throws()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                """{"value":[{"resourceId":"not-a-guid","scope":"User.Read","consentType":"AllPrincipals"}]}""")
+        });
+        var service = new GraphApiService(
+            _mockLogger,
+            _mockExecutor,
+            FakeAuth(),
+            handler,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+
+        Func<Task> act = async () => await service.GetOauth2PermissionGrantsAsync(
+            "tenant-123",
+            "blueprint-sp-object-id");
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*invalid OAuth2 permission grant*",
+                because: "Graph resource identifiers must be GUIDs rather than arbitrary non-empty strings");
+    }
+
+    [Fact]
     public async Task GraphPatchAsync_AmbientMode_IgnoresResolvedClientAppAndRequestedScopes()
     {
         using var handler = new TestHttpMessageHandler();
