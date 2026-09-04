@@ -962,10 +962,8 @@ if ($Agent) {
         if ($unknown.Count -gt 0) {
             throw "-Agent entry #$($i + 1) has unrecognised key(s): $($unknown -join ', '). Recognised keys: $($recognisedAgentKeys -join ', ')."
         }
-        $hasTarget = @('RegistrationId', 'AgentInstanceId') |
-                     Where-Object { $Agent[$i].ContainsKey($_) -and -not [string]::IsNullOrWhiteSpace([string]$Agent[$i][$_]) }
         if (-not $hasTarget) {
-            throw "-Agent entry #$($i + 1) has no id to act on. Supply at least one of RegistrationId, AgentInstanceId, AgentIdentityId or AgentUserId."
+            throw "-Agent entry #$($i + 1) has no id to act on. Supply at least one of RegistrationId or AgentInstanceId."
         }
     }
 }
@@ -1402,8 +1400,7 @@ foreach ($item in $actionable) { Remove-Target -Item $item }
 # Verify
 # ---------------------------------------------------------------------------
 if (-not $WhatIfPreference) {
-    Write-Step 6 'Verifying'
-
+    Write-Step 5 'Verifying'
     $stillPresent  = [System.Collections.Generic.List[object]]::new()
     $unverifiable  = [System.Collections.Generic.List[object]]::new()
 
