@@ -1,0 +1,9 @@
+ObjectType,Key,ParentKey,ExistingId,DisplayName,Description,Owner,Sponsor,RequireOwnerAssignment,RequiredPermissionJson,GrantAdminConsent,SkipInheritablePermissions,NewClientSecret,KeyVaultName,KeyVaultSecretName,ManagedIdentityPrincipalId,Tag,CustomSecurityAttributeJson,SkipCustomSecurityAttributeValidation,PrincipalName,MailNickname,ManagerUserId,ManagerUpn,UsageLocation,AssignLicense,LicenseSkuId,LicenseSkuPartNumber,OwnerId,Auth,ParameterJson
+Blueprint,ExpenseBlueprint,,,Expense Helper Blueprint,Shared blueprint for the expense automation agents,,ana@contoso.com,true,,true,,,,,,,,,,,,,,,,,,,
+AgentIdentity,ExpenseIdentityFinance,ExpenseBlueprint,,Expense Agent - Finance,,,ana@contoso.com,,,,,,,,,Finance;Production,,,,,,,,,,,,,
+AgentIdentity,ExpenseIdentityHR,ExpenseBlueprint,,Expense Agent - HR,,,ana@contoso.com,,,,,,,,,HR;Production,,,,,,,,,,,,,
+AgentUser,ExpenseUserFinance,ExpenseIdentityFinance,,,,,,,,,,,,,,,,,expensebot-finance@contoso.com,expensebot-finance,,ana@contoso.com,US,true,304b93a3-b1f1-427f-aa02-da21e7c7d675,,,,
+AgentUser,ExpenseUserHR,ExpenseIdentityHR,,,,,,,,,,,,,,,,,expensebot-hr@contoso.com,expensebot-hr,,bob@contoso.com,US,false,,,,,
+AgentRegistration,ExpenseRegistrationFinance,ExpenseIdentityFinance,,Expense Agent - Finance,Registers the finance expense agent,,,,,,,,,,,,,,,,,,,,,,,Same,
+Blueprint,LegacyBlueprintAnchor,,11111111-1111-4111-8111-111111111111,,,,,,,,,,,,,,,,,,,,,,,,,,
+AgentIdentity,LegacyIdentityOnLegacyBlueprint,LegacyBlueprintAnchor,,Legacy-hosted Agent,,,ana@contoso.com,,,,,,,,,,,,,,,,,,,,,,

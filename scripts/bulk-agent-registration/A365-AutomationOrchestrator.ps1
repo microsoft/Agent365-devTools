@@ -841,6 +841,10 @@
     That script also reports the manager and the licence in its result object instead of
     failing, so an agent user can be created with neither attached. The phase is marked
     'Partial' and the run reports 'Incomplete', rather than calling it a success.
+
+    To provision many agents from one CSV file instead of one at a time, see
+    A365-BulkOnboarding.ps1, which drives this orchestrator once per row in
+    dependency order.
 #>
 
 #requires -Version 7
