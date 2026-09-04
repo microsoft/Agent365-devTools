@@ -119,6 +119,26 @@
 .PARAMETER Interactive
     Sign in as a user. This is the normal choice for a one-time bootstrap.
 
+.PARAMETER KeyVaultName
+    Save the new client secret to this Azure Key Vault instead of relying on the one-time
+    console/-OutputPath output. Accepts a vault name or the full
+    https://<vault>.vault.azure.net URI. Only meaningful with -NewClientSecret.
+
+    Key Vault is not reachable through Microsoft Graph - a Graph token is rejected there
+    with HTTP 401 - so the write uses the Key Vault data plane on a second token minted
+    from the same credential. The caller needs the "Key Vault Secrets Officer" DATA-plane
+    role; Owner and Contributor do NOT grant it.
+
+.PARAMETER KeyVaultSecretName
+    Name to store the secret under. Defaults to the display name (suffixed "-clientsecret")
+    folded to the characters Key Vault allows. Writing an existing name adds a new VERSION
+    rather than overwriting.
+
+.PARAMETER KeyVaultAccessToken
+    A bearer token for https://vault.azure.net, needed only when one cannot be derived from
+    the Graph credential: -AccessToken (audience-bound, cannot be exchanged), or -Interactive
+    without a signed-in Azure session.
+
 .EXAMPLE
     # Bootstrap the whole pipeline with a client secret.
     .\New-A365AutomationApp.ps1 -TenantId contoso.onmicrosoft.com -Interactive `

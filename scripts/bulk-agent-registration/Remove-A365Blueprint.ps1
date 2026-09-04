@@ -12,9 +12,9 @@
     Pass -Force to cascade instead, deleting those agent identities and their agent users
     before the blueprint itself.
 
-    The cascade is not reimplemented here: it is delegated to Remove-A365AgentRegistration.ps1,
-    which already handles agent identity and agent user deletion, the ordering between them,
-    and the soft-delete purge. One implementation, so a fix applies everywhere.
+    The cascade is not reimplemented here: agent user and identity deletion is delegated to
+    Remove-A365AgentUser.ps1 and Remove-A365AgentIdentity.ps1, preserving their ordering and
+    soft-delete purge behavior.
 
     Deleting an application is a SOFT delete: the object moves to /directory/deletedItems and is
     restorable for 30 days. Use -Permanent to purge it, which is IRREVERSIBLE.
@@ -55,6 +55,41 @@
 
 .PARAMETER UseExistingConnection
     Reuse the Connect-MgGraph session already established in this PowerShell process.
+
+.PARAMETER ClientId
+    Application (client) ID to authenticate as. Required with -ClientSecret or
+    -CertificateThumbprint.
+
+.PARAMETER ClientSecret
+    Client secret, as a SecureString or a plain string. Requires -ClientId and -TenantId.
+
+.PARAMETER CertificateThumbprint
+    Thumbprint of a certificate to authenticate -ClientId with. Requires -ClientId and
+    -TenantId.
+
+.PARAMETER AccessToken
+    A pre-acquired Graph access token, as a SecureString or a plain string.
+
+.PARAMETER ScriptRoot
+    Directory containing Remove-A365AgentUser.ps1 and Remove-A365AgentIdentity.ps1, used by the
+    -Force cascade. Defaults to this script's folder or the current location.
+
+.PARAMETER PassThru
+    Return the resolved delete plan (blueprint plus every cascaded object) as an object.
+    Without it the script writes console output only.
+
+.PARAMETER LogPath
+    Write a timestamped log of this run. A path that names an existing directory (or ends in
+    a separator) gets a generated file name inside it; anything else is used as the exact
+    file name. Omit it to log nothing.
+
+.PARAMETER LogIncludeSecrets
+    Allow plain-string client secrets and passwords in the log. SecureString values and bearer
+    tokens remain redacted. Only meaningful with -LogPath.
+
+.PARAMETER LogCorrelationId
+    Correlation id written into the log, shared with any calling script's own log so a run can
+    be traced across scripts. Generated automatically when omitted.
 
 .EXAMPLE
     .\Remove-A365Blueprint.ps1 -BlueprintId 0bc41111-35c2-45c4-bbeb-981f0ee9e9e5 -Interactive -InspectOnly

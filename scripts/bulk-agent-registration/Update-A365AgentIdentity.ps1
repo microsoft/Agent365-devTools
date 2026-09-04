@@ -56,8 +56,61 @@
 .PARAMETER RequiredPermission
     Permission set to apply, in the same shape the create script accepts.
 
+.PARAMETER RequireOwnerAssignment
+    Treat a refused -Owner assignment as fatal instead of the default: a warning, with the
+    update otherwise applied.
+
+.PARAMETER GrantAdminConsent
+    Consent -RequiredPermission on the agent identity's own service principal. See
+    New-A365AgentIdentity.ps1's help for how this differs from blueprint-level consent.
+
+.PARAMETER OutputJsonPath
+    Write a JSON summary of the update to this path.
+
 .PARAMETER TenantId
     Directory (tenant) ID or verified domain.
+
+.PARAMETER ClientId
+    Application (client) ID to authenticate as. Forwarded unchanged to
+    New-A365AgentIdentity.ps1 - see its help for the full authentication reference.
+
+.PARAMETER ClientSecret
+    Client secret, forwarded unchanged. Also read from $env:A365_CLIENT_SECRET by the step
+    script when omitted.
+
+.PARAMETER CertificateThumbprint
+    Certificate thumbprint, forwarded unchanged.
+
+.PARAMETER Certificate
+    An X509Certificate2 to authenticate with, forwarded unchanged.
+
+.PARAMETER CertificatePath
+    Path to a .pfx file, forwarded unchanged.
+
+.PARAMETER CertificatePassword
+    Password for -CertificatePath, forwarded unchanged.
+
+.PARAMETER UseManagedIdentity
+    Authenticate with the host's managed identity, forwarded unchanged.
+
+.PARAMETER AccessToken
+    A pre-acquired Graph access token, forwarded unchanged.
+
+.PARAMETER Interactive
+    Sign in as a user instead of running as an application, forwarded unchanged.
+
+.PARAMETER SkipPermissionCheck
+    Skip the app role pre-flight check, forwarded unchanged.
+
+.PARAMETER StepParameter
+    Escape hatch: a hashtable splatted into New-A365AgentIdentity.ps1 for parameters this
+    wrapper does not surface. Keys are the step script's own parameter names and must not
+    include 'Update', 'AgentIdentityId' or 'TenantId', which this script already supplies.
+
+.PARAMETER ScriptRoot
+    Directory containing New-A365AgentIdentity.ps1, which performs the actual Graph work.
+    Defaults to this script's own directory - keep the two files together, or pass this
+    explicitly.
 
 .EXAMPLE
     .\Update-A365AgentIdentity.ps1 -TenantId $tid -Interactive `

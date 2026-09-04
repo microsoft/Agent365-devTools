@@ -44,9 +44,52 @@
 .PARAMETER Force
     Suppress confirmation prompts. Required for unattended runs.
 
+.PARAMETER PassThru
+    Return the resolved delete plan (per-target status) as an object. Without it the script
+    writes console output only.
+
 .PARAMETER TenantId
     Directory (tenant) id. Optional for -Interactive / -UseDeviceCode; required for application
     authentication.
+
+.PARAMETER Interactive
+    Sign in as a user (delegated auth). Mutually exclusive with other authentication modes;
+    -ClientId may select the app registration used for sign-in.
+
+.PARAMETER UseDeviceCode
+    Sign in as a user via the device code flow, for hosts that cannot complete a browser
+    redirect. Falls back to a reduced delegated scope set if the Agent 365 preview scopes are
+    not enabled in the tenant.
+
+.PARAMETER UseExistingConnection
+    Reuse an already-established Connect-MgGraph session instead of connecting again.
+
+.PARAMETER ClientId
+    Application (client) ID to authenticate as. Required with -ClientSecret or
+    -CertificateThumbprint.
+
+.PARAMETER ClientSecret
+    Client secret, as a SecureString or a plain string. Requires -ClientId and -TenantId.
+
+.PARAMETER CertificateThumbprint
+    Thumbprint of a certificate to authenticate -ClientId with. Requires -ClientId and
+    -TenantId.
+
+.PARAMETER AccessToken
+    A pre-acquired Graph access token, as a SecureString or a plain string.
+
+.PARAMETER LogPath
+    Write a timestamped log of this run. A path that names an existing directory (or ends in
+    a separator) gets a generated file name inside it; anything else is used as the exact
+    file name. Omit it to log nothing.
+
+.PARAMETER LogIncludeSecrets
+    Allow plain-string client secrets and passwords in the log. SecureString values and bearer
+    tokens remain redacted. Only meaningful with -LogPath.
+
+.PARAMETER LogCorrelationId
+    Correlation id written into the log, shared with any calling script's own log so a run can
+    be traced across scripts. Generated automatically when omitted.
 
 .EXAMPLE
     .\Remove-A365AgentIdentity.ps1 -AgentIdentityId a8c6eed9-f034-46cf-8b62-02dd16532065 `

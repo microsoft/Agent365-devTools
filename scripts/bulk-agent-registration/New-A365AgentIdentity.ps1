@@ -137,6 +137,10 @@
     400 "The reference target 'Application_<guid>' of type 'Application' is invalid for the
     'owners' reference."
 
+.PARAMETER RequireOwnerAssignment
+    Treat a refused -Owner assignment as fatal instead of the default: a warning, with the
+    agent identity otherwise left complete and usable.
+
 .PARAMETER Tag
     Optional strings used to categorize the agent identity. The effective tag set is the union of
     these and the blueprint's own tags.
@@ -236,6 +240,19 @@
 
 .PARAMETER AgentIdentityId
     With -Update, the object id (service principal id) of the agent identity to change.
+
+.PARAMETER LogPath
+    Write a timestamped log of this run. A path that names an existing directory (or ends in
+    a separator) gets a generated file name inside it; anything else is used as the exact
+    file name. Omit it to log nothing.
+
+.PARAMETER LogIncludeSecrets
+    Allow plain-string client secrets and passwords in the log. SecureString values and bearer
+    tokens remain redacted. Only meaningful with -LogPath.
+
+.PARAMETER LogCorrelationId
+    Correlation id written into the log, shared with any calling script's own log so a run can
+    be traced across scripts. Generated automatically when omitted.
 
 .EXAMPLE
     # Unattended, running as an application with a client secret from the environment.

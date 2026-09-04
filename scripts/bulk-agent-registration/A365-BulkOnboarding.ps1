@@ -115,24 +115,57 @@
     without this switch.
 
 .PARAMETER ClientId
+    Application (client) ID to authenticate as, forwarded verbatim to every row's
+    orchestrator call. See A365-AutomationOrchestrator.ps1's help for the full description.
+
 .PARAMETER ClientSecret
+    Client secret, as a SecureString or a plain string, forwarded verbatim to every row's
+    orchestrator call. Also read from $env:A365_CLIENT_SECRET.
+
 .PARAMETER CertificateThumbprint
+    Thumbprint of a certificate in the current user's store, forwarded verbatim to every
+    row's orchestrator call.
+
 .PARAMETER Certificate
+    An already-loaded X509Certificate2, forwarded verbatim - and, being an in-process call,
+    as the SAME live object - to every row's orchestrator call.
+
 .PARAMETER CertificatePath
+    Path to a .pfx file, forwarded verbatim to every row's orchestrator call.
+
 .PARAMETER CertificatePassword
+    Password for -CertificatePath, forwarded verbatim to every row's orchestrator call.
+
 .PARAMETER UseManagedIdentity
+    Authenticate with the host's managed identity, forwarded verbatim to every row's
+    orchestrator call.
+
 .PARAMETER AccessToken
+    A pre-acquired Graph access token, forwarded verbatim to every row's orchestrator call.
+
 .PARAMETER Interactive
+    Sign in as a user, forwarded verbatim to every row's orchestrator call.
+
 .PARAMETER SkipPermissionCheck
-    Authentication, forwarded verbatim to every row's orchestrator call. Exactly one method
-    must be supplied - see A365-AutomationOrchestrator.ps1's own help for the full
-    description of each.
+    Skips each step's permission pre-flight, forwarded verbatim to every row's orchestrator
+    call.
+
+    Exactly one authentication method (-ClientSecret, -CertificateThumbprint, -Certificate,
+    -CertificatePath, -UseManagedIdentity, -AccessToken or -Interactive) must be supplied -
+    see A365-AutomationOrchestrator.ps1's own help for the full description of each.
 
 .PARAMETER LogPath
+    Write a log of this run, forwarded to every row's orchestrator call so every log file
+    produced by this run - the orchestrator's and every step script's - lands under the same
+    correlation id. Omit it to log nothing.
+
 .PARAMETER LogIncludeSecrets
+    Allow plain-string client secrets and passwords in logs. SecureString values and bearer
+    tokens remain redacted. Forwarded to every row; only meaningful with -LogPath.
+
 .PARAMETER LogCorrelationId
-    Logging, forwarded to every row's orchestrator call so every log file produced by this
-    run - the orchestrator's and every step script's - shares one correlation id. A
+    Correlation id forwarded to every row's orchestrator call so every log file produced by
+    this run - the orchestrator's and every step script's - shares one correlation id. A
     correlation id is generated when omitted, exactly like the orchestrator.
 
 .PARAMETER OrchestratorInvoker

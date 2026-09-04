@@ -115,12 +115,28 @@
     The principal that creates the blueprint is always added as an owner by Entra ID automatically.
     Owners can create and modify agent identities under the blueprint without an Agent ID role.
 
+.PARAMETER RequireOwnerAssignment
+    Treat a refused -Owner assignment as fatal instead of the default: a warning, with the
+    blueprint otherwise left complete and usable.
+
+.PARAMETER Description
+    Description applied to the blueprint. Set on create; under -Update, sent only when passed
+    and different from the current value.
+
 .PARAMETER ManagedIdentityPrincipalId
     Principal (object) ID of a user-assigned managed identity to register as a federated identity
     credential. This is the recommended production credential.
 
+.PARAMETER FederatedCredentialName
+    Name of the federated identity credential created for -ManagedIdentityPrincipalId. Defaults
+    to 'a365-managed-identity'. Also used to detect an already-registered credential on re-run.
+
 .PARAMETER NewClientSecret
     Development only. Adds a client secret via addPassword and prints it once.
+
+.PARAMETER ClientSecretLifetimeDays
+    Lifetime, in days, of the secret created by -NewClientSecret (1-730, default 180). Also used
+    as the Key Vault entry's expiry when -KeyVaultName is given.
 
 .PARAMETER ExposedScopeValue
     Name of the delegated scope the blueprint exposes so an agent front end can call the agent
@@ -140,6 +156,11 @@
 .PARAMETER SkipInheritablePermissions
     Skips step 8. By default the script marks every requested resource app as allAllowed so agent
     identities inherit the blueprint's grants without extra consent.
+
+.PARAMETER OutputJsonPath
+    Write a JSON summary of the run (tenant, ids, resources, admin-consent URLs and, when
+    -NewClientSecret was used, the secret in PLAINTEXT). Treat the file as a credential when
+    -NewClientSecret is combined with it.
 
 .PARAMETER Update
     Update a blueprint that already exists instead of creating one. Requires -BlueprintId.
@@ -177,6 +198,19 @@
     A bearer token for https://vault.azure.net, for the cases where one cannot be derived
     from the Graph credential: -AccessToken (a Graph token is audience-bound and cannot be
     exchanged) and -Interactive without a signed-in Azure session.
+
+.PARAMETER LogPath
+    Write a timestamped log of this run. A path that names an existing directory (or ends in
+    a separator) gets a generated file name inside it; anything else is used as the exact
+    file name. Omit it to log nothing.
+
+.PARAMETER LogIncludeSecrets
+    Allow plain-string client secrets and passwords in the log. SecureString values and bearer
+    tokens remain redacted. Only meaningful with -LogPath.
+
+.PARAMETER LogCorrelationId
+    Correlation id written into the log, shared with any calling script's own log so a run can
+    be traced across scripts. Generated automatically when omitted.
 
 .EXAMPLE
     # Unattended, running as an application with a client secret from the environment.

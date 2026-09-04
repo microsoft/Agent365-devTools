@@ -205,6 +205,19 @@
     registration time, which starts with 'T_'. The bare GUID form is also accepted and
     resolved automatically.
 
+.PARAMETER LogPath
+    Write a timestamped log of this run. A path that names an existing directory (or ends in
+    a separator) gets a generated file name inside it; anything else is used as the exact
+    file name. Omit it to log nothing.
+
+.PARAMETER LogIncludeSecrets
+    Allow plain-string client secrets and passwords in the log. SecureString values and bearer
+    tokens remain redacted. Only meaningful with -LogPath.
+
+.PARAMETER LogCorrelationId
+    Correlation id written into the log, shared with any calling script's own log so a run can
+    be traced across scripts. Generated automatically when omitted.
+
 .EXAMPLE
     # Register one agent as the signed-in user, through your own client app.
     .\New-A365AgentRegistration.ps1 -TenantId contoso.onmicrosoft.com -Interactive `

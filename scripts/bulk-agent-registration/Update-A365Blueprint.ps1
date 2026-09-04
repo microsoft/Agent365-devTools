@@ -49,8 +49,53 @@
 .PARAMETER SkipInheritablePermissions
     Do not touch inheritable permissions.
 
+.PARAMETER ManagedIdentityPrincipalId
+    Principal (object) id of a managed identity to register as a federated identity
+    credential on the blueprint, so the agent can get tokens with no stored secret.
+
 .PARAMETER TenantId
     Directory (tenant) ID or verified domain.
+
+.PARAMETER ClientId
+    Application (client) ID to authenticate as. Forwarded unchanged to
+    New-A365AgentBlueprint.ps1 - see its help for the full authentication reference.
+
+.PARAMETER ClientSecret
+    Client secret, forwarded unchanged.
+
+.PARAMETER CertificateThumbprint
+    Certificate thumbprint, forwarded unchanged.
+
+.PARAMETER Certificate
+    An X509Certificate2 to authenticate with, forwarded unchanged.
+
+.PARAMETER CertificatePath
+    Path to a .pfx file, forwarded unchanged.
+
+.PARAMETER CertificatePassword
+    Password for -CertificatePath, forwarded unchanged.
+
+.PARAMETER UseManagedIdentity
+    Authenticate with the host's managed identity, forwarded unchanged.
+
+.PARAMETER AccessToken
+    A pre-acquired Graph access token, forwarded unchanged.
+
+.PARAMETER Interactive
+    Sign in as a user instead of running as an application, forwarded unchanged.
+
+.PARAMETER SkipPermissionCheck
+    Skip the app role pre-flight check, forwarded unchanged.
+
+.PARAMETER StepParameter
+    Escape hatch: a hashtable splatted into New-A365AgentBlueprint.ps1 for parameters this
+    wrapper does not surface. Keys are the step script's own parameter names and must not
+    include 'Update', 'BlueprintId' or 'TenantId', which this script already supplies.
+
+.PARAMETER ScriptRoot
+    Directory containing New-A365AgentBlueprint.ps1, which performs the actual Graph work.
+    Defaults to this script's own directory - keep the two files together, or pass this
+    explicitly.
 
 .EXAMPLE
     .\Update-A365Blueprint.ps1 -TenantId $tid -Interactive `

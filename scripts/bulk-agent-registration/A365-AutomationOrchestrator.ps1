@@ -626,6 +626,22 @@
 .PARAMETER SkipPermissionCheck
     Skips each step's permission pre-flight.
 
+.PARAMETER LogPath
+    Write a timestamped, correlation-id-tagged log of this run. A path that names an
+    existing directory (or ends in a separator) gets a generated file name inside it;
+    anything else is used as the exact file name. Forwarded to every step script this run
+    invokes, so one -LogPath produces one log per script, all sharing -LogCorrelationId.
+    Omit it to log nothing.
+
+.PARAMETER LogIncludeSecrets
+    Allow plain-string client secrets and passwords in the log. SecureString values and bearer
+    tokens remain redacted. Off by default; only meaningful with -LogPath.
+
+.PARAMETER LogCorrelationId
+    Correlation id written into this run's log and forwarded to every step script's log, so
+    every log file produced by one run can be tied together. Generated automatically when
+    omitted.
+
 .EXAMPLE
     # The whole pipeline, interactive. Each object is named where it is created.
     .\A365-AutomationOrchestrator.ps1 -TenantId contoso.onmicrosoft.com `
@@ -1099,11 +1115,11 @@ function Initialize-A365Log {
         [string]    $Path,
         [string]    $ScriptName,
         [hashtable] $BoundParameters = @{},
-        [switch]    $IncludeBlueprintSecretsInOutput,
+        [switch]    $IncludeSecrets,
         [string]    $CorrelationId
     )
 
-    $script:LogIncludeSecrets = [bool]$IncludeBlueprintSecretsInOutput
+    $script:LogIncludeSecrets = [bool]$IncludeSecrets
     $script:LogStart          = Get-Date
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
 

@@ -55,8 +55,55 @@
 .PARAMETER LicenseSkuPartNumber
     SKU part number of the licence to assign, for example MICROSOFT_AGENT_365_TIER_3.
 
+.PARAMETER DisabledPlans
+    Service plan ids to disable within the assigned licence.
+
 .PARAMETER TenantId
     Directory (tenant) ID or verified domain.
+
+.PARAMETER ClientId
+    Application (client) ID to authenticate as. Forwarded unchanged to
+    New-A365AgentUser.ps1, which is app-only - see its help for the full authentication
+    reference.
+
+.PARAMETER ClientSecret
+    Client secret, forwarded unchanged.
+
+.PARAMETER CertificateThumbprint
+    Thumbprint of a certificate in the -CertificateStoreLocation store, forwarded unchanged.
+
+.PARAMETER CertificateStoreLocation
+    Store to read -CertificateThumbprint from: 'CurrentUser' or 'LocalMachine', forwarded
+    unchanged.
+
+.PARAMETER Certificate
+    An X509Certificate2 to authenticate with, forwarded unchanged.
+
+.PARAMETER CertificatePath
+    Path to a .pfx file, forwarded unchanged.
+
+.PARAMETER CertificatePassword
+    Password for -CertificatePath, forwarded unchanged.
+
+.PARAMETER UseManagedIdentity
+    Authenticate with the host's managed identity, forwarded unchanged.
+
+.PARAMETER ManagedIdentityClientId
+    Client id of a user-assigned managed identity, forwarded unchanged.
+
+.PARAMETER AccessToken
+    A pre-acquired Graph access token, forwarded unchanged.
+
+.PARAMETER StepParameter
+    Escape hatch: a hashtable splatted into New-A365AgentUser.ps1 for parameters this wrapper
+    does not surface. Keys are the step script's own parameter names and must not include
+    'Update', 'AgentUserId', 'TenantId' or 'UserPrincipalName' - the first three are already
+    supplied by this script, and the UPN cannot be changed after creation.
+
+.PARAMETER ScriptRoot
+    Directory containing New-A365AgentUser.ps1, which performs the actual Graph work.
+    Defaults to this script's own directory - keep the two files together, or pass this
+    explicitly.
 
 .EXAMPLE
     .\Update-A365AgentUser.ps1 -TenantId $tid -ClientId $app -ClientSecret $env:A365_CLIENT_SECRET `

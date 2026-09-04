@@ -194,6 +194,9 @@ function Get-A365BulkOnboardingTypeSchema {
     <#
     .SYNOPSIS
         Returns the column/parameter mapping schema for one or all object types.
+
+    .PARAMETER ObjectType
+        The object type to return, or omit it to return every type schema.
     #>
     [CmdletBinding()]
     param([ValidateSet('Blueprint', 'AgentIdentity', 'AgentUser', 'AgentRegistration')] [string] $ObjectType)
@@ -206,6 +209,9 @@ function Test-A365BulkOnboardingGuid {
     .SYNOPSIS
         True when Value parses as a GUID. Blank is not a valid GUID - callers check
         required-ness separately.
+
+    .PARAMETER Value
+        The CSV value to validate as a GUID.
     #>
     [CmdletBinding()]
     param([string] $Value)
@@ -219,6 +225,9 @@ function Test-A365BulkOnboardingUpn {
     .SYNOPSIS
         True when Value has the shape of a user principal name. Mirrors the check
         New-A365AgentUser.ps1 applies to -UserPrincipalName.
+
+    .PARAMETER Value
+        The CSV value to validate as a user principal name.
     #>
     [CmdletBinding()]
     param([string] $Value)
@@ -231,6 +240,9 @@ function ConvertTo-A365BulkOnboardingBool {
     .SYNOPSIS
         Strictly parses a CSV cell as a boolean. Blank means "not specified" (false, and
         $IsPresent is $false); anything other than true/false (case-insensitive) is an error.
+
+    .PARAMETER Value
+        The CSV value to parse as true, false, or blank.
     #>
     [CmdletBinding()]
     param([string] $Value)
@@ -248,6 +260,9 @@ function ConvertTo-A365BulkOnboardingArray {
     <#
     .SYNOPSIS
         Splits a semicolon-separated CSV cell into a trimmed, non-empty string array.
+
+    .PARAMETER Value
+        The semicolon-separated CSV value to split.
     #>
     [CmdletBinding()]
     param([string] $Value)
@@ -262,6 +277,9 @@ function ConvertFrom-A365BulkOnboardingJson {
     .SYNOPSIS
         Parses a JSON CSV cell with ConvertFrom-Json -AsHashtable, reporting failure instead
         of throwing, so the caller can add a row/column-scoped validation error.
+
+    .PARAMETER Value
+        The JSON CSV value to parse, or blank for no value.
     #>
     [CmdletBinding()]
     param([string] $Value)
@@ -281,6 +299,13 @@ function Test-A365BulkOnboardingParameterJsonKeys {
     <#
     .SYNOPSIS
         Returns the keys of Hashtable (case-insensitive) that collide with BlockedKeys.
+
+    .PARAMETER Hashtable
+        The parsed -*ParameterJson value for one row/column.
+
+    .PARAMETER BlockedKeys
+        The names it must not contain: $script:GlobalBlockedParameterJsonKeys plus every
+        -*Param name the row's own explicit CSV columns already control.
     #>
     [CmdletBinding()]
     param([hashtable] $Hashtable, [string[]] $BlockedKeys)
@@ -301,6 +326,9 @@ function Import-A365BulkOnboardingCsv {
         Reads the bulk onboarding CSV from disk. Only I/O-level problems (missing or
         genuinely empty file, wrong extension) throw; everything else becomes a validation
         error from ConvertTo-A365BulkOnboardingPlan so the whole file can be checked at once.
+
+    .PARAMETER Path
+        The path to the bulk onboarding CSV file.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][ValidateNotNullOrWhiteSpace()][string] $Path)
@@ -687,6 +715,19 @@ function New-A365BulkOnboardingOrchestratorArguments {
     .SYNOPSIS
         Builds the hashtable to splat at A365-AutomationOrchestrator.ps1 for one create
         node, given the resolved id of its parent (or $null for a Blueprint / root row).
+
+    .PARAMETER Node
+        One entry from $Plan.Nodes (ConvertTo-A365BulkOnboardingPlan): a create row with
+        its ObjectType, Switch, ParentRefParam and parsed ParamValues.
+
+    .PARAMETER TenantId
+        Forwarded as -TenantId when supplied; omitted entirely from the splat otherwise.
+
+    .PARAMETER ParentResolvedId
+        The live id this node's parent already resolved to, or $null for a root
+        (ParentKey-less) node. Required (and must be non-blank) whenever the node's schema
+        defines a ParentRefParam - the caller is expected to have skipped a node whose
+        parent did not resolve, rather than call this with a blank id for it.
     #>
     [CmdletBinding()]
     param(
@@ -731,6 +772,11 @@ function New-A365BulkOnboardingStateMap {
     .SYNOPSIS
         Builds the case-insensitive Key -> row-state map used to drive execution: existing
         rows are seeded as already resolved, create rows start Pending.
+
+    .PARAMETER Plan
+        The object returned by ConvertTo-A365BulkOnboardingPlan (its Nodes and
+        ExistingNodes are read; Errors is not consulted here - the caller is expected to
+        have already stopped on a plan with validation errors).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)] $Plan)
@@ -765,6 +811,13 @@ function Test-A365BulkOnboardingRowReady {
     .SYNOPSIS
         True when a node's parent (if any) is in a state that lets the node proceed:
         resolved (Existing / Succeeded) rather than Pending, Failed or SkippedDependency.
+
+    .PARAMETER Node
+        The candidate node (from $Plan.Nodes) to check.
+
+    .PARAMETER StateMap
+        The case-insensitive Key -> row-state map from New-A365BulkOnboardingStateMap,
+        updated as earlier rows in the run complete.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)] $Node, [Parameter(Mandatory)] $StateMap)
@@ -910,6 +963,19 @@ function ConvertTo-A365BulkOnboardingRedactedValue {
         are kept only when IncludeSecrets is set; every other credential-shaped key is
         always redacted, because it is a credential rather than something the run created,
         and -IncludeSecrets must never unlock it.
+
+    .PARAMETER Value
+        The value to redact: a scalar, a SecureString, a SwitchParameter, an IDictionary, a
+        PSCustomObject, or an IEnumerable of any of these. Recursed into for the latter two.
+
+    .PARAMETER IncludeSecrets
+        Keep the blueprint client secret ($script:ConditionallyRedactedReportKeys) instead of
+        redacting it. Every key in $script:AlwaysRedactedReportKeys is redacted regardless.
+
+    .PARAMETER Depth
+        Recursion guard, incremented on every nested call. Not meant to be set by callers -
+        it exists so a pathologically deep or self-referential object cannot recurse forever;
+        past depth 8 the remaining value is stringified instead of walked further.
     #>
     [CmdletBinding()]
     param($Value, [switch] $IncludeSecrets, [int] $Depth = 0)

@@ -35,6 +35,86 @@
     managed identity. This makes the script drop-in compatible with standard Azure SDK
     environment-variable conventions.
 
+.PARAMETER TenantId
+    Directory (tenant) ID or verified domain. Required for client secret, certificate and
+    federated-credential auth; optional for -AccessToken (read from the token's 'tid'
+    claim), managed identity, -UseAzureCli and -UseAzPowerShell.
+
+.PARAMETER ClientId
+    Application (client) ID authenticating to Graph. Required for client secret, certificate,
+    federated token, client assertion, and GitHub OIDC authentication. Managed identity,
+    Azure CLI, Az PowerShell, and access-token authentication do not require it.
+
+.PARAMETER ClientSecret
+    Client secret, as a SecureString or a plain string. Auto-detected from
+    $env:AZURE_CLIENT_SECRET when no auth parameter is supplied. Exactly one authentication
+    method may be given.
+
+.PARAMETER CertificateThumbprint
+    Thumbprint of a certificate in the -CertificateStoreLocation store's "My" folder.
+
+.PARAMETER CertificateStoreLocation
+    Store to read -CertificateThumbprint from: 'CurrentUser' (default) or 'LocalMachine'.
+
+.PARAMETER CertificatePath
+    Path to a .pfx file to authenticate with. Combine with -CertificatePassword when the
+    file is protected. Auto-detected from $env:AZURE_CLIENT_CERTIFICATE_PATH.
+
+.PARAMETER CertificatePassword
+    Password for -CertificatePath, as a SecureString or a plain string.
+
+.PARAMETER Certificate
+    An already-loaded X509Certificate2 to authenticate with.
+
+.PARAMETER UseManagedIdentity
+    Authenticate with the host's managed identity (system-assigned, or user-assigned with
+    -ManagedIdentityClientId). Supports the App Service/Container Apps/Functions
+    IDENTITY_ENDPOINT protocol and Azure VM/VMSS IMDS.
+
+.PARAMETER ManagedIdentityClientId
+    Client id of a user-assigned managed identity, used with -UseManagedIdentity.
+
+.PARAMETER FederatedTokenFile
+    Path to a workload-identity federation token file (AKS/Kubernetes), exchanged for a
+    Graph token via client assertion. Auto-detected from $env:AZURE_FEDERATED_TOKEN_FILE.
+
+.PARAMETER ClientAssertion
+    A pre-built JWT client assertion (e.g. from a GitHub OIDC or other OIDC identity
+    provider) to authenticate -ClientId with.
+
+.PARAMETER UseAzureCli
+    Obtain a Graph token from the signed-in Azure CLI ('az account get-access-token').
+
+.PARAMETER UseAzPowerShell
+    Obtain a Graph token from the signed-in Az PowerShell session (Get-AzAccessToken).
+
+.PARAMETER AccessToken
+    A pre-acquired Microsoft Graph access token, as a SecureString or a plain string.
+
+.PARAMETER Environment
+    Azure cloud: 'AzurePublic' (default), 'AzureUSGovernment' or 'AzureChina'. Selects the
+    default Graph and authority endpoints; override either individually with -GraphBaseUrl
+    or -AuthorityHost.
+
+.PARAMETER GraphBaseUrl
+    Overrides the Microsoft Graph base URL implied by -Environment.
+
+.PARAMETER AuthorityHost
+    Overrides the Microsoft Entra authority host implied by -Environment.
+
+.PARAMETER AgentIdentityId
+    Object id (service principal id) of an EXISTING agent identity to create the agent user
+    under. Mutually exclusive with -BlueprintAppId; one of the two is required unless
+    -ConfigurePermissions or -Update is used alone.
+
+.PARAMETER BlueprintAppId
+    AppId (or object id - they are the same GUID for a blueprint) of the blueprint to mint a
+    NEW agent identity from before creating the agent user. Mutually exclusive with
+    -AgentIdentityId.
+
+.PARAMETER AgentIdentityDisplayName
+    Display name for the new agent identity. Required with -BlueprintAppId.
+
 .PARAMETER ConfigurePermissions
     Configures the Entra application registration with every Graph application permission this
     script requires: adds them to the app manifest (requiredResourceAccess) and creates the
@@ -119,6 +199,70 @@
     with "Request principal is not the owner". Use it to keep provisioning strictly read-only with
     respect to the blueprint's owner list.
 
+.PARAMETER UserPrincipalName
+    UPN for the agent user, e.g. research.assistant@contoso.com. Required when creating (not
+    with -Update, which is identified by -AgentUserId or this same parameter and cannot
+    rename the UPN afterwards).
+
+.PARAMETER DisplayName
+    Display name for the agent user. When omitted on create, defaults to the local part of
+    -UserPrincipalName. Under -Update, sent only when explicitly passed.
+
+.PARAMETER MailNickname
+    Mail nickname. When omitted on create, defaults to the local part of -UserPrincipalName.
+    Under -Update, sent only when explicitly passed.
+
+.PARAMETER UsageLocation
+    Two-letter usage location for the agent user, e.g. 'US'. Defaults to 'US' on create and
+    is required before a licence can be assigned. Under -Update it is sent ONLY when
+    explicitly passed, so re-running an update never silently overwrites it.
+
+.PARAMETER SponsorUserId
+    Object id of the user to set as sponsor of a newly created agent identity. Mutually
+    exclusive in effect with -SponsorUpn (this one wins if both are given). Required by
+    Graph on the -BlueprintAppId path.
+
+.PARAMETER SponsorUpn
+    UPN or mail address of the sponsor, resolved to an object id. Used when -SponsorUserId is
+    not given.
+
+.PARAMETER ManagerUserId
+    Object id of the user to set as the agent user's manager. Takes precedence over
+    -ManagerUpn when both are given.
+
+.PARAMETER ManagerUpn
+    UPN or mail address of the manager, resolved to an object id. Used when -ManagerUserId is
+    not given.
+
+.PARAMETER AssignLicense
+    Assigns a licence to the agent user. Off by default (opt-in). Needs -UsageLocation and
+    either -LicenseSkuId or -LicenseSkuPartNumber.
+
+.PARAMETER LicenseSkuId
+    SKU id of the licence to assign. Defaults to the Microsoft Agent 365 Tier 3 SKU
+    (304b93a3-b1f1-427f-aa02-da21e7c7d675). Overridden by -LicenseSkuPartNumber when given.
+
+.PARAMETER LicenseSkuPartNumber
+    SKU part number of the licence to assign; resolved to a SKU id against the tenant's
+    subscribed SKUs and takes precedence over -LicenseSkuId.
+
+.PARAMETER DisabledPlans
+    Service plan ids to disable within the assigned licence.
+
+.PARAMETER ConfigureAppId
+    With -ConfigurePermissions, the application to configure. Defaults to -ClientId; use this
+    to configure a different app than the one authenticating this run.
+
+.PARAMETER MaxRetries
+    Maximum retry attempts for a transient (429/5xx) Graph failure. Default 8.
+
+.PARAMETER RetryDelaySeconds
+    Base delay, in seconds, between retries of a transient Graph failure. Default 5.
+
+.PARAMETER PassThru
+    Return a result object describing what was created/changed. Without it the script writes
+    console output only and returns nothing.
+
 .PARAMETER Update
     Update an agent user that already exists instead of creating one. Requires -AgentUserId.
 
@@ -136,6 +280,19 @@
 .PARAMETER AgentUserId
     With -Update, the object id or user principal name of the agent user to change. The user
     principal name itself cannot be changed after creation.
+
+.PARAMETER LogPath
+    Write a timestamped log of this run. A path that names an existing directory (or ends in
+    a separator) gets a generated file name inside it; anything else is used as the exact
+    file name. Omit it to log nothing.
+
+.PARAMETER LogIncludeSecrets
+    Allow plain-string client secrets and passwords in the log. SecureString values and bearer
+    tokens remain redacted. Only meaningful with -LogPath.
+
+.PARAMETER LogCorrelationId
+    Correlation id written into the log, shared with any calling script's own log so a run can
+    be traced across scripts. Generated automatically when omitted.
 
 .EXAMPLE
     # One-time: grant the app the permissions it needs (elevated credential required)
