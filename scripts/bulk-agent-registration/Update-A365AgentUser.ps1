@@ -67,7 +67,9 @@
     reference.
 
 .PARAMETER ClientSecret
-    Client secret, forwarded unchanged.
+    Client secret, forwarded unchanged. Accepts a string or a SecureString - the exact
+    object handed in is the exact object New-A365AgentUser.ps1 receives, never re-typed,
+    copied or stringified along the way.
 
 .PARAMETER CertificateThumbprint
     Thumbprint of a certificate in the -CertificateStoreLocation store, forwarded unchanged.
@@ -83,7 +85,8 @@
     Path to a .pfx file, forwarded unchanged.
 
 .PARAMETER CertificatePassword
-    Password for -CertificatePath, forwarded unchanged.
+    Password for -CertificatePath. Accepts a string or a SecureString and is forwarded
+    unchanged, for the same reason as -ClientSecret above.
 
 .PARAMETER UseManagedIdentity
     Authenticate with the host's managed identity, forwarded unchanged.
@@ -92,7 +95,8 @@
     Client id of a user-assigned managed identity, forwarded unchanged.
 
 .PARAMETER AccessToken
-    A pre-acquired Graph access token, forwarded unchanged.
+    A pre-acquired Graph access token. Accepts a string or a SecureString and is forwarded
+    unchanged, for the same reason as -ClientSecret above.
 
 .PARAMETER StepParameter
     Escape hatch: a hashtable splatted into New-A365AgentUser.ps1 for parameters this wrapper
@@ -144,17 +148,18 @@ param(
     [string] $LicenseSkuPartNumber,
     [string[]] $DisabledPlans,
 
-    # Authentication. No -Interactive or -SkipPermissionCheck: the step script has neither.
+    # No -Interactive or -SkipPermissionCheck: the step script has neither.
+    # Forward credential objects unchanged so SecureString values are not stringified.
     [string] $ClientId,
-    [string] $ClientSecret,
+    [object] $ClientSecret,
     [string] $CertificateThumbprint,
     [string] $CertificateStoreLocation,
     [object] $Certificate,
     [string] $CertificatePath,
-    [string] $CertificatePassword,
+    [object] $CertificatePassword,
     [switch] $UseManagedIdentity,
     [string] $ManagedIdentityClientId,
-    [string] $AccessToken,
+    [object] $AccessToken,
 
     # Escape hatch for anything this wrapper does not surface.
     [hashtable] $StepParameter = @{},

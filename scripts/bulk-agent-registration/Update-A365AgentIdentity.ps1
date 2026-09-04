@@ -77,7 +77,9 @@
 
 .PARAMETER ClientSecret
     Client secret, forwarded unchanged. Also read from $env:A365_CLIENT_SECRET by the step
-    script when omitted.
+    script when omitted. Accepts a string or a SecureString - the exact object handed in is
+    the exact object New-A365AgentIdentity.ps1 receives, never re-typed, copied or
+    stringified along the way.
 
 .PARAMETER CertificateThumbprint
     Certificate thumbprint, forwarded unchanged.
@@ -89,13 +91,15 @@
     Path to a .pfx file, forwarded unchanged.
 
 .PARAMETER CertificatePassword
-    Password for -CertificatePath, forwarded unchanged.
+    Password for -CertificatePath. Accepts a string or a SecureString and is forwarded
+    unchanged, for the same reason as -ClientSecret above.
 
 .PARAMETER UseManagedIdentity
     Authenticate with the host's managed identity, forwarded unchanged.
 
 .PARAMETER AccessToken
-    A pre-acquired Graph access token, forwarded unchanged.
+    A pre-acquired Graph access token. Accepts a string or a SecureString and is forwarded
+    unchanged, for the same reason as -ClientSecret above.
 
 .PARAMETER Interactive
     Sign in as a user instead of running as an application, forwarded unchanged.
@@ -125,7 +129,8 @@
     .\Update-A365AgentIdentity.ps1 -TenantId $tid -Interactive `
         -AgentIdentityId $id -Tag 'env:prod','team:hr'
 
-    Replace the tag collection. Any tag not listed here is removed.
+    Add these two tags to the identity's existing non-inherited tags. Any tag already present
+    is left alone; nothing is removed.
 
 .EXAMPLE
     .\Update-A365AgentIdentity.ps1 -TenantId $tid -Interactive `
@@ -162,15 +167,15 @@ param(
     [switch]   $GrantAdminConsent,
     [string]   $OutputJsonPath,
 
-    # Authentication, forwarded unchanged.
+    # Forward credential objects unchanged so SecureString values are not stringified.
     [string] $ClientId,
-    [string] $ClientSecret,
+    [object] $ClientSecret,
     [string] $CertificateThumbprint,
     [object] $Certificate,
     [string] $CertificatePath,
-    [string] $CertificatePassword,
+    [object] $CertificatePassword,
     [switch] $UseManagedIdentity,
-    [string] $AccessToken,
+    [object] $AccessToken,
     [switch] $Interactive,
     [switch] $SkipPermissionCheck,
 

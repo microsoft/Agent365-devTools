@@ -617,6 +617,8 @@ Each takes `-TenantId` and its own object id as the only mandatory parameters, p
 
 Merge behavior differs by attribute, and it is not uniform. Custom security attributes merge per attribute, though a multi-valued attribute that is written is replaced wholesale. Agent identity tags merge — the script reads the current set and writes the union, so adding one tag does not drop the others. Agent identity owners are additive. Registration ownerIds REPLACE the whole collection, so list every owner you want to keep.
 
+Like the step scripts they wrap (section 7.1), `-ClientSecret`, `-CertificatePassword` and `-AccessToken` on all four scripts accept either a plain string or a `SecureString` and are forwarded to the step script unchanged - the exact object bound on the command line is the exact object the step script receives, never re-typed, copied or stringified in between. Plain strings remain supported for compatibility but still produce the step script's own command-line-exposure warning.
+
 ## 12. Quick start checklist
 
 1. **Install PowerShell 7 and the Graph module**

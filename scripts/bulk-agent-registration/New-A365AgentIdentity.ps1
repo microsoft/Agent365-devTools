@@ -1400,11 +1400,14 @@ function Get-AppOnlyGraphToken {
     param(
         [Parameter(Mandatory)][string] $TenantId,
         [Parameter(Mandatory)][string] $ClientId,
-        [Parameter(Mandatory)][securestring] $ClientSecret
+        # Reject null at this boundary before building the token request.
+        [Parameter(Mandatory)][ValidateNotNull()][object] $ClientSecret
     )
 
-    $plain = [Net.NetworkCredential]::new('', $ClientSecret).Password
-    $body  = @{
+    $ownsSecure = $ClientSecret -is [string]
+    $secure     = ConvertTo-SecureStringValue -Value $ClientSecret -Name 'ClientSecret'
+    $plain      = [Net.NetworkCredential]::new('', $secure).Password
+    $body       = @{
         client_id     = $ClientId
         client_secret = $plain
         scope         = 'https://graph.microsoft.com/.default'
@@ -1421,7 +1424,9 @@ function Get-AppOnlyGraphToken {
         throw "Could not get a token for app $ClientId in tenant ${TenantId}: $($_.Exception.Message)$detail"
     }
     finally {
+        $body.client_secret = $null
         $plain = $null
+        if ($ownsSecure) { $secure.Dispose() }
     }
 
     if (-not (Test-HasProperty $response 'access_token')) {
@@ -2125,10 +2130,7 @@ finally {
 # Step 1 - connect
 # ---------------------------------------------------------------------------
 
-# Normalised at SCRIPT scope on purpose. Doing this inside Connect-GraphSession would create a
-# function-local copy, leaving the script-scope value an unconverted plain string that
-# Get-AppOnlyGraphToken (which takes a SecureString) would reject at step 5, and $PSCmdlet there
-# reports the function's parameter set rather than the script's.
+# Normalize at script scope so every consumer receives a SecureString.
 $BlueprintClientSecret = ConvertTo-SecureStringValue -Value $BlueprintClientSecret -Name 'BlueprintClientSecret'
 
 if ((-not $BlueprintClientSecret) -and $env:A365_BLUEPRINT_CLIENT_SECRET) {

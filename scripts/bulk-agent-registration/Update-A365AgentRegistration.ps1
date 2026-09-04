@@ -61,7 +61,9 @@
     New-A365AgentRegistration.ps1 - see its help for the full authentication reference.
 
 .PARAMETER ClientSecret
-    Client secret, forwarded unchanged.
+    Client secret, forwarded unchanged. Accepts a string or a SecureString - the exact
+    object handed in is the exact object New-A365AgentRegistration.ps1 receives, never
+    re-typed, copied or stringified along the way.
 
 .PARAMETER CertificateThumbprint
     Certificate thumbprint, forwarded unchanged.
@@ -73,13 +75,15 @@
     Path to a .pfx file, forwarded unchanged.
 
 .PARAMETER CertificatePassword
-    Password for -CertificatePath, forwarded unchanged.
+    Password for -CertificatePath. Accepts a string or a SecureString and is forwarded
+    unchanged, for the same reason as -ClientSecret above.
 
 .PARAMETER UseManagedIdentity
     Authenticate with the host's managed identity, forwarded unchanged.
 
 .PARAMETER AccessToken
-    A pre-acquired Graph access token, forwarded unchanged.
+    A pre-acquired Graph access token. Accepts a string or a SecureString and is forwarded
+    unchanged, for the same reason as -ClientSecret above.
 
 .PARAMETER Interactive
     Sign in as a user instead of running as an application, forwarded unchanged. Often
@@ -140,15 +144,15 @@ param(
     [string]   $BlueprintAppId,
     [switch]   $SkipDisplayNameNormalization,
 
-    # Authentication, forwarded unchanged.
+    # Forward credential objects unchanged so SecureString values are not stringified.
     [string] $ClientId,
-    [string] $ClientSecret,
+    [object] $ClientSecret,
     [string] $CertificateThumbprint,
     [object] $Certificate,
     [string] $CertificatePath,
-    [string] $CertificatePassword,
+    [object] $CertificatePassword,
     [switch] $UseManagedIdentity,
-    [string] $AccessToken,
+    [object] $AccessToken,
     [switch] $Interactive,
     [switch] $SkipPermissionCheck,
 
