@@ -226,9 +226,9 @@
     (-AgentIdentityDisplayName), retagging (-AgentIdentityTag) and changing custom security
     attributes (-AgentIdentityCustomSecurityAttribute).
 
-    Note the differing merge semantics, which come from Graph rather than from this script:
-    custom security attributes merge per attribute, whereas tags replace the whole
-    collection - so -AgentIdentityTag must list every tag you want to keep.
+    Custom security attributes merge per attribute. Tags are added to an order-preserving,
+    case-insensitive union with the identity's existing non-inherited tags; existing tags are
+    not removed.
 
     The identity this names is also the one a -NewAgentUser or -NewAgentRegistration in the
     same run acts on.
@@ -787,8 +787,8 @@
         -UpdateAgentRegistration $registrationId -AgentRegistrationDisplayName 'HR Agent'
 
     Several updates in one run. Each phase targets its own object and writes only the
-    attributes named for it. Note that -AgentIdentityTag replaces the whole tag collection,
-    so it must list every tag to keep.
+    attributes named for it. -AgentIdentityTag adds the requested tags without removing the
+    identity's existing non-inherited tags.
 
 .EXAMPLE
     .\A365-AutomationOrchestrator.ps1 -TenantId $tid -Interactive `

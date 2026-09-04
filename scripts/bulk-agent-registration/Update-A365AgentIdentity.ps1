@@ -9,13 +9,13 @@
     ONLY THE ATTRIBUTES YOU PASS ARE WRITTEN. A parameter left off the command line is not
     forwarded at all, so it cannot overwrite what is already stored.
 
-    Two merge behaviours differ, and both come from Graph rather than from this script:
+    The delegated update implementation preserves values that are not named:
 
         -CustomSecurityAttribute   merges per attribute; attributes you do not name survive
-        -Tag                       replaces the whole collection; list every tag to keep
+        -Tag                       adds tags to an order-preserving, case-insensitive union
 
-    That asymmetry is easy to get wrong, so it is worth stating plainly: passing a single tag
-    removes the others, whereas passing a single custom security attribute does not.
+    Passing one tag does not remove existing tags. Passing one custom security attribute does
+    not remove other attributes.
 
     The Graph work itself is done by New-A365AgentIdentity.ps1, which this script invokes in
     its update mode. Keeping one implementation means a fix applies to both entry points at
@@ -30,8 +30,9 @@
     New display name. Compared case-sensitively, so a change of casing alone is applied.
 
 .PARAMETER Tag
-    Tags to set. REPLACES the existing collection, so list every tag you want to keep. Graph
-    does not preserve tag order, and tags are not visible in the Entra portal.
+    Tags to add. Merged with the identity's existing non-inherited tags as an order-preserving,
+    case-insensitive union; existing tags are never removed. Tags are not visible in the Entra
+    portal.
 
 .PARAMETER CustomSecurityAttribute
     Custom security attributes, either as "AttributeSet:Attribute:Value" strings or as a
