@@ -185,6 +185,9 @@ class Program
             var logsLogger = serviceProvider.GetRequiredService<ILogger<LogsCommand>>();
             var logRedactionService = serviceProvider.GetRequiredService<ILogRedactionService>();
             rootCommand.AddCommand(LogsCommand.CreateCommand(logsLogger, logRedactionService));
+            var thirdPartyLogger = serviceProvider.GetRequiredService<ILogger<ThirdPartyCommand>>();
+            var httpClient = serviceProvider.GetRequiredService<HttpClient>();
+            rootCommand.AddCommand(ThirdPartyCommand.CreateCommand(thirdPartyLogger, httpClient));
 
             // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
             // and UseParseErrorReporting() (full help dump on any parse error), replacing both
@@ -248,7 +251,8 @@ class Program
                 || args.Any(a => a is "--help" or "-h" or "--version");
             var isShowSecret = args.Any(a => a.Equals("--show-secret", StringComparison.Ordinal)
                 || a.StartsWith("--show-secret=", StringComparison.Ordinal));
-            if (!isHelpOrVersion && !isShowSecret)
+            var isThirdPartyCommand = args.FirstOrDefault(a => !a.StartsWith("-")) == "3p";
+            if (!isHelpOrVersion && !isShowSecret && !isThirdPartyCommand)
             {
                 try
                 {
@@ -322,6 +326,7 @@ class Program
         services.AddSingleton<IClientAppValidator, ClientAppValidator>();
         services.AddSingleton<IVersionCheckService, VersionCheckService>();
         services.AddSingleton<INoticeService, NoticeService>();
+        services.AddSingleton(new HttpClient());
 
         // Add Microsoft Agent 365 Tooling Service with environment detection
         services.AddSingleton<IAgent365ToolingService>(provider =>
