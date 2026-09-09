@@ -437,11 +437,10 @@ public class QueryEntraCommand
                 logger.LogInformation("{IdentityType} ID: {IdentityId}", identityType, agenticAppId);
                 logger.LogInformation("");
 
-                // Query Entra ID for the agent identity and OAuth2 grants
+                // Query Entra ID for the agent identity and OAuth2 grants.
                 logger.LogInformation("Querying Microsoft Entra ID for agent identity and OAuth2 grants...");
-                
-                // Get the service principal details for this application  
-                var spResult = await executor.ExecuteAsync("az", 
+
+                var spResult = await executor.ExecuteAsync("az",
                     $"ad sp list --filter \"appId eq '{agenticAppId}'\" --query \"[].{{objectId:id,appId:appId,displayName:displayName}}\" --output json");
 
                 if (!spResult.Success)
@@ -452,19 +451,59 @@ public class QueryEntraCommand
                     return;
                 }
 
-                using var spDoc = JsonDocument.Parse(spResult.StandardOutput);
-                
-                if (spDoc.RootElement.ValueKind != JsonValueKind.Array || spDoc.RootElement.GetArrayLength() == 0)
+                string? agentServicePrincipalObjectId;
+                string? displayName = "Unknown";
+                string? appId = agenticAppId;
+                try
                 {
-                    logger.LogWarning("No service principal found for this application. The app may not be installed in this tenant.");
+                    using var spDoc = JsonDocument.Parse(spResult.StandardOutput);
+
+                    if (spDoc.RootElement.ValueKind != JsonValueKind.Array)
+                    {
+                        logger.LogError("Service principal lookup returned malformed JSON. Expected an array response.");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    if (spDoc.RootElement.GetArrayLength() == 0)
+                    {
+                        logger.LogWarning("No service principal found for this application. The app may not be installed in this tenant.");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    var spElement = spDoc.RootElement[0];
+                    if (!spElement.TryGetProperty("objectId", out var objectIdElement) ||
+                        objectIdElement.ValueKind != JsonValueKind.String ||
+                        string.IsNullOrWhiteSpace(objectIdElement.GetString()))
+                    {
+                        logger.LogError("Service principal lookup returned malformed data. Expected a non-empty string objectId.");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    agentServicePrincipalObjectId = objectIdElement.GetString();
+                    if (spElement.TryGetProperty("displayName", out var nameElement) &&
+                        nameElement.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(nameElement.GetString()))
+                    {
+                        displayName = nameElement.GetString();
+                    }
+
+                    if (spElement.TryGetProperty("appId", out var appIdElement) &&
+                        appIdElement.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(appIdElement.GetString()))
+                    {
+                        appId = appIdElement.GetString();
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    logger.LogError("Failed to parse service principal lookup response: {Error}", ex.Message);
                     context.ExitCode = 1;
                     return;
                 }
-                
-                var spElement = spDoc.RootElement[0]; // Get the first (and only) service principal
-                var displayName = spElement.TryGetProperty("displayName", out var nameElement) ? nameElement.GetString() : "Unknown";
-                var appId = spElement.TryGetProperty("appId", out var appIdElement) ? appIdElement.GetString() : agenticAppId;
-                
+
                 logger.LogInformation("Application: {DisplayName}", displayName);
                 logger.LogInformation("App ID: {AppId}", appId);
                 
@@ -479,8 +518,10 @@ public class QueryEntraCommand
                 logger.LogInformation("============================================");
                 
                 // Use Microsoft Graph API through Azure CLI to get OAuth2 permission grants
+                // oauth2PermissionGrants.clientId is the caller service principal object ID, not
+                // the application/client ID printed in the portal.
                 var grantsResult = await executor.ExecuteAsync("az",
-                    $"rest --method GET --url \"{graphApiService.GraphBaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{agenticAppId}'\" --output json");
+                    $"rest --method GET --url \"{graphApiService.GraphBaseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{agentServicePrincipalObjectId}'\" --output json");
 
                 // Distinguish "API call failed" (can't read) from "API succeeded but returned no grants".
                 // Non-admin developers lack DelegatedPermissionGrant.Read.All and always get a failure here —
@@ -493,11 +534,17 @@ public class QueryEntraCommand
                     try
                     {
                         using var grantsDoc = JsonDocument.Parse(grantsResult.StandardOutput);
-                        if (grantsDoc.RootElement.TryGetProperty("value", out var valueElement) &&
-                            valueElement.ValueKind == JsonValueKind.Array && valueElement.GetArrayLength() > 0)
+                        if (grantsDoc.RootElement.ValueKind != JsonValueKind.Object ||
+                            !grantsDoc.RootElement.TryGetProperty("value", out var valueElement) ||
+                            valueElement.ValueKind != JsonValueKind.Array)
+                        {
+                            logger.LogWarning("OAuth2 grants response was malformed. Expected a top-level 'value' array.");
+                            grantsReadable = false;
+                        }
+                        else if (valueElement.GetArrayLength() > 0)
                         {
                             hasGrants = true;
-                            
+
                             foreach (var grantElement in valueElement.EnumerateArray())
                             {
                                 var scope = grantElement.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : "Unknown";
@@ -552,6 +599,7 @@ public class QueryEntraCommand
                     catch (JsonException ex)
                     {
                         logger.LogWarning("Failed to parse OAuth2 grants response: {Error}", ex.Message);
+                        grantsReadable = false;
                     }
                 }
 
@@ -563,17 +611,17 @@ public class QueryEntraCommand
                         logger.LogInformation("    (Reading grants requires a Global Administrator or Application Administrator account; the other information shown above does not.)");
                         logger.LogInformation("    To verify consent status, sign in as a tenant administrator and re-run, or inspect the app in the Entra portal:");
                         logger.LogInformation("    https://portal.azure.com -> Entra ID -> App registrations -> {DisplayName} -> API permissions", displayName);
+                        context.ExitCode = 1;
                     }
                     else
                     {
-                        logger.LogInformation("    No OAuth2 permission grants found");
-                        logger.LogInformation("    This means admin consent has not been granted for any API permissions");
+                        logger.LogInformation("    No direct OAuth2 permission grants found on this service principal.");
+                        logger.LogInformation("    This query does not include permissions inherited from the agent identity blueprint.");
+                        logger.LogInformation("    An empty direct-grant list does not mean the agent has no consented permissions.");
                         logger.LogInformation("");
-                        logger.LogInformation("To grant admin consent:");
-                        logger.LogInformation("  1. Visit the Azure portal: https://portal.azure.com");
-                        logger.LogInformation("  2. Go to Entra ID > App registrations");
-                        logger.LogInformation("  3. Find your application: {DisplayName}", displayName);
-                        logger.LogInformation("  4. Go to API permissions and click 'Grant admin consent'");
+                        logger.LogInformation("To inspect blueprint grants and inheritance configuration:");
+                        logger.LogInformation("  a365 query-entra blueprint-scopes");
+                        logger.LogInformation("  a365 query-entra inheritance");
                     }
                 }
             }

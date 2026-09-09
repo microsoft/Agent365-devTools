@@ -70,7 +70,11 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - Repeated `setup blueprint --agent-name` runs now reuse the stored valid client secret instead of creating duplicate credentials.
 - `a365 query-entra blueprint-scopes` and `inheritance` now report permission-grant read failures, and `a365 create-instance` now stops safely instead of continuing when existing grants cannot be read.
 - `setup requirements` now validates and repairs tenant-owned fallback CLI apps with the administrator bootstrap identity, preventing false "app not found" failures when the first-party CLI app is unavailable.
+- `a365 create-instance` now reports invalid custom Graph or authority endpoints as configuration errors instead of aborting with an unhandled exception (#478).
 - Cloud-specific Graph, authority, and Agent 365 Tools endpoint overrides now apply consistently across setup, consent, authentication, query, and create-instance flows for sovereign and custom clouds. (#478)
+- `a365 query-entra instance-scopes` now reports consent status correctly and fails visibly when permission grants cannot be read (#478).
+- `a365 publish` no longer crashes when `manifest.json` has a non-string `name.short` value (#478).
+- `setup all --agent-registration-only` now exits non-zero and reports errors when the requested agent registration step fails, while full setup continues to treat registration as best-effort (#478).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
 - `setup all --authmode s2s` no longer prints spurious "Action Required" PowerShell steps when the agent identity already inherits its app roles from the blueprint, and now retries the grant automatically before falling back to manual steps (#460).

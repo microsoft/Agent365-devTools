@@ -151,13 +151,22 @@ public sealed class A365CreateInstanceRunner
         // Wire the sovereign/government cloud endpoints so all Graph calls and client-credential
         // token acquisition target the correct national cloud (commercial by default).
         var configuredGraphBaseUrl = GetConfig("graphBaseUrl");
-        _graphService.GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(
-            environment,
-            string.IsNullOrWhiteSpace(configuredGraphBaseUrl) ? null : configuredGraphBaseUrl);
         var configuredAuthorityHost = GetConfig("authorityHost");
-        _graphService.AuthorityHost = ConfigConstants.GetAuthorityHost(
-            environment,
-            string.IsNullOrWhiteSpace(configuredAuthorityHost) ? null : configuredAuthorityHost);
+        try
+        {
+            _graphService.GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(
+                environment,
+                string.IsNullOrWhiteSpace(configuredGraphBaseUrl) ? null : configuredGraphBaseUrl);
+            _graphService.AuthorityHost = ConfigConstants.GetAuthorityHost(
+                environment,
+                string.IsNullOrWhiteSpace(configuredAuthorityHost) ? null : configuredAuthorityHost);
+        }
+        catch (ArgumentException ex)
+        {
+            _logger.LogError(ex, "Invalid cloud endpoint configuration in {Path}: {Message}", configPath, ex.Message);
+            return false;
+        }
+
         var configuredClientAppId = GetConfig("clientAppId");
         if (!string.IsNullOrWhiteSpace(configuredClientAppId))
             _graphService.CustomClientAppId = configuredClientAppId;

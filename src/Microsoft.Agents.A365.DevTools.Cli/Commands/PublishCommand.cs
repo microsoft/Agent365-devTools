@@ -222,7 +222,7 @@ public class PublishCommand
                 var updatedManifest = await UpdateManifestFileAsync(displayName, blueprintId, manifestPath);
                 var updatedAgenticUserManifest = await UpdateAgenticUserManifestTemplateFileAsync(blueprintId, agenticUserManifestPath);
                 var updatedManifestNode = JsonNode.Parse(updatedManifest);
-                var shortName = updatedManifestNode?["name"]?["short"]?.GetValue<string>();
+                var shortName = GetManifestStringValue(updatedManifestNode?["name"]?["short"]);
 
                 if (dryRun)
                 {
@@ -367,10 +367,7 @@ public class PublishCommand
         string templateValue,
         string displayName)
     {
-        var currentValue = name[propertyName] is JsonValue valueNode &&
-            valueNode.TryGetValue<string>(out var value)
-                ? value
-                : null;
+        var currentValue = GetManifestStringValue(name[propertyName]);
 
         if (string.IsNullOrWhiteSpace(currentValue) ||
             string.Equals(currentValue, templateValue, StringComparison.Ordinal))
@@ -378,6 +375,12 @@ public class PublishCommand
             name[propertyName] = displayName;
         }
     }
+
+    private static string? GetManifestStringValue(JsonNode? node)
+        => node is JsonValue valueNode &&
+           valueNode.TryGetValue<string>(out var value)
+            ? value
+            : null;
 
     private static async Task<string> UpdateAgenticUserManifestTemplateFileAsync(string blueprintId, string agenticUserManifestPath)
     {

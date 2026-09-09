@@ -92,6 +92,53 @@ public sealed class A365CreateInstanceRunnerTests : IDisposable
             Arg.Any<IEnumerable<string>?>());
     }
 
+    [Theory]
+    [InlineData("\"graphBaseUrl\": \"https://graph.example/us\"", "Graph base URL")]
+    [InlineData("\"authorityHost\": \"http://login.example.com\"", "Authority host")]
+    public async Task RunAsync_WhenConfiguredCloudEndpointIsInvalid_LogsErrorAndReturnsFalse(
+        string invalidEndpointProperty,
+        string expectedSettingName)
+    {
+        var configPath = Path.Combine(_testDirectory, "a365.config.json");
+        var generatedConfigPath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        await File.WriteAllTextAsync(
+            configPath,
+            $$"""
+            {
+              "tenantId": "11111111-1111-1111-1111-111111111111",
+              "environment": "prod",
+              {{invalidEndpointProperty}}
+            }
+            """);
+        await File.WriteAllTextAsync(
+            generatedConfigPath,
+            """
+            {
+              "agentBlueprintId": "22222222-2222-2222-2222-222222222222",
+              "agentBlueprintClientSecret": "test-secret"
+            }
+            """);
+
+        var logger = Substitute.For<ILogger<A365CreateInstanceRunner>>();
+        var executor = Substitute.For<CommandExecutor>(NullLogger<CommandExecutor>.Instance);
+        var graph = Substitute.For<GraphApiService>(NullLogger<GraphApiService>.Instance, executor);
+        var runner = new A365CreateInstanceRunner(logger, executor, graph);
+
+        var succeeded = await runner.RunAsync(
+            configPath,
+            generatedConfigPath,
+            step: "licenses");
+
+        succeeded.Should().BeFalse(
+            because: "invalid sovereign-cloud endpoint configuration is a user-fixable input error, not an unhandled exception path");
+        logger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(state => state.ToString()!.Contains(expectedSettingName, StringComparison.Ordinal)),
+            Arg.Is<ArgumentException>(ex => ex.Message.Contains(expectedSettingName, StringComparison.Ordinal)),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_testDirectory))

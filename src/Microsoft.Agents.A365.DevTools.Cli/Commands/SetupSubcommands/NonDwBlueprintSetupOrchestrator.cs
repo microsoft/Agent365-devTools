@@ -634,8 +634,17 @@ internal static class NonDwBlueprintSetupOrchestrator
         else
         {
             ctx.Results.AgentRegistrationFailed = true;
-            ctx.Results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
-            ctx.Logger.LogWarning("Agent registration failed via Graph copilot/agentRegistrations API.");
+            const string registrationFailedMessage = "Agent registration failed via Graph copilot/agentRegistrations API.";
+            if (skipIdentityAndPermissions)
+            {
+                ctx.Results.Errors.Add(registrationFailedMessage);
+                ctx.Logger.LogError(registrationFailedMessage);
+            }
+            else
+            {
+                ctx.Results.Warnings.Add(registrationFailedMessage);
+                ctx.Logger.LogWarning(registrationFailedMessage);
+            }
         }
 
         } // end else (AgenticAppId present)
