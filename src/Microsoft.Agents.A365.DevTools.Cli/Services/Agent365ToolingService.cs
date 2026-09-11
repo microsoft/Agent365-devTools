@@ -553,7 +553,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <inheritdoc />
-    public async Task<bool> UnpublishServerAsync(
+    public async Task<UnpublishMcpServerResponse?> UnpublishServerAsync(
         string environmentId,
         string serverName,
         CancellationToken cancellationToken = default)
@@ -587,7 +587,7 @@ public class Agent365ToolingService : IAgent365ToolingService
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
-                return false;
+                return null;
             }
 
             // Create authenticated HTTP client
@@ -600,19 +600,41 @@ public class Agent365ToolingService : IAgent365ToolingService
             using var response = await httpClient.DeleteAsync(endpointUrl, cancellationToken);
 
             // Validate response using common helper
-            var (isSuccess, _) = await ValidateResponseAsync(response, "unpublish MCP server", cancellationToken);
+            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "unpublish MCP server", cancellationToken);
             if (!isSuccess)
             {
-                return false;
+                return null;
             }
 
             _logger.LogDebug("Successfully unpublished MCP server");
-            return true;
+
+            var unpublishResponse = string.IsNullOrWhiteSpace(responseContent)
+                ? null
+                : JsonDeserializationHelper.DeserializeWithDoubleSerialization<UnpublishMcpServerResponse>(
+                    responseContent, _logger);
+
+            // The platform always returns a JSON body on a successful unpublish, so an empty body or one
+            // that fails to parse means we could not read the response - including any ManualCleanupRequired
+            // block. The unpublish itself still succeeded, so warn the user to check for leftover Entra app
+            // registrations rather than silently returning a clean success.
+            if (unpublishResponse is null)
+            {
+                _logger.LogWarning(
+                    "The unpublish for {ServerName} succeeded but its response body was empty or could not be parsed, so any Entra app registrations the platform asked to be cleaned up may have been missed. Review the server's app registrations in the Azure portal and delete any leftovers manually.",
+                    serverName);
+                return new UnpublishMcpServerResponse
+                {
+                    Status = "Success",
+                    Message = $"Successfully unpublished {serverName}"
+                };
+            }
+
+            return unpublishResponse;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to unpublish MCP server {ServerName} from environment {EnvId}", serverName, environmentId);
-            return false;
+            return null;
         }
     }
 
