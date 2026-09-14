@@ -300,6 +300,152 @@ public class ArmApiServiceTests
             Content = new StringContent(body)
         };
     }
+
+    // ──────────────────────── GetEnterprisePolicySystemIdAsync ────────────────────────
+
+    private const string PolicyArmId =
+        "/subscriptions/sub-123/resourceGroups/rg-test/providers/Microsoft.PowerPlatform/enterprisePolicies/policy-1";
+
+    private const string PolicySystemId =
+        "/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000";
+
+    private static HttpResponseMessage PolicyResponse(string body) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(body) };
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_When200_ReturnsSystemId()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId, because: "the systemId is the only value BAP accepts for a link");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_RequestsTheArmPolicyResource()
+    {
+        HttpRequestMessage? captured = null;
+        using var handler = new CapturingHttpMessageHandler(r => captured = r);
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        captured.Should().NotBeNull();
+        captured!.Method.Should().Be(HttpMethod.Get);
+        captured.RequestUri!.ToString().Should().Be(
+            $"https://management.azure.com{PolicyArmId}?api-version=2020-10-30");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenStableApiVersionRejected_RetriesWithPreview()
+    {
+        var urls = new List<string>();
+        using var handler = new CapturingHttpMessageHandler(r => urls.Add(r.RequestUri!.ToString()));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("") });
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId);
+        urls.Should().HaveCount(2);
+        urls[0].Should().EndWith("api-version=2020-10-30");
+        urls[1].Should().EndWith("api-version=2020-10-30-preview");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenEveryApiVersionRejected_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("") });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("") });
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "there is no api-version left to try");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenNonSuccess_ReturnsNullWithoutRetrying(HttpStatusCode status)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(status) { Content = new StringContent("") });
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "a rejected or missing policy is not an api-version problem");
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"properties\":{}}")]
+    [InlineData("{\"properties\":{\"systemId\":\"\"}}")]
+    [InlineData("{\"properties\":{\"systemId\":\"   \"}}")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenSystemIdMissing_ReturnsNull(string body)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(body));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "a policy without a systemId is not yet usable for linking");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenHttpThrows_ReturnsNull()
+    {
+        using var handler = new ThrowingHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenPolicyArmIdBlank_Throws(string? policyArmId)
+    {
+        using var handler = new TestHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var act = async () => await svc.GetEnterprisePolicySystemIdAsync(policyArmId!, TenantId);
+
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenTokenUnavailable_ReturnsNullWithoutCallingArm()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var auth = Substitute.For<IAuthenticationService>();
+        auth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult(string.Empty));
+        var svc = new ArmApiService(NullLogger<ArmApiService>.Instance, auth, handler,
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(0, because: "without a token there is nothing worth sending");
+    }
 }
 
 /// <summary>
