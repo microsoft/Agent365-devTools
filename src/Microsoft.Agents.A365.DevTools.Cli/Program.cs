@@ -188,7 +188,8 @@ class Program
             var networkLogger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("network");
             var vnetLinkService = serviceProvider.GetRequiredService<IVNetLinkService>();
             var azureCliService = serviceProvider.GetRequiredService<IAzureCliService>();
-            rootCommand.AddCommand(NetworkCommand.CreateCommand(networkLogger, vnetLinkService, azureCliService));
+            var gsaService = serviceProvider.GetRequiredService<IGsaService>();
+            rootCommand.AddCommand(NetworkCommand.CreateCommand(networkLogger, vnetLinkService, azureCliService, gsaService));
 
             // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
             // and UseParseErrorReporting() (full help dump on any parse error), replacing both
@@ -387,6 +388,10 @@ class Program
             provider.GetRequiredService<ILogger<VNetLinkService>>(),
             provider.GetRequiredService<IAuthenticationService>(),
             provider.GetRequiredService<ArmApiService>(),
+            provider.GetRequiredService<IAgent365ToolingService>().Environment));
+        services.AddSingleton<IGsaService>(provider => new GsaService(
+            provider.GetRequiredService<ILogger<GsaService>>(),
+            provider.GetRequiredService<IAuthenticationService>(),
             provider.GetRequiredService<IAgent365ToolingService>().Environment));
         services.AddSingleton<AgentBlueprintService>();
         services.AddSingleton<BlueprintLookupService>();

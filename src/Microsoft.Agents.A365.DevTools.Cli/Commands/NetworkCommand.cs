@@ -27,7 +27,8 @@ public static class NetworkCommand
     public static Command CreateCommand(
         ILogger logger,
         IVNetLinkService vnetLinkService,
-        IAzureCliService azureCliService)
+        IAzureCliService azureCliService,
+        IGsaService gsaService)
     {
         var networkCommand = new Command("network", "Configure tenant networking for Agent 365");
 
@@ -40,7 +41,17 @@ public static class NetworkCommand
         vnetCommand.AddCommand(CreateUnlinkSubcommand(logger, vnetLinkService));
         vnetCommand.AddCommand(CreateStatusSubcommand(logger, vnetLinkService));
 
+        var gsaCommand = new Command(
+            "gsa",
+            "Turn Global Secure Access on or off for your Agent 365 environment. " +
+            "Requires the Global Administrator or Power Platform Administrator role.");
+
+        gsaCommand.AddCommand(CreateGsaSetSubcommand(logger, gsaService, enabled: true));
+        gsaCommand.AddCommand(CreateGsaSetSubcommand(logger, gsaService, enabled: false));
+        gsaCommand.AddCommand(CreateGsaStatusSubcommand(logger, gsaService));
+
         networkCommand.AddCommand(vnetCommand);
+        networkCommand.AddCommand(gsaCommand);
         return networkCommand;
     }
 
@@ -217,6 +228,126 @@ public static class NetworkCommand
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Creates the gsa enable or disable subcommand. The two differ only in the value they send
+    /// and the words they use, so they share one builder.
+    /// </summary>
+    private static Command CreateGsaSetSubcommand(ILogger logger, IGsaService gsaService, bool enabled)
+    {
+        var verb = enabled ? "enable" : "disable";
+        var command = new Command(
+            verb,
+            $"Turn Global Secure Access {(enabled ? "on" : "off")} for your Agent 365 environment.");
+
+        var waitOption = new Option<bool>(
+            "--wait",
+            "Keep polling until the change appears on the environment, instead of returning while " +
+            "it is still being applied.");
+
+        var verboseOption = new Option<bool>(["--verbose", "-v"], "Enable verbose logging");
+
+        command.AddOption(waitOption);
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (InvocationContext context) =>
+        {
+            var wait = context.ParseResult.GetValueForOption(waitOption);
+            var ct = context.GetCancellationToken();
+
+            var result = await gsaService.SetAsync(enabled, ct);
+            context.ExitCode = await ReportGsaAsync(logger, gsaService, result, wait, enabled, ct);
+        });
+
+        return command;
+    }
+
+    private static Command CreateGsaStatusSubcommand(ILogger logger, IGsaService gsaService)
+    {
+        var command = new Command(
+            "status",
+            "Show whether Global Secure Access is on for your Agent 365 environment.");
+
+        var verboseOption = new Option<bool>(["--verbose", "-v"], "Enable verbose logging");
+        command.AddOption(verboseOption);
+
+        command.SetHandler(async (InvocationContext context) =>
+        {
+            var ct = context.GetCancellationToken();
+
+            var status = await gsaService.GetStatusAsync(ct);
+            if (status == null)
+            {
+                context.ExitCode = 1;
+                return;
+            }
+
+            LogGsaStatus(logger, status);
+            context.ExitCode = 0;
+        });
+
+        return command;
+    }
+
+    /// <summary>
+    /// Renders the outcome of a Global Secure Access change, optionally waiting for it to appear
+    /// first, and maps it to a process exit code.
+    /// </summary>
+    internal static async Task<int> ReportGsaAsync(
+        ILogger logger,
+        IGsaService gsaService,
+        GsaStatusResponse? result,
+        bool wait,
+        bool enabled,
+        CancellationToken cancellationToken)
+    {
+        if (result == null)
+        {
+            return 1;
+        }
+
+        var expectedStatus = enabled ? "Enabled" : "Disabled";
+
+        if (wait && result.Pending)
+        {
+            logger.LogInformation("The change is still being applied. Waiting for it to appear...");
+            result = await gsaService.WaitForStatusAsync(expectedStatus, DefaultWaitTimeout, cancellationToken);
+
+            if (result == null)
+            {
+                return 1;
+            }
+        }
+
+        LogGsaStatus(logger, result);
+
+        // Still pending is not a failure. The platform accepted the change and the environment
+        // will catch up; reporting non-zero here would break scripts that chain on success.
+        if (result.Pending)
+        {
+            logger.LogInformation(
+                "Still being applied. Check on it with: a365 network gsa status");
+        }
+
+        return 0;
+    }
+
+    private static void LogGsaStatus(ILogger logger, GsaStatusResponse status)
+    {
+        logger.LogInformation("Global Secure Access: {Status}", status.Status ?? "Unknown");
+
+        if (string.Equals(status.Status, "NotConfigured", StringComparison.OrdinalIgnoreCase))
+        {
+            // Worth spelling out: a tenant that has never set this is not the same as one that
+            // turned it off, and the distinction changes what an admin should do next.
+            logger.LogInformation("This tenant has never set Global Secure Access, so no value is stored.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(status.Reason))
+        {
+            logger.LogWarning("Reason: {Reason}", status.Reason);
+        }
     }
 
     private static void LogStatus(ILogger logger, VNetStatusResponse status)

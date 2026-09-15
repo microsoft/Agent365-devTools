@@ -31,6 +31,9 @@ There is reference documentation for each command.
 | [network vnet link](network.md#link) | Link a NetworkInjection enterprise policy to your Agent 365 environment. |
 | [network vnet unlink](network.md#unlink) | Remove the virtual network link from your Agent 365 environment. |
 | [network vnet status](network.md#status) | Show whether a virtual network policy is linked to your Agent 365 environment. |
+| [network gsa enable](network-gsa.md#enable-and-disable) | Turn Global Secure Access on for your Agent 365 environment. |
+| [network gsa disable](network-gsa.md#enable-and-disable) | Turn Global Secure Access off for your Agent 365 environment. |
+| [network gsa status](network-gsa.md#status) | Show whether Global Secure Access is on for your Agent 365 environment. |
 | [publish](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/publish) | Update manifest.json ID values and publish the package. Configure federated identity and app role assignments. |
 | [query-entra](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra) | Query Microsoft Entra ID for agent information including scopes, permissions, and consent status. |
 | [query-entra blueprint-scopes](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/query-entra#query-entra-blueprint-scopes) | List configured scopes and consent status for the agent blueprint. |
