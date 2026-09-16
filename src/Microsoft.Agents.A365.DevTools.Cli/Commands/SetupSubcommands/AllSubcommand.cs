@@ -165,6 +165,10 @@ internal static class AllSubcommand
                         "is a post-deploy artifact, so it can be set later with\n" +
                         "'a365 setup blueprint --endpoint-only --messaging-endpoint <url>'.");
 
+        var serviceTreeIdOption = new Option<string?>(
+            "--service-tree-id",
+            description: "ServiceTree ID for the blueprint Entra app registration (required in Microsoft corporate tenants)");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -177,6 +181,7 @@ internal static class AllSubcommand
         command.AddOption(authModeOption);
         command.AddOption(skipSpProvisioningOption);
         command.AddOption(messagingEndpointOption);
+        command.AddOption(serviceTreeIdOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -203,7 +208,16 @@ internal static class AllSubcommand
             // hard error, not silently treated as omitted (which would prompt/defer instead).
             var messagingEndpointSpecified = context.ParseResult.CommandResult.FindResultFor(messagingEndpointOption) != null;
             var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
+            var serviceTreeIdSpecified = context.ParseResult.CommandResult.FindResultFor(serviceTreeIdOption) != null;
+            var serviceTreeIdFlag = context.ParseResult.GetValueForOption(serviceTreeIdOption)?.Trim();
             var ct = context.GetCancellationToken();
+
+            if (serviceTreeIdSpecified && string.IsNullOrWhiteSpace(serviceTreeIdFlag))
+            {
+                logger.LogError("--service-tree-id requires a ServiceTree ID value.");
+                context.ExitCode = 1;
+                return;
+            }
 
             if (messagingEndpointSpecified && string.IsNullOrWhiteSpace(messagingEndpointFlag))
             {
@@ -442,7 +456,8 @@ internal static class AllSubcommand
                     confirmationProvider: confirmationProvider,
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
-                    nonInteractive: Console.IsInputRedirected);
+                    nonInteractive: Console.IsInputRedirected,
+                    serviceTreeId: serviceTreeIdFlag);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -592,7 +607,8 @@ internal static class AllSubcommand
                     isM365: isM365,
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
-                    nonInteractive: Console.IsInputRedirected);
+                    nonInteractive: Console.IsInputRedirected,
+                    serviceTreeId: serviceTreeIdFlag);
 
                 // Step 1: Infrastructure (optional, DW only)
                 await ExecuteInfrastructureStepAsync(ctx);
@@ -701,7 +717,7 @@ internal static class AllSubcommand
                 skipEndpointRegistration: true,
                 correlationId: ctx.CorrelationId,
                 cancellationToken: ctx.CancellationToken,
-                options: new BlueprintCreationOptions(DeferConsent: true),
+                options: new BlueprintCreationOptions(DeferConsent: true, ServiceTreeId: ctx.ServiceTreeId),
                 loginHintResolver: ctx.LoginHintResolver);
 
             ctx.Results.BlueprintCreated = result.BlueprintCreated;

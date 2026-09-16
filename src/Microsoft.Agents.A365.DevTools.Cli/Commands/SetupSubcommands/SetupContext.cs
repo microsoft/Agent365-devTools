@@ -70,6 +70,12 @@ internal sealed class SetupContext
     /// </summary>
     public string? MessagingEndpointOverride { get; }
 
+    /// <summary>
+    /// ServiceTree ID from <c>--service-tree-id</c>, written to the blueprint application's
+    /// serviceManagementReference. Null when the flag was omitted.
+    /// </summary>
+    public string? ServiceTreeId { get; }
+
     /// <summary>Null or "obo" — principal-scoped delegated grants; no admin consent needed.</summary>
     public bool IsOboMode => AuthMode is null || string.Equals(AuthMode, "obo", StringComparison.OrdinalIgnoreCase);
 
@@ -154,7 +160,8 @@ internal sealed class SetupContext
         IConfirmationProvider? confirmationProvider = null,
         bool skipSpProvisioning = false,
         string? messagingEndpointOverride = null,
-        bool nonInteractive = false)
+        bool nonInteractive = false,
+        string? serviceTreeId = null)
     {
         Config = config;
         Results = results;
@@ -170,6 +177,7 @@ internal sealed class SetupContext
         IsM365 = isM365;
         AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.ToLowerInvariant();
         MessagingEndpointOverride = string.IsNullOrWhiteSpace(messagingEndpointOverride) ? null : messagingEndpointOverride.Trim();
+        ServiceTreeId = string.IsNullOrWhiteSpace(serviceTreeId) ? null : serviceTreeId.Trim();
         SkipSpProvisioning = skipSpProvisioning;
         NonInteractive = nonInteractive;
         ConfigService = configService;

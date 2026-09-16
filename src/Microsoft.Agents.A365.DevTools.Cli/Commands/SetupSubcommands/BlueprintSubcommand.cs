@@ -222,8 +222,16 @@ internal static class BlueprintSubcommand
             if (endpointOnly || !string.IsNullOrWhiteSpace(updateEndpoint))
                 isM365 = true;
             var showSecret = context.ParseResult.GetValueForOption(showSecretOption);
+            var serviceTreeIdSpecified = context.ParseResult.CommandResult.FindResultFor(serviceTreeIdOption) != null;
             var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption)?.Trim();
             var ct = context.GetCancellationToken();
+
+            if (serviceTreeIdSpecified && string.IsNullOrWhiteSpace(serviceTreeId))
+            {
+                logger.LogError("--service-tree-id requires a ServiceTree ID value.");
+                context.ExitCode = 1;
+                return;
+            }
 
             // --show-secret: read-only local operation — reads generated config directly so it works
             // even when a365.config.json is absent (e.g. retrieving from a different machine copy).
