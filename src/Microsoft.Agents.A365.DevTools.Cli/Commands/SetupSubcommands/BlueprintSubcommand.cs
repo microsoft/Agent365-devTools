@@ -183,6 +183,10 @@ internal static class BlueprintSubcommand
                          "No setup steps are performed.\n" +
                          "On Windows, requires the same machine and user account that ran setup.");
 
+        var serviceTreeIdOption = new Option<string?>(
+            "--service-tree-id",
+            description: "ServiceTree ID for the blueprint Entra app registration (required in Microsoft corporate tenants)");
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -194,6 +198,7 @@ internal static class BlueprintSubcommand
         command.AddOption(skipRequirementsOption);
         command.AddOption(m365Option);
         command.AddOption(showSecretOption);
+        command.AddOption(serviceTreeIdOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -217,6 +222,7 @@ internal static class BlueprintSubcommand
             if (endpointOnly || !string.IsNullOrWhiteSpace(updateEndpoint))
                 isM365 = true;
             var showSecret = context.ParseResult.GetValueForOption(showSecretOption);
+            var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption)?.Trim();
             var ct = context.GetCancellationToken();
 
             // --show-secret: read-only local operation — reads generated config directly so it works
@@ -451,7 +457,8 @@ internal static class BlueprintSubcommand
                 skipEndpointRegistration,
                 correlationId: correlationId,
                 confirmationProvider: confirmationProvider,
-                isM365: isM365
+                isM365: isM365,
+                options: new BlueprintCreationOptions(ServiceTreeId: serviceTreeId)
                 );
 
         });
@@ -1106,6 +1113,13 @@ internal static class BlueprintSubcommand
                 ["signInAudience"] = "AzureADMultipleOrgs", // Multi-tenant
                 ["managerApplications"] = new JsonArray(AuthenticationConstants.A365ManagerAppId) // required to enable manageability for A365
             };
+
+            // Tenants that enforce ServiceTree registration reject application creation without this.
+            var serviceTreeId = options?.ServiceTreeId;
+            if (!string.IsNullOrWhiteSpace(serviceTreeId))
+            {
+                appManifest["serviceManagementReference"] = serviceTreeId;
+            }
 
             // Add sponsors and owners fields if we have the current user
             // IMPORTANT: Setting owners during creation is required to avoid 2-call pattern that will fail due to Entra bug fix
