@@ -4,6 +4,7 @@
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -27,10 +28,24 @@ public class GsaServiceTests
         return mock;
     }
 
+    private static IAzureCliService FakeAzureCli(
+        string tenantId = "11111111-1111-1111-1111-111111111111",
+        string upn = "admin@contoso.onmicrosoft.com")
+    {
+        var mock = Substitute.For<IAzureCliService>();
+        mock.GetCurrentAccountAsync().Returns(Task.FromResult<AzureAccountInfo?>(new AzureAccountInfo
+        {
+            TenantId = tenantId,
+            User = new AzureUser { Name = upn },
+        }));
+        return mock;
+    }
+
     private static GsaService CreateService(
         HttpMessageHandler handler,
-        IAuthenticationService? auth = null) =>
-        new(NullLogger<GsaService>.Instance, auth ?? FakeAuth(), "prod", handler);
+        IAuthenticationService? auth = null,
+        IAzureCliService? azureCli = null) =>
+        new(NullLogger<GsaService>.Instance, auth ?? FakeAuth(), azureCli ?? FakeAzureCli(), "prod", handler);
 
     private static HttpResponseMessage StatusResponse(
         HttpStatusCode code,
@@ -178,6 +193,95 @@ public class GsaServiceTests
         var result = await svc.SetAsync(enabled: true);
 
         result.Should().BeNull();
+    }
+
+    // ─────────────────────────── Tenant targeting ───────────────────────────
+    //
+    // The tenant of the current az login is passed explicitly to token acquisition. Without it
+    // the authority is "common", and the Windows broker silently returns the Windows account even
+    // when a login hint names a different one — which would apply a tenant-wide setting to the
+    // wrong tenant. Passing the tenant also arms the mismatch self-heal in AuthenticationService.
+
+    [Fact]
+    public async Task SetAsync_AuthenticatesAgainstTheTenantAndUserOfTheCurrentAzLogin()
+    {
+        const string tenantId = "22222222-2222-2222-2222-222222222222";
+        const string upn = "admin@fabrikam.onmicrosoft.com";
+        var auth = FakeAuth();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Enabled"));
+        var svc = CreateService(handler, auth, FakeAzureCli(tenantId, upn));
+
+        await svc.SetAsync(enabled: true);
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(),
+            tenantId,
+            Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>(),
+            upn,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_AuthenticatesAgainstTheTenantAndUserOfTheCurrentAzLogin()
+    {
+        const string tenantId = "33333333-3333-3333-3333-333333333333";
+        const string upn = "reader@fabrikam.onmicrosoft.com";
+        var auth = FakeAuth();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Disabled"));
+        var svc = CreateService(handler, auth, FakeAzureCli(tenantId, upn));
+
+        await svc.GetStatusAsync();
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(),
+            tenantId,
+            Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>(),
+            upn,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetAsync_WhenAzLoginIsUnavailable_ReturnsNullWithoutCallingThePlatform()
+    {
+        var azureCli = Substitute.For<IAzureCliService>();
+        azureCli.GetCurrentAccountAsync().Returns(Task.FromResult<AzureAccountInfo?>(null));
+        using var handler = new TestHttpMessageHandler();
+        var svc = CreateService(handler, azureCli: azureCli);
+
+        var result = await svc.SetAsync(enabled: true);
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SetAsync_WhenTheAzAccountCarriesNoTenant_ReturnsNullWithoutCallingThePlatform()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var svc = CreateService(handler, azureCli: FakeAzureCli(tenantId: string.Empty));
+
+        var result = await svc.SetAsync(enabled: true);
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void Constructor_WithoutAnAzureCliService_Throws()
+    {
+        using var handler = new TestHttpMessageHandler();
+
+        var act = () => new GsaService(NullLogger<GsaService>.Instance, FakeAuth(), null!, "prod", handler);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("azureCliService");
     }
 
     // ──────────────────────────────── GetStatusAsync ────────────────────────────

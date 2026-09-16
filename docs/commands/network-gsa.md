@@ -14,9 +14,15 @@ platform to apply the change against the environment it resolves for your tenant
 
 - **Global Administrator** or **Power Platform Administrator** in the tenant. The platform rejects
   anyone else.
+- An `az login` to the tenant you intend to configure.
 - Public cloud only. Sovereign clouds are not supported.
 
-No `az login` is needed — unlike `a365 network vnet`, nothing is read from Azure.
+Nothing is read from Azure — unlike `a365 network vnet` — but the `az login` still matters: it is
+what selects the tenant. The commands authenticate against the tenant and account of your current
+`az account show`, so `az login --tenant <id>` is how you choose which tenant to configure when you
+have more than one. Without an explicit tenant the Windows broker silently returns whichever
+account Windows prefers, which would apply a tenant-wide setting to the wrong tenant. If the
+account you are signed into cannot be matched, the command fails rather than falling back.
 
 ## Subcommands
 
@@ -78,3 +84,5 @@ a365 network gsa status
 | `409`, reporting a governing policy | A Power Platform policy owns this setting. Change it through that policy; the environment-level value is ignored while the policy applies. |
 | `404`, reporting no environment | The tenant has no Agent 365 environment yet. |
 | Status stays `NotConfigured` after `disable` | Read it again — the change is applied asynchronously and `--wait` is the way to block on it. |
+| `Could not determine your Azure tenant` | No usable `az login`. Run `az login --tenant <id>` for the tenant you want to configure. |
+| Sign-in prompt names the wrong account | The tenant comes from `az account show`. Run `az account set` / `az login --tenant <id>` to point at the intended tenant, then retry. |

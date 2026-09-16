@@ -31,17 +31,20 @@ public class GsaService : IGsaService
 
     private readonly ILogger<GsaService> _logger;
     private readonly IAuthenticationService _authService;
+    private readonly IAzureCliService _azureCliService;
     private readonly string _environment;
     private readonly HttpMessageHandler? _handler;
 
     public GsaService(
         ILogger<GsaService> logger,
         IAuthenticationService authService,
+        IAzureCliService azureCliService,
         string environment = "prod",
         HttpMessageHandler? handler = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
+        _azureCliService = azureCliService ?? throw new ArgumentNullException(nameof(azureCliService));
         _environment = environment ?? "prod";
         _handler = handler;
     }
@@ -104,8 +107,21 @@ public class GsaService : IGsaService
         try
         {
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+
+            // Authenticate against the tenant of the current az login, not whichever account the
+            // Windows broker happens to prefer. Without an explicit tenant the authority is
+            // "common", and WAM silently returns the Windows account even when a login hint names
+            // a different one — so a tenant-wide setting would be changed on the wrong tenant.
+            // Passing the tenant also arms the mismatch self-heal in AuthenticationService.
+            var account = await _azureCliService.GetCurrentAccountAsync();
+            if (account is null || string.IsNullOrWhiteSpace(account.TenantId))
+            {
+                _logger.LogError("Could not determine your Azure tenant. Run 'az login' and try again.");
+                return null;
+            }
+
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, account.TenantId, userId: account.User.Name, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire an Agent 365 access token.");
