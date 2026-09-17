@@ -182,6 +182,8 @@ class Program
             rootCommand.AddCommand(QueryEntraCommand.CreateCommand(queryEntraLogger, configService, executor, graphApiService, agentBlueprintService, resolver: bootstrapResolver));
             rootCommand.AddCommand(CleanupCommand.CreateCommand(cleanupLogger, configService, backendConfigurator, executor, agentBlueprintService, confirmationProvider, federatedCredentialService, azureAuthValidator, graphApiService, resolver: bootstrapResolver));
             rootCommand.AddCommand(PublishCommand.CreateCommand(publishLogger, configService, manifestTemplateService, resolver: bootstrapResolver));
+            var createInstanceLogger = serviceProvider.GetRequiredService<ILogger<CreateInstanceCommand>>();
+            rootCommand.AddCommand(CreateInstanceCommand.CreateCommand(createInstanceLogger, configService, executor, graphApiService, resolver: bootstrapResolver));
             var logsLogger = serviceProvider.GetRequiredService<ILogger<LogsCommand>>();
             var logRedactionService = serviceProvider.GetRequiredService<ILogRedactionService>();
             rootCommand.AddCommand(LogsCommand.CreateCommand(logsLogger, logRedactionService));
