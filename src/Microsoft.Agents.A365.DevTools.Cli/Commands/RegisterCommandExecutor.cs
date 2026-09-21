@@ -32,6 +32,7 @@ internal record RawRegisterArgs(
     int? SecretLifetimeMonths,
     string? PublisherName,
     string? Description,
+    string? Connectivity,
     bool DryRun);
 
 /// <summary>
@@ -82,6 +83,7 @@ internal class RegisterCommandExecutor
         public string? IdpClientSecret { get; init; }
         public string? ApiKeyLocation { get; init; }
         public string? ApiKeyName { get; init; }
+        public string? Connectivity { get; init; }
     }
 
     private sealed record EntraAppSet(
@@ -210,6 +212,7 @@ internal class RegisterCommandExecutor
         var secretLifetimeMonths = args.SecretLifetimeMonths;
         var publisherName = args.PublisherName;
         var serverDescription = args.Description;
+        var connectivity = args.Connectivity;
 
         RegisterExternalMcpServerInput? inputFileData = null;
         if (!string.IsNullOrWhiteSpace(args.InputFile))
@@ -244,6 +247,7 @@ internal class RegisterCommandExecutor
                 secretLifetimeMonths ??= inputFileData.SecretLifetimeMonths;
                 publisherName ??= inputFileData.PublisherName;
                 serverDescription ??= inputFileData.Description;
+                connectivity ??= inputFileData.Connectivity;
 
                 if (inputFileData.ExternalOAuth is not null)
                 {
@@ -309,6 +313,19 @@ internal class RegisterCommandExecutor
             {
                 _logger.LogError("--secret-lifetime-months must be between 1 and 24 (Graph's maximum is ~2 years). Got: {Value}", lifetime);
                 return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(connectivity))
+            {
+                connectivity = connectivity.Trim();
+                if (!connectivity.Equals("public", StringComparison.OrdinalIgnoreCase)
+                    && !connectivity.Equals("private", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError("--connectivity must be 'public' or 'private'. Got: {Value}", connectivity);
+                    return null;
+                }
+
+                connectivity = connectivity.ToLowerInvariant();
             }
 
             if (string.IsNullOrWhiteSpace(authType))
@@ -507,6 +524,7 @@ internal class RegisterCommandExecutor
             IdpClientSecret = idpClientSecret,
             ApiKeyLocation = apiKeyLocation,
             ApiKeyName = apiKeyName,
+            Connectivity = connectivity,
         };
     }
 
@@ -523,6 +541,12 @@ internal class RegisterCommandExecutor
         DevelopMcpCommand.WriteLabel("  Auth Type:      "); Console.WriteLine(input.AuthType);
         DevelopMcpCommand.WriteLabel("  Publisher:      "); Console.WriteLine(input.PublisherName);
         DevelopMcpCommand.WriteLabel("  Description:    "); Console.WriteLine(input.Description);
+        DevelopMcpCommand.WriteLabel("  Connectivity:   "); Console.WriteLine(input.Connectivity ?? "private (default)");
+        if (string.Equals(input.Connectivity, "public", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("  Note: the VNet bypass for 'public' applies only to environments enabled for it.");
+            Console.WriteLine("        Verify the server is reachable after registration.");
+        }
         DevelopMcpCommand.WriteLabel("  Tools:");
         Console.WriteLine();
         foreach (var tool in input.ToolList)
@@ -685,6 +709,7 @@ internal class RegisterCommandExecutor
             RemoteServerScopes = input.RemoteScopes,
             PublisherName = input.PublisherName,
             Description = input.Description,
+            Connectivity = input.Connectivity,
             CopilotClientAppId = apps.PublicClientsClientId,
         };
     }
