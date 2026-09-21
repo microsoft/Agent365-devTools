@@ -149,7 +149,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             // and WAM on Windows authenticates via the OS broker (no browser, CAP-compliant).
             var token = MsalTokenAcquirerOverride != null
                 ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
-                : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct, loginHint, forceRefresh);
+                : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct, loginHint, forceRefresh, useDeviceCode);
 
             // Fall back to PowerShell Connect-MgGraph if MSAL is unavailable (e.g. no clientAppId)
             // or fails for any reason.
@@ -383,15 +383,31 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     /// cross-user token contamination on shared machines.
     /// Returns null if clientAppId is unavailable; caller falls back to PowerShell Connect-MgGraph.
     /// </summary>
+    /// <summary>
+    /// Selects the client app used for in-process MSAL acquisition. Device code has no usable
+    /// PowerShell fallback, so it resolves to the Graph command-line app that Connect-MgGraph
+    /// would have authenticated as; otherwise a missing client app keeps the subprocess path.
+    /// </summary>
+    internal static string? ResolveMsalClientAppId(string? clientAppId, bool useDeviceCode)
+        => string.IsNullOrWhiteSpace(clientAppId) && useDeviceCode
+            ? AuthenticationConstants.GraphPowershellClientId
+            : clientAppId;
+
     private async Task<string?> AcquireGraphTokenViaMsalAsync(
         string tenantId,
         string[] scopes,
         string? clientAppId,
         CancellationToken ct,
         string? loginHint = null,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        bool useDeviceCode = false)
     {
-        if (string.IsNullOrWhiteSpace(clientAppId))
+        // Device code must run in-process: Connect-MgGraph cannot render its prompt from a
+        // child process with redirected I/O, so fall back to the well-known PowerShell client
+        // app rather than the unusable subprocess path.
+        var effectiveClientAppId = ResolveMsalClientAppId(clientAppId, useDeviceCode);
+
+        if (string.IsNullOrWhiteSpace(effectiveClientAppId))
         {
             _logger.LogDebug("MSAL token acquisition skipped: no client app ID configured. Falling back to PowerShell Connect-MgGraph.");
             return null;
@@ -406,7 +422,14 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
             _logger.LogDebug("Acquiring Graph token via MSAL for scopes: {Scopes}", string.Join(", ", fullScopes));
 
-            var msalCredential = new MsalBrowserCredential(clientAppId, tenantId, logger: _logger, loginHint: loginHint, forceRefresh: forceRefresh);
+            var msalCredential = new MsalBrowserCredential(
+                effectiveClientAppId,
+                tenantId,
+                logger: _logger,
+                useWam: !useDeviceCode,
+                loginHint: loginHint,
+                forceRefresh: forceRefresh,
+                useDeviceCode: useDeviceCode);
             var tokenResult = await msalCredential.GetTokenAsync(new TokenRequestContext(fullScopes), ct);
 
             if (string.IsNullOrWhiteSpace(tokenResult.Token))

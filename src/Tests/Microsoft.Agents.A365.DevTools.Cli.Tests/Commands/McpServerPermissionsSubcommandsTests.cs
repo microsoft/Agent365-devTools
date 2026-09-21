@@ -186,6 +186,31 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
+    public async Task ListAgentInstances_DeviceCodeFlag_RoutesSignInThroughDeviceCode()
+    {
+        SetupResolvedResource();
+        SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Agent", HasScope: true));
+
+        await ListCommand().InvokeAsync(
+            ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", TenantId, "--device-code"]);
+
+        _permissionService.Received().UseDeviceCodeAuthentication = true;
+    }
+
+    [Fact]
+    public async Task GrantPermissions_WithoutDeviceCodeFlag_UsesDefaultInteractiveSignIn()
+    {
+        SetupResolvedResource();
+        _permissionService.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        await GrantCommand().InvokeAsync(
+            ["--agent-serviceprincipal-id", AgentSpId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+
+        _permissionService.Received().UseDeviceCodeAuthentication = false;
+    }
+
+    [Fact]
     public async Task GrantPermissions_NonGuidAgentServicePrincipalId_ExitsWithOne()
     {
         var exitCode = await GrantCommand().InvokeAsync(

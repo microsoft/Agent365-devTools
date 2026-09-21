@@ -546,36 +546,16 @@ public class AuthenticationService : IAuthenticationService
         => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, loginHint: loginHint, forceRefresh: forceRefresh);
 
     /// <summary>
-    /// Creates a DeviceCodeCredential configured for interactive device code authentication.
+    /// Creates a credential configured for interactive device code authentication.
     /// This flow works in all environments including SSH, remote sessions, and platforms where
     /// browser-based authentication is unavailable.
     /// Protected virtual to allow substitution in tests.
     /// </summary>
     protected virtual TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
-    {
-        return new DeviceCodeCredential(new DeviceCodeCredentialOptions
-        {
-            TenantId = tenantId,
-            ClientId = clientId,
-            AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-            TokenCachePersistenceOptions = new TokenCachePersistenceOptions
-            {
-                Name = AuthenticationConstants.ApplicationName
-            },
-            DeviceCodeCallback = (code, cancellation) =>
-            {
-                _logger.LogInformation("");
-                _logger.LogInformation("==========================================================================");
-                _logger.LogInformation("To sign in, use a web browser to open the page:");
-                _logger.LogInformation("    {VerificationUri}", code.VerificationUri);
-                _logger.LogInformation("");
-                _logger.LogInformation("And enter the code: {UserCode}", code.UserCode);
-                _logger.LogInformation("==========================================================================");
-                _logger.LogInformation("");
-                return Task.CompletedTask;
-            }
-        });
-    }
+        // Routed through MsalBrowserCredential so device code shares the OS-protected MSAL
+        // persistent cache and acquires silently when an account is already signed in. A bare
+        // DeviceCodeCredential has no AuthenticationRecord, so each new instance re-prompts.
+        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, useWam: false, useDeviceCode: true);
 
     /// <summary>
     /// Resolves the login hint (UPN) from the OS-protected MSAL persistent cache by reading the

@@ -17,6 +17,16 @@ public class McpServerPermissionService
     private readonly AgentBlueprintService _blueprintService;
     private readonly ILogger<McpServerPermissionService> _logger;
 
+    /// <summary>
+    /// Routes sign-in through the device code flow instead of the WAM broker, for terminals
+    /// where WAM cannot present a dialog.
+    /// </summary>
+    public virtual bool UseDeviceCodeAuthentication
+    {
+        get => _graphApiService.UseDeviceCodeAuthentication;
+        set => _graphApiService.UseDeviceCodeAuthentication = value;
+    }
+
     public McpServerPermissionService(
         GraphApiService graphApiService,
         AgentBlueprintService blueprintService,
@@ -42,17 +52,17 @@ public class McpServerPermissionService
 
         var displayName = McpConstants.BuildByoAppDisplayName(serverName);
 
-        // A failed sign-in also yields a null lookup result, which would otherwise be reported as
-        // "application not found" and send the user off to create an app that may already exist.
-        if (string.IsNullOrWhiteSpace(await _graphApiService.GetGraphAccessTokenAsync(tenantId, ct: ct)))
-        {
-            _logger.LogError("Could not sign in to tenant {TenantId}, so '{DisplayName}' could not be looked up.", tenantId, displayName);
-            return null;
-        }
-
         var appId = await _graphApiService.FindApplicationByDisplayNameAsync(tenantId, displayName, ct);
         if (string.IsNullOrWhiteSpace(appId))
         {
+            // A failed sign-in also yields a null lookup result, which would otherwise be reported
+            // as "application not found" and send the user off to create an app that may exist.
+            if (string.IsNullOrWhiteSpace(await _graphApiService.GetGraphAccessTokenAsync(tenantId, ct: ct)))
+            {
+                _logger.LogError("Could not sign in to tenant {TenantId}, so '{DisplayName}' could not be looked up.", tenantId, displayName);
+                return null;
+            }
+
             _logger.LogError("No Entra application named '{DisplayName}' was found in tenant {TenantId}.", displayName, tenantId);
             return null;
         }

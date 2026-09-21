@@ -55,6 +55,12 @@ public class GraphApiService
     public string? CustomClientAppId { get; set; }
 
     /// <summary>
+    /// Routes interactive sign-in through the device code flow instead of the WAM broker.
+    /// Set when the caller knows WAM cannot present a dialog (headless or embedded terminals).
+    /// </summary>
+    public bool UseDeviceCodeAuthentication { get; set; }
+
+    /// <summary>
     /// Override the Microsoft Graph base URL for sovereign / government cloud tenants.
     /// Defaults to <see cref="GraphApiConstants.BaseUrl"/> (commercial cloud).
     /// Set this after construction when the config is available (e.g. from Agent365Config.GraphBaseUrl).
@@ -170,7 +176,7 @@ public class GraphApiService
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var loginHint = await _loginHintResolver();
-            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, userId: loginHint, ct: ct);
+            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, useInteractiveBrowser: !UseDeviceCodeAuthentication, userId: loginHint, ct: ct);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -269,7 +275,7 @@ public class GraphApiService
                 CustomClientAppId, string.Join(", ", effectiveScopes));
             var loginHint = await ResolveLoginHintAsync();
             token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, effectiveScopes, false, CustomClientAppId, ct, loginHint, forceRefresh);
+                tenantId, effectiveScopes, UseDeviceCodeAuthentication, CustomClientAppId, ct, loginHint, forceRefresh);
 
             if (string.IsNullOrWhiteSpace(token))
             {

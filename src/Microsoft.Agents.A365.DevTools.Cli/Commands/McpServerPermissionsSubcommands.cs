@@ -34,7 +34,8 @@ public static class McpServerPermissionsSubcommands
 
         var blueprintIdOption = new Option<string?>(
             "--agent-blueprint-id",
-            description: "Agent blueprint ID (GUID) whose agent instances should be checked.")
+            description: "Agent blueprint ID (GUID) whose agent instances should be checked. " +
+                         "Run 'a365 develop-mcp list-agent-blueprints' to see first-party blueprint IDs.")
         {
             IsRequired = true,
         };
@@ -54,10 +55,15 @@ public static class McpServerPermissionsSubcommands
             ["--yes", "-y"],
             description: "Grant the missing permission to every listed agent instance without prompting.");
 
+        var deviceCodeOption = new Option<bool>(
+            "--device-code",
+            description: "Use device code authentication instead of the interactive browser flow (the WAM broker on Windows). Use when WAM cannot show a sign-in dialog, such as an embedded or remote terminal. Opens https://microsoft.com/devicelogin in your browser.");
+
         command.AddOption(blueprintIdOption);
         command.AddOption(serverNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(yesOption);
+        command.AddOption(deviceCodeOption);
         command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
 
         command.SetHandler(async (InvocationContext context) =>
@@ -68,7 +74,10 @@ public static class McpServerPermissionsSubcommands
             var grantAll = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
-            if (!TryValidateGuid(blueprintIdRaw, "--agent-blueprint-id", logger, out var blueprintId))
+            permissionService.UseDeviceCodeAuthentication = context.ParseResult.GetValueForOption(deviceCodeOption);
+
+            if (!TryValidateGuid(blueprintIdRaw, "--agent-blueprint-id", logger, out var blueprintId,
+                    hint: "Run 'a365 develop-mcp list-agent-blueprints' to see first-party blueprint IDs."))
             {
                 context.ExitCode = 1;
                 return;
@@ -177,9 +186,14 @@ public static class McpServerPermissionsSubcommands
             "--tenant-id",
             description: "Azure AD tenant ID. Defaults to the current Azure CLI context.");
 
+        var grantDeviceCodeOption = new Option<bool>(
+            "--device-code",
+            description: "Use device code authentication instead of the interactive browser flow (the WAM broker on Windows). Use when WAM cannot show a sign-in dialog, such as an embedded or remote terminal. Opens https://microsoft.com/devicelogin in your browser.");
+
         command.AddOption(agentSpIdOption);
         command.AddOption(serverNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(grantDeviceCodeOption);
         command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
 
         command.SetHandler(async (InvocationContext context) =>
@@ -188,6 +202,8 @@ public static class McpServerPermissionsSubcommands
             var serverName = context.ParseResult.GetValueForOption(serverNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var ct = context.GetCancellationToken();
+
+            permissionService.UseDeviceCodeAuthentication = context.ParseResult.GetValueForOption(grantDeviceCodeOption);
 
             if (!TryValidateGuid(agentSpIdRaw, "--agent-serviceprincipal-id", logger, out var agentSpId))
             {
@@ -342,11 +358,15 @@ public static class McpServerPermissionsSubcommands
         return failures;
     }
 
-    private static bool TryValidateGuid(string? value, string optionName, ILogger logger, out string normalized)
+    private static bool TryValidateGuid(string? value, string optionName, ILogger logger, out string normalized, string? hint = null)
     {
         if (string.IsNullOrWhiteSpace(value) || !Guid.TryParse(value.Trim(), out var guid))
         {
             logger.LogError("{OptionName} must be a GUID.", optionName);
+            if (hint is not null)
+            {
+                logger.LogError("{Hint}", hint);
+            }
             normalized = string.Empty;
             return false;
         }

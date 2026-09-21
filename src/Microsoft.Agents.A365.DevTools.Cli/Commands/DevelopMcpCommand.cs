@@ -41,6 +41,10 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
 
+        // Registered unconditionally: the catalog is static, so blueprint discovery stays available
+        // even when the permission service is not wired up.
+        developMcpCommand.AddCommand(AgentBlueprintCatalogSubcommand.CreateCommand(logger));
+
         if (mcpServerPermissionService is not null)
         {
             developMcpCommand.AddCommand(McpServerPermissionsSubcommands.CreateListAgentInstancesSubcommand(logger, mcpServerPermissionService));

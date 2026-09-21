@@ -42,7 +42,9 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(5);
+        command.Subcommands.Should().HaveCount(6,
+            because: "blueprint discovery (list-agent-blueprints) is registered unconditionally so " +
+                     "users can look up a blueprint ID without the permission service being wired up");
 
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
         subcommandNames.Should().Contain(new[]
@@ -51,7 +53,8 @@ public class DevelopMcpCommandTests
             "list-servers",
             "publish",
             "unpublish",
-            "register-external-mcp-server"
+            "register-external-mcp-server",
+            "list-agent-blueprints"
         });
     }
 
