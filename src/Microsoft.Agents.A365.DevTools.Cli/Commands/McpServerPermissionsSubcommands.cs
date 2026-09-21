@@ -35,7 +35,7 @@ public static class McpServerPermissionsSubcommands
         var blueprintIdOption = new Option<string?>(
             "--agent-blueprint-id",
             description: "Agent blueprint ID (GUID) whose agent instances should be checked. " +
-                         "Run 'a365 develop-mcp list-agent-blueprints' to see first-party blueprint IDs.")
+                         $"First-party blueprints: {AgentBlueprintCatalog.FormatForHelp()}.")
         {
             IsRequired = true,
         };
@@ -77,7 +77,7 @@ public static class McpServerPermissionsSubcommands
             permissionService.UseDeviceCodeAuthentication = context.ParseResult.GetValueForOption(deviceCodeOption);
 
             if (!TryValidateGuid(blueprintIdRaw, "--agent-blueprint-id", logger, out var blueprintId,
-                    hint: "Run 'a365 develop-mcp list-agent-blueprints' to see first-party blueprint IDs."))
+                    listBlueprints: true))
             {
                 context.ExitCode = 1;
                 return;
@@ -358,15 +358,24 @@ public static class McpServerPermissionsSubcommands
         return failures;
     }
 
-    private static bool TryValidateGuid(string? value, string optionName, ILogger logger, out string normalized, string? hint = null)
+    private static bool TryValidateGuid(string? value, string optionName, ILogger logger, out string normalized, bool listBlueprints = false)
     {
         if (string.IsNullOrWhiteSpace(value) || !Guid.TryParse(value.Trim(), out var guid))
         {
             logger.LogError("{OptionName} must be a GUID.", optionName);
-            if (hint is not null)
+
+            // List the IDs here rather than pointing elsewhere: this is the moment the caller
+            // needs one, and a redirect costs them another command.
+            var lines = listBlueprints ? AgentBlueprintCatalog.FormatAsLines() : [];
+            if (lines.Count > 0)
             {
-                logger.LogError("{Hint}", hint);
+                logger.LogError("First-party blueprints:");
+                foreach (var line in lines)
+                {
+                    logger.LogError("{Blueprint}", line);
+                }
             }
+
             normalized = string.Empty;
             return false;
         }

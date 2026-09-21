@@ -83,6 +83,52 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
+    public async Task ListAgentInstances_NonGuidBlueprintId_ListsFirstPartyBlueprintsInError()
+    {
+        var capturing = new CapturingLogger();
+        var command = McpServerPermissionsSubcommands.CreateListAgentInstancesSubcommand(capturing, _permissionService);
+
+        await command.InvokeAsync(
+            ["--agent-blueprint-id", "not-a-guid", "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+
+        var output = string.Join("\n", capturing.Messages);
+        foreach (var blueprint in AgentBlueprintCatalog.FirstPartyBlueprints)
+        {
+            output.Should().Contain(blueprint.BlueprintId,
+                because: "a caller who does not know the blueprint ID hits this error first, so the " +
+                         "IDs must be printed here rather than pointing at another command to run");
+            output.Should().Contain(blueprint.DisplayName,
+                because: "the ID is only recognizable when shown next to the product name");
+        }
+    }
+
+    [Fact]
+    public async Task ListAgentInstances_NonGuidServicePrincipalId_DoesNotListBlueprints()
+    {
+        var capturing = new CapturingLogger();
+        var command = McpServerPermissionsSubcommands.CreateGrantPermissionsSubcommand(capturing, _permissionService);
+
+        await command.InvokeAsync(
+            ["--agent-serviceprincipal-id", "not-a-guid", "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+
+        string.Join("\n", capturing.Messages).Should().NotContain("First-party blueprints",
+            because: "the agent service principal ID is a tenant-specific object ID, so listing " +
+                     "blueprint IDs there would offer values that can never be valid for the option");
+    }
+
+    private sealed class CapturingLogger : ILogger
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+    }
+
+    [Fact]
     public async Task ListAgentInstances_NonGuidTenantId_ExitsWithOne()
     {
         var exitCode = await ListCommand().InvokeAsync(

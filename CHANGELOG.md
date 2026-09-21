@@ -23,7 +23,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
-- `a365 develop-mcp list-agent-blueprints` lists Microsoft's first-party agent blueprint names and IDs, so you can find the ID to pass to `--agent-blueprint-id` without looking it up elsewhere.
+- `a365 develop-mcp list-agent-instances --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere.
 - `--device-code` option on `a365 develop-mcp list-agent-instances` and `grant-mcpserver-permissions` — signs in with a device code instead of the browser or Windows sign-in dialog, for embedded and remote terminals.
 - `a365 develop-mcp list-agent-instances` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server, and offers to grant it, while `a365 develop-mcp grant-mcpserver-permissions` grants that permission to a single agent identity.
 - Setup and bootstrap now use Microsoft's first-party Agent 365 CLI application when it is present in your tenant, validating it without changing Microsoft's app registration, and fall back to a tenant-owned "Agent 365 CLI" app when it is not (#489).

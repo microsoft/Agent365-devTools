@@ -1,40 +1,22 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.CommandLine;
+using System;
 using System.Linq;
-using System.Threading.Tasks;
 using FluentAssertions;
-using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
-using Microsoft.Extensions.Logging;
-using NSubstitute;
 using Xunit;
 
-namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
+namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Constants;
 
-public class AgentBlueprintCatalogSubcommandTests
+public class AgentBlueprintCatalogTests
 {
-    private readonly ILogger _logger = Substitute.For<ILogger>();
-
-    [Fact]
-    public async Task ListAgentBlueprints_Succeeds()
-    {
-        var command = AgentBlueprintCatalogSubcommand.CreateCommand(_logger);
-
-        var exitCode = await command.InvokeAsync([]);
-
-        exitCode.Should().Be(0,
-            because: "listing the static catalog takes no input and cannot fail, so it must not " +
-                     "report an error exit code that a script would treat as a failure");
-    }
-
     [Fact]
     public void Catalog_IsNotEmpty()
     {
         AgentBlueprintCatalog.FirstPartyBlueprints.Should().NotBeEmpty(
-            because: "the discovery command exists solely to surface these IDs - an empty catalog " +
-                     "would make it useless and is the failure branch the command guards against");
+            because: "the catalog is the only source of blueprint IDs surfaced in option help and " +
+                     "error output - if it empties, users lose every discovery path");
     }
 
     [Fact]
@@ -52,12 +34,11 @@ public class AgentBlueprintCatalogSubcommandTests
     [Fact]
     public void Catalog_BlueprintIdsAreUnique()
     {
-        var ids = AgentBlueprintCatalog.FirstPartyBlueprints
-            .Select(b => b.BlueprintId.ToLowerInvariant());
-
-        ids.Should().OnlyHaveUniqueItems(
-            because: "a duplicated ID under two names would make the listing ambiguous about which " +
-                     "blueprint a user is targeting");
+        AgentBlueprintCatalog.FirstPartyBlueprints
+            .Select(b => b.BlueprintId.ToLowerInvariant())
+            .Should().OnlyHaveUniqueItems(
+                because: "a duplicated ID under two names would make the listing ambiguous about " +
+                         "which blueprint a user is targeting");
     }
 
     [Fact]
@@ -68,6 +49,57 @@ public class AgentBlueprintCatalogSubcommandTests
             blueprint.DisplayName.Should().NotBeNullOrWhiteSpace(
                 because: "the name is the only thing that makes the ID discoverable");
         }
+    }
+
+    [Fact]
+    public void FormatForHelp_ContainsEveryNameAndId()
+    {
+        var help = AgentBlueprintCatalog.FormatForHelp();
+
+        foreach (var blueprint in AgentBlueprintCatalog.FirstPartyBlueprints)
+        {
+            help.Should().Contain(blueprint.DisplayName);
+            help.Should().Contain(blueprint.BlueprintId,
+                because: "--help is a primary discovery surface, so every catalog entry must appear " +
+                         "there rather than only in the catalog source");
+        }
+    }
+
+    [Fact]
+    public void FormatForHelp_IsSingleLine()
+    {
+        AgentBlueprintCatalog.FormatForHelp()
+            .Should().MatchRegex(@"^[^\r\n]*$",
+                because: "System.CommandLine wraps option descriptions itself, and embedded newlines " +
+                         "break the alignment of the generated help output");
+    }
+
+    [Fact]
+    public void FormatAsLines_ContainsEveryNameAndId()
+    {
+        var lines = AgentBlueprintCatalog.FormatAsLines();
+
+        lines.Should().HaveCount(AgentBlueprintCatalog.FirstPartyBlueprints.Count);
+
+        foreach (var blueprint in AgentBlueprintCatalog.FirstPartyBlueprints)
+        {
+            lines.Should().Contain(l => l.Contains(blueprint.BlueprintId) && l.Contains(blueprint.DisplayName),
+                because: "the invalid-ID error prints these lines so the user can copy an ID without " +
+                         "running anything else");
+        }
+    }
+
+    [Fact]
+    public void FormatAsLines_AlignsIdsAcrossEntries()
+    {
+        var lines = AgentBlueprintCatalog.FormatAsLines();
+
+        var idColumns = lines
+            .Select(l => l.IndexOf(l.Trim().Split("  ", StringSplitOptions.RemoveEmptyEntries).Last(), StringComparison.Ordinal))
+            .Distinct();
+
+        idColumns.Should().HaveCount(1,
+            because: "names are padded to a common width so IDs form a single readable column");
     }
 
     [Fact]
