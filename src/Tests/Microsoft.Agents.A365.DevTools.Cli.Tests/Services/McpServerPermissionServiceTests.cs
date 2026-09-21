@@ -36,6 +36,21 @@ public class McpServerPermissionServiceTests
             Substitute.For<ILogger<AgentBlueprintService>>(), _graph);
         _service = new McpServerPermissionService(
             _graph, _blueprintService, Substitute.For<ILogger<McpServerPermissionService>>());
+        _graph.GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("fake-token"));
+    }
+
+    [Fact]
+    public async Task ResolveServerResourceAsync_ReportsSignInFailure_WithoutClaimingTheAppIsMissing()
+    {
+        _graph.GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>(null));
+
+        var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
+
+        result.Should().BeNull();
+        await _graph.DidNotReceive().FindApplicationByDisplayNameAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

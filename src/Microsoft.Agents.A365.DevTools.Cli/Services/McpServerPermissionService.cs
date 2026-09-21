@@ -42,6 +42,14 @@ public class McpServerPermissionService
 
         var displayName = McpConstants.BuildByoAppDisplayName(serverName);
 
+        // A failed sign-in also yields a null lookup result, which would otherwise be reported as
+        // "application not found" and send the user off to create an app that may already exist.
+        if (string.IsNullOrWhiteSpace(await _graphApiService.GetGraphAccessTokenAsync(tenantId, ct: ct)))
+        {
+            _logger.LogError("Could not sign in to tenant {TenantId}, so '{DisplayName}' could not be looked up.", tenantId, displayName);
+            return null;
+        }
+
         var appId = await _graphApiService.FindApplicationByDisplayNameAsync(tenantId, displayName, ct);
         if (string.IsNullOrWhiteSpace(appId))
         {
