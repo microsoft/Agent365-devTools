@@ -122,9 +122,9 @@ public static class McpServerPermissionsSubcommands
             }
 
             var missing = statuses.Where(s => !s.HasScope).ToList();
-            logger.LogInformation("MCP server : {DisplayName} ({AppId})", resource.DisplayName, resource.AppId);
-            logger.LogInformation("Scope      : {Scope}", McpConstants.V2ScopeValue);
-            logger.LogInformation("Instances  : {Total} total, {Missing} missing the permission", statuses.Count, missing.Count);
+            logger.LogInformation("MCP server       : {DisplayName} ({AppId})", resource.DisplayName, resource.AppId);
+            logger.LogInformation("MCP Server Scope : {Scope}", McpConstants.V2ScopeValue);
+            logger.LogInformation("Agent Instances  : {Total} total, {Missing} missing the permission", statuses.Count, missing.Count);
             logger.LogInformation("");
 
             if (missing.Count == 0)
@@ -274,7 +274,7 @@ public static class McpServerPermissionsSubcommands
             return [];
         }
 
-        Console.Write($"Grant '{McpConstants.V2ScopeValue}' now? Enter 'all', a comma-separated list of numbers, or press Enter to skip: ");
+        Console.Write($"Grant MCP Server {resource.ServerName}'s scope {McpConstants.V2ScopeValue} now? Enter 'all', a comma-separated list of numbers, or press Enter to skip: ");
         var response = ConsoleHelper.ReadLineCancellable(ct)?.Trim();
 
         if (string.IsNullOrWhiteSpace(response))
