@@ -13,12 +13,12 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// <summary>
 /// Tests for <see cref="PublishCommandExecutor"/> dry-run output. The dry-run log must mirror the
 /// real Entra app naming scheme (derived from <c>ServerName</c>) so users can predict what will be
-/// created — the <c>{ServerName}-PublicClients</c> app.
+/// created — the <c>{ServerName}-PublicClients</c> and <c>{ServerName}-A365Proxy</c> apps.
 /// </summary>
 public class PublishCommandExecutorDryRunTests
 {
     /// <summary>
-    /// The dry-run log must (a) name only the Public Clients app — derived from <c>ServerName</c>,
+    /// The dry-run log must (a) name the Public Clients app — derived from <c>ServerName</c>,
     /// not <c>Alias</c> — (b) describe a PPMI-scope-only back-fill (no redirect-URI back-fill), and
     /// (c) skip the platform publish call entirely.
     /// </summary>

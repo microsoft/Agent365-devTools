@@ -155,6 +155,12 @@ public class DevelopMcpCommandRegressionTests
                 TestTenantId, TestPublicClientsObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(true));
 
+        // Publish now also creates the confidential A365 proxy app + secret (required so the platform
+        // creates the Power Platform connector for custom servers). Stub the secret so proxy creation succeeds.
+        graphApiService.AddAppPasswordAsync(
+                TestTenantId, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("a365-proxy-secret"));
+
         // Mock Graph for ConfigureEntraAppsAsync → required-resource-access grant on Public Clients.
         graphApiService.GetOAuth2PermissionScopeIdAsync(
                 TestTenantId, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
@@ -224,6 +230,14 @@ public class DevelopMcpCommandRegressionTests
             because: "the just-created Public Clients Entra app's clientId must be carried to the " +
                      "platform so it can be echoed back and the CLI can grant the PPMI scope on it " +
                      "post-publish.");
+        capturedRequest.A365ProxyClientId.Should().NotBeNullOrEmpty(
+            because: "the confidential A365 proxy app's clientId must be forwarded so the platform " +
+                     "creates the Power Platform connector for custom servers instead of logging " +
+                     "SkippedNoCredentials.");
+        capturedRequest.A365ProxyClientSecret.Should().Be(
+            "a365-proxy-secret",
+            because: "the proxy app's secret must be forwarded alongside its clientId; the platform " +
+                     "requires both to create the connector.");
     }
 
     /// <summary>
@@ -256,6 +270,9 @@ public class DevelopMcpCommandRegressionTests
         graphApiService.UpdateAppPublicClientRedirectUrisAsync(
                 TestTenantId, TestPublicClientsObjectId, Arg.Any<string[]>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(true));
+        graphApiService.AddAppPasswordAsync(
+                TestTenantId, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("a365-proxy-secret"));
         graphApiService.GetOAuth2PermissionScopeIdAsync(
                 TestTenantId, Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<Guid?>(Guid.NewGuid()));

@@ -23,6 +23,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
+- `develop-mcp publish` now creates the A365 proxy Entra app and sends its credentials to the platform, so custom (non-Dataverse) MCP servers get a Power Platform connector created at publish time.
 - Setup and bootstrap now use Microsoft's first-party Agent 365 CLI application when it is present in your tenant, validating it without changing Microsoft's app registration, and fall back to a tenant-owned "Agent 365 CLI" app when it is not (#489).
 - Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.
 - Authentication context (tenant and user) is now logged at the `Information` level whenever the resolved sign-in identity changes, giving operators a clear audit trail in the log file of who the CLI is acting as, without exposing credentials.
