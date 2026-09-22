@@ -43,8 +43,7 @@ public static class DevelopMcpCommand
 
         if (mcpServerPermissionService is not null)
         {
-            developMcpCommand.AddCommand(McpServerPermissionsSubcommands.CreateListAgentInstancesSubcommand(logger, mcpServerPermissionService));
-            developMcpCommand.AddCommand(McpServerPermissionsSubcommands.CreateGrantPermissionsSubcommand(logger, mcpServerPermissionService));
+            developMcpCommand.AddCommand(McpServerPermissionsSubcommands.CreateGrantAgentPermissionsSubcommand(logger, mcpServerPermissionService));
         }
 
         if (evaluationPipelineService is not null)

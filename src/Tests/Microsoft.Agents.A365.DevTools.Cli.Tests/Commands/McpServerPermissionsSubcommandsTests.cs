@@ -53,10 +53,36 @@ public class McpServerPermissionsSubcommandsTests
             .Returns(Task.FromResult<IReadOnlyList<AgentInstancePermissionStatus>>(statuses));
 
     private Command ListCommand() =>
-        McpServerPermissionsSubcommands.CreateListAgentInstancesSubcommand(_logger, _permissionService);
+        McpServerPermissionsSubcommands.CreateGrantAgentPermissionsSubcommand(_logger, _permissionService);
 
-    private Command GrantCommand() =>
-        McpServerPermissionsSubcommands.CreateGrantPermissionsSubcommand(_logger, _permissionService);
+    private Command GrantCommand() => ListCommand();
+
+    [Fact]
+    public async Task GrantAgentPermissions_NeitherTargetSpecified_ExitsWithOne()
+    {
+        var exitCode = await ListCommand().InvokeAsync(
+            ["--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+
+        exitCode.Should().Be(1,
+            because: "the command cannot guess whether the caller means a whole blueprint or one " +
+                     "identity, and silently doing nothing would look like success");
+        await _permissionService.DidNotReceive().ResolveServerResourceAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GrantAgentPermissions_BothTargetsSpecified_ExitsWithOne()
+    {
+        var exitCode = await ListCommand().InvokeAsync(
+            ["--agent-blueprint-id", BlueprintId, "--agent-serviceprincipal-id", AgentSpId,
+             "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+
+        exitCode.Should().Be(1,
+            because: "the two targets select different behaviours, so accepting both would make " +
+                     "which one wins an invisible implementation detail");
+        await _permissionService.DidNotReceive().ResolveServerResourceAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
 
     [Fact]
     public async Task ListAgentInstances_NoInstancesLinkedToBlueprint_ExitsWithOne()
@@ -80,12 +106,6 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public void GrantPermissions_HasExpectedName()
-    {
-        GrantCommand().Name.Should().Be("grant-mcpserver-permissions");
-    }
-
-    [Fact]
     public async Task ListAgentInstances_NonGuidBlueprintId_ExitsWithOne()
     {
         var exitCode = await ListCommand().InvokeAsync(
@@ -101,7 +121,7 @@ public class McpServerPermissionsSubcommandsTests
     public async Task ListAgentInstances_NonGuidBlueprintId_ListsFirstPartyBlueprintsInError()
     {
         var capturing = new CapturingLogger();
-        var command = McpServerPermissionsSubcommands.CreateListAgentInstancesSubcommand(capturing, _permissionService);
+        var command = McpServerPermissionsSubcommands.CreateGrantAgentPermissionsSubcommand(capturing, _permissionService);
 
         await command.InvokeAsync(
             ["--agent-blueprint-id", "not-a-guid", "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
@@ -121,7 +141,7 @@ public class McpServerPermissionsSubcommandsTests
     public async Task ListAgentInstances_NonGuidServicePrincipalId_DoesNotListBlueprints()
     {
         var capturing = new CapturingLogger();
-        var command = McpServerPermissionsSubcommands.CreateGrantPermissionsSubcommand(capturing, _permissionService);
+        var command = McpServerPermissionsSubcommands.CreateGrantAgentPermissionsSubcommand(capturing, _permissionService);
 
         await command.InvokeAsync(
             ["--agent-serviceprincipal-id", "not-a-guid", "--mcp-server-name", ServerName, "--tenant-id", TenantId]);

@@ -17,28 +17,30 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 /// </summary>
 public static class McpServerPermissionsSubcommands
 {
-    private const string ListCommandName = "grant-agent-mcpserver-permissions";
-    private const string GrantCommandName = "grant-mcpserver-permissions";
+    private const string GrantAgentCommandName = "grant-agent-mcpserver-permissions";
 
     /// <summary>
-    /// Creates the grant-agent-mcpserver-permissions subcommand, which reports agent instances of a blueprint
-    /// that are missing the MCP server scope and offers to grant it.
+    /// Creates the grant-agent-mcpserver-permissions subcommand. Given a blueprint it reports the
+    /// agent instances missing the MCP server scope and offers to grant it; given a single agent
+    /// identity it grants directly.
     /// </summary>
-    public static Command CreateListAgentInstancesSubcommand(
+    public static Command CreateGrantAgentPermissionsSubcommand(
         ILogger logger,
         McpServerPermissionService permissionService)
     {
-        var command = new Command(ListCommandName,
-            $"Grant the '{McpConstants.V2ScopeValue}' permission for an MCP server to agent instances of a blueprint.\n" +
-            "Lists the instances missing it and prompts before granting; prints the equivalent commands when input is redirected.");
+        var command = new Command(GrantAgentCommandName,
+            $"Grant the '{McpConstants.V2ScopeValue}' permission for an MCP server to agent identities.\n" +
+            "With --agent-blueprint-id, lists the blueprint's agent instances missing it and prompts before granting.\n" +
+            "With --agent-serviceprincipal-id, grants a single agent identity directly.");
 
         var blueprintIdOption = new Option<string?>(
             "--agent-blueprint-id",
             description: "Agent blueprint ID (GUID) whose agent instances should be checked. " +
-                         $"First-party blueprints: {AgentBlueprintCatalog.FormatForHelp()}.")
-        {
-            IsRequired = true,
-        };
+                         $"First-party blueprints: {AgentBlueprintCatalog.FormatForHelp()}.");
+
+        var agentSpIdOption = new Option<string?>(
+            "--agent-serviceprincipal-id",
+            description: "Object ID (GUID) of a single agent identity service principal to grant directly, instead of checking a whole blueprint.");
 
         var serverNameOption = new Option<string?>(
             ["--mcp-server-name", "-s"],
@@ -60,6 +62,7 @@ public static class McpServerPermissionsSubcommands
             description: "Use device code authentication instead of the interactive browser flow (the WAM broker on Windows). Use when WAM cannot show a sign-in dialog, such as an embedded or remote terminal. Opens https://microsoft.com/devicelogin in your browser.");
 
         command.AddOption(blueprintIdOption);
+        command.AddOption(agentSpIdOption);
         command.AddOption(serverNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(yesOption);
@@ -69,6 +72,7 @@ public static class McpServerPermissionsSubcommands
         command.SetHandler(async (InvocationContext context) =>
         {
             var blueprintIdRaw = context.ParseResult.GetValueForOption(blueprintIdOption);
+            var agentSpIdRaw = context.ParseResult.GetValueForOption(agentSpIdOption);
             var serverName = context.ParseResult.GetValueForOption(serverNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var grantAll = context.ParseResult.GetValueForOption(yesOption);
@@ -76,8 +80,33 @@ public static class McpServerPermissionsSubcommands
 
             permissionService.UseDeviceCodeAuthentication = context.ParseResult.GetValueForOption(deviceCodeOption);
 
-            if (!TryValidateGuid(blueprintIdRaw, "--agent-blueprint-id", logger, out var blueprintId,
-                    listBlueprints: true))
+            var hasBlueprint = !string.IsNullOrWhiteSpace(blueprintIdRaw);
+            var hasAgentSp = !string.IsNullOrWhiteSpace(agentSpIdRaw);
+
+            // Neither target is individually required, so the pairing has to be checked here:
+            // System.CommandLine cannot express "exactly one of these two".
+            if (hasBlueprint == hasAgentSp)
+            {
+                logger.LogError(hasBlueprint
+                    ? "Specify only one of --agent-blueprint-id or --agent-serviceprincipal-id."
+                    : "Specify --agent-blueprint-id to check a blueprint's agent instances, or --agent-serviceprincipal-id to grant a single agent identity.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            string blueprintId = string.Empty;
+            string agentSpId = string.Empty;
+
+            if (hasBlueprint)
+            {
+                if (!TryValidateGuid(blueprintIdRaw, "--agent-blueprint-id", logger, out blueprintId,
+                        listBlueprints: true))
+                {
+                    context.ExitCode = 1;
+                    return;
+                }
+            }
+            else if (!TryValidateGuid(agentSpIdRaw, "--agent-serviceprincipal-id", logger, out agentSpId))
             {
                 context.ExitCode = 1;
                 return;
@@ -100,6 +129,13 @@ public static class McpServerPermissionsSubcommands
             if (resource is null)
             {
                 context.ExitCode = 1;
+                return;
+            }
+
+            if (hasAgentSp)
+            {
+                context.ExitCode = await GrantToSingleIdentityAsync(
+                    permissionService, tenantId, resource, agentSpId, logger, ct);
                 return;
             }
 
@@ -158,94 +194,39 @@ public static class McpServerPermissionsSubcommands
     }
 
     /// <summary>
-    /// Creates the grant-mcpserver-permissions subcommand, which grants a single agent identity
-    /// the MCP server scope.
+    /// Grants the MCP server scope to one agent identity. Returns the process exit code.
     /// </summary>
-    public static Command CreateGrantPermissionsSubcommand(
+    private static async Task<int> GrantToSingleIdentityAsync(
+        McpServerPermissionService permissionService,
+        string tenantId,
+        McpServerResource resource,
+        string agentSpId,
         ILogger logger,
-        McpServerPermissionService permissionService)
+        CancellationToken ct)
     {
-        var command = new Command(GrantCommandName,
-            $"Grant an agent identity the '{McpConstants.V2ScopeValue}' permission for an MCP server.\n" +
-            "Creates a tenant-wide (AllPrincipals) delegated permission grant.");
-
-        var agentSpIdOption = new Option<string?>(
-            "--agent-serviceprincipal-id",
-            description: "Object ID (GUID) of the agent identity service principal receiving the permission.")
+        bool granted;
+        try
         {
-            IsRequired = true,
-        };
-
-        var serverNameOption = new Option<string?>(
-            ["--mcp-server-name", "-s"],
-            description: "MCP server name. The Entra application is resolved as '{name} - BYO'.")
+            granted = await permissionService.GrantServerScopeAsync(
+                tenantId, agentSpId, resource.ServicePrincipalObjectId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            IsRequired = true,
-        };
+            logger.LogError("Failed to grant '{Scope}' on '{DisplayName}' to agent identity {AgentSpId}: {Message}",
+                McpConstants.V2ScopeValue, resource.DisplayName, agentSpId, ex.Message);
+            return 1;
+        }
 
-        var tenantIdOption = new Option<string?>(
-            "--tenant-id",
-            description: "Azure AD tenant ID. Defaults to the current Azure CLI context.");
-
-        var grantDeviceCodeOption = new Option<bool>(
-            "--device-code",
-            description: "Use device code authentication instead of the interactive browser flow (the WAM broker on Windows). Use when WAM cannot show a sign-in dialog, such as an embedded or remote terminal. Opens https://microsoft.com/devicelogin in your browser.");
-
-        command.AddOption(agentSpIdOption);
-        command.AddOption(serverNameOption);
-        command.AddOption(tenantIdOption);
-        command.AddOption(grantDeviceCodeOption);
-        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
-
-        command.SetHandler(async (InvocationContext context) =>
+        if (!granted)
         {
-            var agentSpIdRaw = context.ParseResult.GetValueForOption(agentSpIdOption);
-            var serverName = context.ParseResult.GetValueForOption(serverNameOption);
-            var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
-            var ct = context.GetCancellationToken();
-
-            permissionService.UseDeviceCodeAuthentication = context.ParseResult.GetValueForOption(grantDeviceCodeOption);
-
-            if (!TryValidateGuid(agentSpIdRaw, "--agent-serviceprincipal-id", logger, out var agentSpId))
-            {
-                context.ExitCode = 1;
-                return;
-            }
-
-            if (!TryValidateServerName(serverName, logger))
-            {
-                context.ExitCode = 1;
-                return;
-            }
-
-            var tenantId = await ResolveTenantIdAsync(tenantIdFlag, logger);
-            if (tenantId is null)
-            {
-                context.ExitCode = 1;
-                return;
-            }
-
-            var resource = await permissionService.ResolveServerResourceAsync(tenantId, serverName!.Trim(), ct);
-            if (resource is null)
-            {
-                context.ExitCode = 1;
-                return;
-            }
-
-            var granted = await permissionService.GrantServerScopeAsync(tenantId, agentSpId, resource.ServicePrincipalObjectId, ct);
-            if (!granted)
-            {
-                logger.LogError("Failed to grant '{Scope}' on '{DisplayName}' to agent identity {AgentSpId}.",
-                    McpConstants.V2ScopeValue, resource.DisplayName, agentSpId);
-                context.ExitCode = 1;
-                return;
-            }
-
-            logger.LogInformation("Granted '{Scope}' on '{DisplayName}' to agent identity {AgentSpId}.",
+            logger.LogError("Failed to grant '{Scope}' on '{DisplayName}' to agent identity {AgentSpId}.",
                 McpConstants.V2ScopeValue, resource.DisplayName, agentSpId);
-        });
+            return 1;
+        }
 
-        return command;
+        logger.LogInformation("Granted '{Scope}' on '{DisplayName}' to agent identity {AgentSpId}.",
+            McpConstants.V2ScopeValue, resource.DisplayName, agentSpId);
+        return 0;
     }
 
     /// <summary>
@@ -270,7 +251,7 @@ public static class McpServerPermissionsSubcommands
             foreach (var instance in missing)
             {
                 logger.LogInformation("  a365 develop-mcp {Command} --agent-serviceprincipal-id {SpObjectId} --mcp-server-name {ServerName}",
-                    GrantCommandName, instance.ServicePrincipalObjectId, resource.ServerName);
+                    GrantAgentCommandName, instance.ServicePrincipalObjectId, resource.ServerName);
             }
             return [];
         }
