@@ -25,6 +25,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 ### Added
 - `a365 develop-mcp grant-agents-access --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere.
 - `--device-code` option on `a365 develop-mcp grant-agents-access` — signs in with a device code instead of the browser or Windows sign-in dialog, for embedded and remote terminals.
+- `--dry-run` option on `a365 develop-mcp grant-agents-access` — lists the agent instances that are missing the permission without granting it.
 - `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server, and prompts you to select which ones to grant it to.
 - Setup and bootstrap now use Microsoft's first-party Agent 365 CLI application when it is present in your tenant, validating it without changing Microsoft's app registration, and fall back to a tenant-owned "Agent 365 CLI" app when it is not (#489).
 - Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.

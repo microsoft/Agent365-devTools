@@ -121,6 +121,68 @@ public class McpServerPermissionsSubcommandsTests
         }
     }
 
+    [Fact]
+    public async Task GrantAgentsAccess_WhitespaceTenantId_ExitsWithOne()
+    {
+        var exitCode = await ListCommand().InvokeAsync(
+            ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", "  "]);
+
+        exitCode.Should().Be(1,
+            because: "an explicitly blank --tenant-id must not fall through to Azure CLI detection, " +
+                     "which would grant tenant-wide access in whatever tenant az happens to be signed into");
+        await _permissionService.DidNotReceive().ResolveServerResourceAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GrantAgentsAccess_ServerNameOutsideAllowlist_ExitsWithOne()
+    {
+        var exitCode = await ListCommand().InvokeAsync(
+            ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", "Foo' or displayName ne '",
+             "--tenant-id", TenantId]);
+
+        exitCode.Should().Be(1,
+            because: "the server name is interpolated into a Graph OData filter, so it must pass the " +
+                     "same allowlist register-external-mcp-server applies rather than any non-blank string");
+        await _permissionService.DidNotReceive().ResolveServerResourceAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GrantAgentsAccess_DryRun_ReportsWithoutGranting()
+    {
+        SetupResolvedResource();
+        SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Missing", HasScope: false));
+
+        var exitCode = await ListCommand().InvokeAsync(
+            ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", TenantId,
+             "--dry-run", "--yes"]);
+
+        exitCode.Should().Be(0);
+        await _permissionService.DidNotReceive().GrantServerScopeAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GrantAgentsAccess_NoBlueprintSpecified_ListsFirstPartyBlueprintsInError()
+    {
+        var capturing = new CapturingLogger();
+        var command = McpServerPermissionsSubcommands.CreateGrantAgentsAccessSubcommand(capturing, _permissionService);
+
+        var exitCode = await command.InvokeAsync(
+            ["--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+
+        exitCode.Should().Be(1);
+        var output = string.Join("\n", capturing.Messages);
+        foreach (var blueprint in AgentBlueprintCatalog.FirstPartyBlueprints)
+        {
+            output.Should().Contain(blueprint.BlueprintId,
+                because: "a caller who omits the option needs the IDs at that moment; marking the " +
+                         "option IsRequired would let System.CommandLine reject the call before the " +
+                         "handler could print them");
+        }
+    }
+
     private sealed class CapturingLogger : ILogger
     {
         public List<string> Messages { get; } = [];

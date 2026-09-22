@@ -45,8 +45,8 @@ public class McpServerPermissionServiceTests
     {
         _graph.GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
-        _graph.FindApplicationByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>(null));
+        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>([]));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
 
@@ -56,8 +56,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_DoesNotAcquireATokenOnTheSuccessPath()
     {
-        _graph.FindApplicationByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>(ByoAppId));
+        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>([ByoAppId]));
         _graph.LookupServicePrincipalByAppIdAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult<string?>(ByoSpObjectId));
 
@@ -70,8 +70,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_LooksUpTheByoSuffixedApplication()
     {
-        _graph.FindApplicationByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>(ByoAppId));
+        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>([ByoAppId]));
         _graph.LookupServicePrincipalByAppIdAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult<string?>(ByoSpObjectId));
 
@@ -88,8 +88,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenApplicationNotFound()
     {
-        _graph.FindApplicationByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>(null));
+        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>([]));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
 
@@ -101,8 +101,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenServicePrincipalMissing()
     {
-        _graph.FindApplicationByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>(ByoAppId));
+        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>([ByoAppId]));
         _graph.LookupServicePrincipalByAppIdAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult<string?>(null));
 
@@ -110,6 +110,39 @@ public class McpServerPermissionServiceTests
 
         result.Should().BeNull(
             because: "a grant cannot be created without a resource service principal, so the caller must fail rather than proceed");
+    }
+
+    [Fact]
+    public async Task ResolveServerResourceAsync_ReturnsNull_WhenMultipleApplicationsShareTheDisplayName()
+    {
+        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>>([ByoAppId, "99999999-9999-9999-9999-999999999999"]));
+
+        var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
+
+        result.Should().BeNull(
+            because: "Entra display names are not unique, and picking an arbitrary match would grant " +
+                     "the agent tenant-wide access to a different MCP server than the caller named");
+        await _graph.DidNotReceive().LookupServicePrincipalByAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+    }
+
+    [Fact]
+    public async Task GetAgentInstanceStatusesAsync_Throws_WhenTheGrantReadFails()
+    {
+        _blueprintService.GetAgentInstancesForBlueprintAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>(
+            [
+                new AgentInstanceInfo { IdentitySpId = AgentSpId, DisplayName = "Agent" },
+            ]));
+        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<List<(string, string, string)>?>(null));
+
+        var act = async () => await _service.GetAgentInstanceStatusesAsync(TenantId, BlueprintId, ByoSpObjectId);
+
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            because: "a failed grant read is indistinguishable from an empty one, so reporting it as " +
+                     "'missing the permission' would let --yes grant on the strength of a lookup that never succeeded");
     }
 
     [Fact]
@@ -122,13 +155,13 @@ public class McpServerPermissionServiceTests
                 new AgentInstanceInfo { IdentitySpId = "sp-missing", DisplayName = "Missing" },
             ]));
 
-        _graph.GetOauth2PermissionGrantsAsync(TenantId, "sp-granted", Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(new List<(string, string, string)>
+        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, "sp-granted", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (ByoSpObjectId, $"User.Read {McpConstants.V2ScopeValue}", "AllPrincipals"),
             }));
-        _graph.GetOauth2PermissionGrantsAsync(TenantId, "sp-missing", Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(new List<(string, string, string)>
+        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, "sp-missing", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (ByoSpObjectId, "User.Read", "AllPrincipals"),
             }));
@@ -149,8 +182,8 @@ public class McpServerPermissionServiceTests
                 new AgentInstanceInfo { IdentitySpId = AgentSpId, DisplayName = "Agent" },
             ]));
 
-        _graph.GetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(new List<(string, string, string)>
+        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (OtherResourceSpId, McpConstants.V2ScopeValue, "AllPrincipals"),
             }));
@@ -170,8 +203,8 @@ public class McpServerPermissionServiceTests
                 new AgentInstanceInfo { IdentitySpId = AgentSpId, DisplayName = "Agent" },
             ]));
 
-        _graph.GetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(new List<(string, string, string)>
+        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (ByoSpObjectId, $"{McpConstants.V2ScopeValue}.Extra", "AllPrincipals"),
             }));

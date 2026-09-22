@@ -889,12 +889,24 @@ public class GraphApiService
     public virtual async Task<string?> FindApplicationByDisplayNameAsync(
         string tenantId, string displayName, CancellationToken ct = default)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct: ct)) return null;
+        var appIds = await FindApplicationAppIdsByDisplayNameAsync(tenantId, displayName, ct);
+        return appIds.Count > 0 ? appIds[0] : null;
+    }
+
+    /// <summary>
+    /// Finds every application whose display name matches exactly. Display names are not unique in
+    /// Entra, so callers that act on the result must decide what an ambiguous match means rather
+    /// than silently taking the first. Returns an empty list if none match or on error.
+    /// </summary>
+    public virtual async Task<IReadOnlyList<string>> FindApplicationAppIdsByDisplayNameAsync(
+        string tenantId, string displayName, CancellationToken ct = default)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct: ct)) return [];
 
         // OData requires single quotes to be escaped by doubling them: ' → ''
         var escaped = displayName.Replace("'", "''", StringComparison.Ordinal);
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl,
-            $"/v1.0/applications?$filter=displayName eq '{escaped}'&$select=appId&$top=1&$count=true");
+            $"/v1.0/applications?$filter=displayName eq '{escaped}'&$select=appId&$top=10&$count=true");
 
         try
         {
@@ -909,19 +921,28 @@ public class GraphApiService
             if (!resp.IsSuccessStatusCode)
             {
                 _logger.LogDebug("FindApplicationByDisplayName {Name} failed {Code}", displayName, (int)resp.StatusCode);
-                return null;
+                return [];
             }
 
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-            if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0)
-                return null;
+            if (!doc.RootElement.TryGetProperty("value", out var value))
+                return [];
 
-            return value[0].TryGetProperty("appId", out var appId) ? appId.GetString() : null;
+            var appIds = new List<string>(value.GetArrayLength());
+            foreach (var app in value.EnumerateArray())
+            {
+                if (app.TryGetProperty("appId", out var appId) && appId.GetString() is { Length: > 0 } id)
+                {
+                    appIds.Add(id);
+                }
+            }
+
+            return appIds;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogDebug(ex, "Failed to find application by display name {Name}", displayName);
-            return null;
+            return [];
         }
     }
 
@@ -1243,6 +1264,17 @@ public class GraphApiService
         string tenantId,
         string clientSpObjectId,
         CancellationToken ct = default)
+        => await TryGetOauth2PermissionGrantsAsync(tenantId, clientSpObjectId, ct) ?? [];
+
+    /// <summary>
+    /// Same as <see cref="GetOauth2PermissionGrantsAsync"/> but returns null when the read itself
+    /// failed, so callers that decide whether a permission is missing can tell "no grants" apart
+    /// from "we could not find out".
+    /// </summary>
+    public virtual async Task<List<(string resourceId, string scope, string consentType)>?> TryGetOauth2PermissionGrantsAsync(
+        string tenantId,
+        string clientSpObjectId,
+        CancellationToken ct = default)
     {
         var grants = new List<(string resourceId, string scope, string consentType)>();
 
@@ -1251,7 +1283,7 @@ public class GraphApiService
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}'",
             ct);
 
-        if (doc == null) return grants;
+        if (doc == null) return null;
 
         if (doc.RootElement.TryGetProperty("value", out var arr))
         {

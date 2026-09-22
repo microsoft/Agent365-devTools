@@ -34,10 +34,7 @@ public static class McpServerPermissionsSubcommands
         var blueprintIdOption = new Option<string?>(
             "--agent-blueprint-id",
             description: "Agent blueprint ID (GUID) whose agent instances should be checked. " +
-                         $"First-party blueprints: {AgentBlueprintCatalog.FormatForHelp()}.")
-        {
-            IsRequired = true,
-        };
+                         $"First-party blueprints: {AgentBlueprintCatalog.FormatForHelp()}.");
 
         var serverNameOption = new Option<string?>(
             ["--mcp-server-name", "-s"],
@@ -58,19 +55,25 @@ public static class McpServerPermissionsSubcommands
             "--device-code",
             description: "Use device code authentication instead of the interactive browser flow (the WAM broker on Windows). Use when WAM cannot show a sign-in dialog, such as an embedded or remote terminal. Opens https://microsoft.com/devicelogin in your browser.");
 
+        var dryRunOption = new Option<bool>(
+            "--dry-run",
+            description: "Report which agent instances are missing the permission without granting it.");
+
         command.AddOption(blueprintIdOption);
         command.AddOption(serverNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(yesOption);
         command.AddOption(deviceCodeOption);
+        command.AddOption(dryRunOption);
         command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
 
         command.SetHandler(async (InvocationContext context) =>
         {
             var blueprintIdRaw = context.ParseResult.GetValueForOption(blueprintIdOption);
-            var serverName = context.ParseResult.GetValueForOption(serverNameOption);
+            var serverNameRaw = context.ParseResult.GetValueForOption(serverNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var grantAll = context.ParseResult.GetValueForOption(yesOption);
+            var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
             var ct = context.GetCancellationToken();
 
             permissionService.UseDeviceCodeAuthentication = context.ParseResult.GetValueForOption(deviceCodeOption);
@@ -82,7 +85,7 @@ public static class McpServerPermissionsSubcommands
                 return;
             }
 
-            if (!TryValidateServerName(serverName, logger))
+            if (!TryValidateServerName(serverNameRaw, logger, out var serverName))
             {
                 context.ExitCode = 1;
                 return;
@@ -95,7 +98,7 @@ public static class McpServerPermissionsSubcommands
                 return;
             }
 
-            var resource = await permissionService.ResolveServerResourceAsync(tenantId, serverName!.Trim(), ct);
+            var resource = await permissionService.ResolveServerResourceAsync(tenantId, serverName, ct);
             if (resource is null)
             {
                 context.ExitCode = 1;
@@ -139,6 +142,13 @@ public static class McpServerPermissionsSubcommands
                     i + 1, missing[i].DisplayName ?? "(no display name)", missing[i].ServicePrincipalObjectId);
             }
             logger.LogInformation("");
+
+            if (dryRun)
+            {
+                logger.LogInformation("[DRY RUN] Would grant '{Scope}' on '{DisplayName}' to the {Count} agent instance(s) above.",
+                    McpConstants.V2ScopeValue, resource.DisplayName, missing.Count);
+                return;
+            }
 
             var selected = ResolveSelection(missing, grantAll, resource, logger, ct);
             if (selected.Count == 0)
@@ -266,7 +276,9 @@ public static class McpServerPermissionsSubcommands
     {
         if (string.IsNullOrWhiteSpace(value) || !Guid.TryParse(value.Trim(), out var guid))
         {
-            logger.LogError("{OptionName} must be a GUID.", optionName);
+            logger.LogError(value is null
+                ? $"{optionName} is required and must be a GUID."
+                : $"{optionName} must be a GUID.");
 
             // List the IDs here rather than pointing elsewhere: this is the moment the caller
             // needs one, and a redirect costs them another command.
@@ -288,20 +300,42 @@ public static class McpServerPermissionsSubcommands
         return true;
     }
 
-    private static bool TryValidateServerName(string? serverName, ILogger logger)
+    private static bool TryValidateServerName(string? serverName, ILogger logger, out string normalized)
     {
+        normalized = string.Empty;
+
         if (string.IsNullOrWhiteSpace(serverName))
         {
             logger.LogError("--mcp-server-name must not be empty.");
             return false;
         }
 
-        return true;
+        // The name is interpolated into a Graph OData filter, so reuse the same allowlist
+        // register-external-mcp-server applies rather than accepting any non-blank string.
+        try
+        {
+            var validated = DevelopMcpCommand.InputValidator.ValidateInput(serverName, "Server name");
+            if (string.IsNullOrWhiteSpace(validated))
+            {
+                logger.LogError("--mcp-server-name must not be empty.");
+                return false;
+            }
+
+            normalized = validated;
+            return true;
+        }
+        catch (ArgumentException ex)
+        {
+            logger.LogError("Invalid --mcp-server-name: {Message}", ex.Message);
+            return false;
+        }
     }
 
     private static async Task<string?> ResolveTenantIdAsync(string? tenantIdFlag, ILogger logger)
     {
-        if (!string.IsNullOrWhiteSpace(tenantIdFlag))
+        // Only a missing option falls back to the Azure CLI context. An explicitly blank value is
+        // a mistake, and silently detecting a tenant could act on a different one than intended.
+        if (tenantIdFlag is not null)
         {
             if (!Guid.TryParse(tenantIdFlag.Trim(), out var tenantGuid))
             {

@@ -152,7 +152,16 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct, loginHint, forceRefresh, useDeviceCode);
 
             // Fall back to PowerShell Connect-MgGraph if MSAL is unavailable (e.g. no clientAppId)
-            // or fails for any reason.
+            // or fails for any reason. Explicit device code is excluded: Connect-MgGraph -UseDeviceCode
+            // cannot render its prompt as a child process with redirected stdio, so the fallback
+            // would return no context and hide the real MSAL failure.
+            if (string.IsNullOrWhiteSpace(token) && useDeviceCode)
+            {
+                _logger.LogError(
+                    "Device code sign-in did not return a token. Re-run without --device-code to use the browser or Windows sign-in dialog.");
+                return null;
+            }
+
             if (string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("MSAL token acquisition failed, falling back to PowerShell Connect-MgGraph...");

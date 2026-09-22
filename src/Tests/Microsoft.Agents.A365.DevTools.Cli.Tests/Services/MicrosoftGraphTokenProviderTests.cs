@@ -512,9 +512,9 @@ public class MicrosoftGraphTokenProviderTests
     }
 
     [Fact]
-    public async Task GetMgGraphAccessTokenAsync_WhenUseDeviceCodeAlreadyTrue_DoesNotRetryAgain()
+    public async Task GetMgGraphAccessTokenAsync_WhenUseDeviceCode_DoesNotFallBackToPowerShell()
     {
-        // Arrange — ensures no double-retry when the caller already requested device code
+        // Arrange
         var tenantId = "12345678-1234-1234-1234-123456789abc";
         var scopes = new[] { "User.Read" };
         var browserFailureError = "InteractiveBrowserCredential authentication failed";
@@ -535,14 +535,14 @@ public class MicrosoftGraphTokenProviderTests
 
         // Assert
         token.Should().BeNull(
-            because: "when useDeviceCode is already true the retry guard (!useDeviceCode) prevents an infinite loop");
-        // Only one PowerShell call — no retry
-        await _executor.Received(1).ExecuteWithStreamingAsync(
+            because: "Connect-MgGraph -UseDeviceCode cannot render its prompt as a child process " +
+                     "with redirected stdio, so falling back to it would return no context and hide " +
+                     "the real MSAL failure; explicit device code must surface the failure instead");
+        await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
             Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
-
     // ── WAM wrong-tenant self-heal (issue #430) ───────────────────────────────
 
     private static string BuildJwt(object payload)

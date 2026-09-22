@@ -52,8 +52,8 @@ public class McpServerPermissionService
 
         var displayName = McpConstants.BuildByoAppDisplayName(serverName);
 
-        var appId = await _graphApiService.FindApplicationByDisplayNameAsync(tenantId, displayName, ct);
-        if (string.IsNullOrWhiteSpace(appId))
+        var appIds = await _graphApiService.FindApplicationAppIdsByDisplayNameAsync(tenantId, displayName, ct);
+        if (appIds.Count == 0)
         {
             // A failed sign-in also yields a null lookup result, which would otherwise be reported
             // as "application not found" and send the user off to create an app that may exist.
@@ -66,6 +66,18 @@ public class McpServerPermissionService
             _logger.LogError("No Entra application named '{DisplayName}' was found in tenant {TenantId}.", displayName, tenantId);
             return null;
         }
+
+        // Display names are not unique, so granting against an arbitrary match could hand the
+        // agent access to a different MCP server than the caller named.
+        if (appIds.Count > 1)
+        {
+            _logger.LogError(
+                "Tenant {TenantId} has {Count} applications named '{DisplayName}' ({AppIds}). Rename or remove the duplicates so the MCP server resolves to one application.",
+                tenantId, appIds.Count, displayName, string.Join(", ", appIds));
+            return null;
+        }
+
+        var appId = appIds[0];
 
         var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
             tenantId, appId, ct, AuthenticationConstants.RequiredPermissionGrantScopes);
@@ -104,7 +116,16 @@ public class McpServerPermissionService
         {
             ct.ThrowIfCancellationRequested();
 
-            var grants = await _graphApiService.GetOauth2PermissionGrantsAsync(tenantId, instance.IdentitySpId, ct);
+            var grants = await _graphApiService.TryGetOauth2PermissionGrantsAsync(tenantId, instance.IdentitySpId, ct);
+            if (grants is null)
+            {
+                // An empty list is also what a failed read returns, and reporting that as "missing"
+                // would let --yes grant on the strength of a lookup that never succeeded.
+                throw new InvalidOperationException(
+                    $"Could not read the existing permission grants for agent identity {instance.IdentitySpId}. " +
+                    "The permission state is unknown, so no grants were made.");
+            }
+
             var hasScope = grants.Any(g =>
                 string.Equals(g.resourceId, resourceSpObjectId, StringComparison.OrdinalIgnoreCase) &&
                 ScopeStringContains(g.scope, McpConstants.V2ScopeValue));
