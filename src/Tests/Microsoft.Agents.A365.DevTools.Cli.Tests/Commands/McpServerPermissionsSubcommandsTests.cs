@@ -76,7 +76,7 @@ public class McpServerPermissionsSubcommandsTests
     [Fact]
     public void ListAgentInstances_HasExpectedName()
     {
-        ListCommand().Name.Should().Be("list-agent-instances");
+        ListCommand().Name.Should().Be("grant-agent-mcpserver-permissions");
     }
 
     [Fact]

@@ -17,11 +17,11 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 /// </summary>
 public static class McpServerPermissionsSubcommands
 {
-    private const string ListCommandName = "list-agent-instances";
+    private const string ListCommandName = "grant-agent-mcpserver-permissions";
     private const string GrantCommandName = "grant-mcpserver-permissions";
 
     /// <summary>
-    /// Creates the list-agent-instances subcommand, which reports agent instances of a blueprint
+    /// Creates the grant-agent-mcpserver-permissions subcommand, which reports agent instances of a blueprint
     /// that are missing the MCP server scope and offers to grant it.
     /// </summary>
     public static Command CreateListAgentInstancesSubcommand(
@@ -29,8 +29,8 @@ public static class McpServerPermissionsSubcommands
         McpServerPermissionService permissionService)
     {
         var command = new Command(ListCommandName,
-            $"List agent instances of a blueprint that are missing the '{McpConstants.V2ScopeValue}' permission for an MCP server.\n" +
-            "Offers to grant the permission interactively; prints the equivalent commands when input is redirected.");
+            $"Grant the '{McpConstants.V2ScopeValue}' permission for an MCP server to agent instances of a blueprint.\n" +
+            "Lists the instances missing it and prompts before granting; prints the equivalent commands when input is redirected.");
 
         var blueprintIdOption = new Option<string?>(
             "--agent-blueprint-id",
