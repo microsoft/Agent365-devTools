@@ -105,7 +105,8 @@ public class MicrosoftGraphTokenProviderTests
     }
 
     [Fact]
-    public async Task GetMgGraphAccessTokenAsync_WithoutClientAppId_OmitsClientIdParameter()    {
+    public async Task GetMgGraphAccessTokenAsync_WithoutClientAppId_OmitsClientIdParameter()
+    {
         // Arrange
         var tenantId = "12345678-1234-1234-1234-123456789abc";
         var scopes = new[] { "User.Read" };
@@ -543,6 +544,7 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
             Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
+
     // ── WAM wrong-tenant self-heal (issue #430) ───────────────────────────────
 
     private static string BuildJwt(object payload)

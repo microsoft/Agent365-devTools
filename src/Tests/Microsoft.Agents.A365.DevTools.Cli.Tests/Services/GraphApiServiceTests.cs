@@ -968,6 +968,82 @@ public class GraphApiServiceTests
     }
 
     [Fact]
+    public async Task TryFindApplicationAppIdsByDisplayNameAsync_MultipleMatches_ReturnsEveryAppId()
+    {
+        // The duplicate-name safety check in McpServerPermissionService refuses to grant when more
+        // than one application shares a name. That guard is only as good as this parser: if it kept
+        // just the first entry, the check would silently pass and grant against an arbitrary app.
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[{\"appId\":\"app-id-1\"},{\"appId\":\"app-id-2\"}]}")
+        });
+
+        var service = CreateServiceWithToken(handler);
+
+        var appIds = await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+
+        appIds.Should().BeEquivalentTo(["app-id-1", "app-id-2"],
+            because: "every match must be returned so callers can detect an ambiguous display name rather than granting against whichever app Graph happened to list first");
+    }
+
+    [Fact]
+    public async Task TryFindApplicationAppIdsByDisplayNameAsync_WhenTheReadFails_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("{}") });
+
+        var service = CreateServiceWithToken(handler);
+
+        var appIds = await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+
+        appIds.Should().BeNull(
+            because: "a failed read is not an absent application - conflating them tells the user to create an app that may already exist");
+    }
+
+    [Fact]
+    public async Task TryFindApplicationAppIdsByDisplayNameAsync_WhenNothingMatches_ReturnsEmptyNotNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"value\":[]}") });
+
+        var service = CreateServiceWithToken(handler);
+
+        var appIds = await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+
+        appIds.Should().NotBeNull(
+            because: "a successful read that found nothing is a conclusive answer and must be distinguishable from a failed read");
+        appIds.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FindApplicationAppIdsByDisplayNameAsync_WhenTheReadFails_ReturnsEmptyForLegacyCallers()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("{}") });
+
+        var service = CreateServiceWithToken(handler);
+
+        var appIds = await service.FindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+
+        appIds.Should().BeEmpty(
+            because: "existing callers treat a failed lookup as 'no application' and must keep that behaviour unchanged");
+    }
+
+    private static GraphApiService CreateServiceWithToken(HttpMessageHandler handler)
+    {
+        var auth = Substitute.For<IAuthenticationService>();
+        auth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult("fake-token"));
+
+        return new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            auth, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+    }
+
+    [Fact]
     public async Task CreateOrUpdateOauth2PermissionGrantAsync_AllPrincipals_DoesNotPatchAPrincipalScopedGrant()
     {
         // A Principal-scoped grant for the same client and resource is what 'setup --authmode obo'
@@ -1393,6 +1469,74 @@ public class GraphApiServiceTests
     }
 
     #endregion
+}
+
+/// <summary>
+/// Login-hint fallback wiring. A separate class so it can join the AzCliHelper collection: the az
+/// resolver and its cache are process-wide static state that must not be mutated concurrently.
+/// </summary>
+[Collection("AzCliHelperTests")]
+public class GraphApiServiceLoginHintTests : IDisposable
+{
+    public GraphApiServiceLoginHintTests()
+    {
+        // Force the az branch to miss so the MSAL-cache fallback is the path under test.
+        AzCliHelper.LoginHintResolverOverride = () => Task.FromResult<string?>(null);
+        AzCliHelper.ResetLoginHintCacheForTesting();
+    }
+
+    public void Dispose()
+    {
+        AzCliHelper.LoginHintResolverOverride = null;
+        AzCliHelper.ResetLoginHintCacheForTesting();
+        GC.SuppressFinalize(this);
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_DeviceCodeWithoutAzCli_ReadsTheCacheForTheGraphClient()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var auth = CreateAuth();
+
+        var service = new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            auth, handler)
+        {
+            UseDeviceCodeAuthentication = true
+        };
+
+        await service.GetGraphAccessTokenAsync("tenant-123");
+
+        await auth.Received(1).ResolveLoginHintFromCacheAsync(AuthenticationConstants.GraphPowershellClientId);
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_WithoutDeviceCode_ReadsTheCacheForTheDefaultClient()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var auth = CreateAuth();
+
+        var service = new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            auth, handler);
+
+        await service.GetGraphAccessTokenAsync("tenant-123");
+
+        await auth.Received(1).ResolveLoginHintFromCacheAsync(null);
+    }
+
+    private static IAuthenticationService CreateAuth()
+    {
+        var auth = Substitute.For<IAuthenticationService>();
+        auth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult("fake-token"));
+        auth.ResolveLoginHintFromCacheAsync(Arg.Any<string?>())
+            .Returns(Task.FromResult<string?>("user@contoso.com"));
+        return auth;
+    }
 }
 
 // Handler that throws the supplied exception instead of sending a request.

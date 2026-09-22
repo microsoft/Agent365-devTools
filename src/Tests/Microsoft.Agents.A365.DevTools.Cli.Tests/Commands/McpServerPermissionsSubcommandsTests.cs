@@ -56,7 +56,7 @@ public class McpServerPermissionsSubcommandsTests
         McpServerPermissionsSubcommands.CreateGrantAgentsAccessSubcommand(_logger, _permissionService);
 
     [Fact]
-    public async Task GrantAgentPermissions_NoBlueprintSpecified_ExitsWithOne()
+    public async Task GrantAgentsAccess_NoBlueprintSpecified_ExitsWithOne()
     {
         var exitCode = await ListCommand().InvokeAsync(
             ["--mcp-server-name", ServerName, "--tenant-id", TenantId]);
@@ -69,7 +69,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_NoInstancesLinkedToBlueprint_ExitsWithOne()
+    public async Task GrantAgentsAccess_NoInstancesLinkedToBlueprint_ExitsWithOne()
     {
         SetupResolvedResource();
         SetupInstances();
@@ -90,7 +90,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_NonGuidBlueprintId_ExitsWithOne()
+    public async Task GrantAgentsAccess_NonGuidBlueprintId_ExitsWithOne()
     {
         var exitCode = await ListCommand().InvokeAsync(
             ["--agent-blueprint-id", "not-a-guid", "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
@@ -102,7 +102,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_NonGuidBlueprintId_ListsFirstPartyBlueprintsInError()
+    public async Task GrantAgentsAccess_NonGuidBlueprintId_ListsFirstPartyBlueprintsInError()
     {
         var capturing = new CapturingLogger();
         var command = McpServerPermissionsSubcommands.CreateGrantAgentsAccessSubcommand(capturing, _permissionService);
@@ -196,7 +196,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_NonGuidTenantId_ExitsWithOne()
+    public async Task GrantAgentsAccess_NonGuidTenantId_ExitsWithOne()
     {
         var exitCode = await ListCommand().InvokeAsync(
             ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", "nope"]);
@@ -205,7 +205,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_WhitespaceServerName_ExitsWithOne()
+    public async Task GrantAgentsAccess_WhitespaceServerName_ExitsWithOne()
     {
         var exitCode = await ListCommand().InvokeAsync(
             ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", "  ", "--tenant-id", TenantId]);
@@ -215,7 +215,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_UnresolvableServer_ExitsWithOne()
+    public async Task GrantAgentsAccess_UnresolvableServer_ExitsWithOne()
     {
         _permissionService.ResolveServerResourceAsync(TenantId, ServerName, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<McpServerResource?>(null));
@@ -227,7 +227,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_AllInstancesHaveScope_ExitsWithZeroAndGrantsNothing()
+    public async Task GrantAgentsAccess_AllInstancesHaveScope_ExitsWithZeroAndGrantsNothing()
     {
         SetupResolvedResource();
         SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Agent", HasScope: true));
@@ -241,11 +241,11 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_WithoutYes_DoesNotGrantWhenSelectionIsSkipped()
+    public async Task GrantAgentsAccess_WithoutYes_DoesNotGrantWhenSelectionIsSkipped()
     {
         SetupResolvedResource();
         SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Agent", HasScope: false));
-        // Covers both paths: redirected input skips the prompt, a terminal prompts and gets an empty answer.
+        // Under the test runner stdin is always redirected, so this exercises the no-terminal path.
         ConsoleHelper.ReadLineOverrideForTests.Value = () => string.Empty;
         try
         {
@@ -263,8 +263,37 @@ public class McpServerPermissionsSubcommandsTests
         }
     }
 
+    [Theory]
+    [InlineData("2x")]
+    [InlineData("abc")]
+    [InlineData("0")]
+    [InlineData("99")]
+    public async Task GrantAgentsAccess_InvalidSelection_ExitsWithOneAndGrantsNothing(string response)
+    {
+        SetupResolvedResource();
+        SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Agent", HasScope: false));
+        // A terminal must be simulated: the runner redirects stdin, which skips the prompt entirely.
+        ConsoleHelper.IsInputRedirectedOverrideForTests.Value = false;
+        ConsoleHelper.ReadLineOverrideForTests.Value = () => response;
+        try
+        {
+            var exitCode = await ListCommand().InvokeAsync(
+                ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+
+            exitCode.Should().Be(1,
+                because: "an unparseable selection is a failure, not a decision to grant nothing - exiting 0 would let a typo pass silently in a script that checks the exit code");
+            await _permissionService.DidNotReceive().GrantServerScopeAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            ConsoleHelper.ReadLineOverrideForTests.Value = null;
+            ConsoleHelper.IsInputRedirectedOverrideForTests.Value = null;
+        }
+    }
+
     [Fact]
-    public async Task ListAgentInstances_WithYes_GrantsOnlyInstancesMissingTheScope()
+    public async Task GrantAgentsAccess_WithYes_GrantsOnlyInstancesMissingTheScope()
     {
         SetupResolvedResource();
         SetupInstances(
@@ -284,7 +313,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_WithYes_FailedGrantExitsWithOne()
+    public async Task GrantAgentsAccess_WithYes_FailedGrantExitsWithOne()
     {
         SetupResolvedResource();
         SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Missing", HasScope: false));
@@ -299,7 +328,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_DeviceCodeFlag_RoutesSignInThroughDeviceCode()
+    public async Task GrantAgentsAccess_DeviceCodeFlag_RoutesSignInThroughDeviceCode()
     {
         SetupResolvedResource();
         SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Agent", HasScope: true));
@@ -311,7 +340,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_WithoutDeviceCodeFlag_UsesDefaultInteractiveSignIn()
+    public async Task GrantAgentsAccess_WithoutDeviceCodeFlag_UsesDefaultInteractiveSignIn()
     {
         SetupResolvedResource();
         SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Agent", HasScope: true));
@@ -323,7 +352,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_InteractiveSelection_GrantsOnlyTheChosenInstance()
+    public async Task GrantAgentsAccess_InteractiveSelection_GrantsOnlyTheChosenInstance()
     {
         SetupResolvedResource();
         SetupInstances(
@@ -352,7 +381,7 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task ListAgentInstances_RedirectedInput_DoesNotPromptOrGrant()
+    public async Task GrantAgentsAccess_RedirectedInput_DoesNotPromptOrGrant()
     {
         SetupResolvedResource();
         SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Missing", HasScope: false));

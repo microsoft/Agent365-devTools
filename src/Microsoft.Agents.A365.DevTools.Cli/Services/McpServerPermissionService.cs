@@ -52,17 +52,28 @@ public class McpServerPermissionService
 
         var displayName = McpConstants.BuildByoAppDisplayName(serverName);
 
-        var appIds = await _graphApiService.FindApplicationAppIdsByDisplayNameAsync(tenantId, displayName, ct);
-        if (appIds.Count == 0)
+        var appIds = await _graphApiService.TryFindApplicationAppIdsByDisplayNameAsync(tenantId, displayName, ct);
+        if (appIds is null)
         {
-            // A failed sign-in also yields a null lookup result, which would otherwise be reported
-            // as "application not found" and send the user off to create an app that may exist.
+            // A failed read is not an absent application — reporting "not found" would send the
+            // user off to create an application that may already exist (issue #500).
             if (string.IsNullOrWhiteSpace(await _graphApiService.GetGraphAccessTokenAsync(tenantId, ct: ct)))
             {
                 _logger.LogError("Could not sign in to tenant {TenantId}, so '{DisplayName}' could not be looked up.", tenantId, displayName);
-                return null;
+            }
+            else
+            {
+                _logger.LogError(
+                    "Could not read application registrations in tenant {TenantId}, so '{DisplayName}' could not be looked up. " +
+                    "This usually means the signed-in account lacks permission to read applications.",
+                    tenantId, displayName);
             }
 
+            return null;
+        }
+
+        if (appIds.Count == 0)
+        {
             _logger.LogError("No Entra application named '{DisplayName}' was found in tenant {TenantId}.", displayName, tenantId);
             return null;
         }

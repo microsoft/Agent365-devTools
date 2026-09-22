@@ -151,6 +151,13 @@ public static class McpServerPermissionsSubcommands
             }
 
             var selected = ResolveSelection(missing, grantAll, resource, logger, ct);
+            if (selected is null)
+            {
+                // Invalid input is a failure, not a decision to skip.
+                context.ExitCode = 1;
+                return;
+            }
+
             if (selected.Count == 0)
             {
                 return;
@@ -169,8 +176,10 @@ public static class McpServerPermissionsSubcommands
     /// <summary>
     /// Determines which instances to grant: all when --yes is set, the user's selection when a
     /// terminal is attached, or none when input is redirected and there is nobody to prompt.
+    /// Returns null when the response could not be parsed, which is a failure rather than a
+    /// decision to grant nothing.
     /// </summary>
-    private static List<AgentInstancePermissionStatus> ResolveSelection(
+    private static List<AgentInstancePermissionStatus>? ResolveSelection(
         List<AgentInstancePermissionStatus> missing,
         bool grantAll,
         McpServerResource resource,
@@ -208,7 +217,7 @@ public static class McpServerPermissionsSubcommands
             if (!int.TryParse(token, out var index) || index < 1 || index > missing.Count)
             {
                 logger.LogError("Invalid selection '{Token}'. Enter numbers between 1 and {Max}, or 'all'.", token, missing.Count);
-                return [];
+                return null;
             }
 
             var instance = missing[index - 1];

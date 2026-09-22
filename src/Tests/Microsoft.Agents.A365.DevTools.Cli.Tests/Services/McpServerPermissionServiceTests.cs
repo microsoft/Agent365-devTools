@@ -45,8 +45,8 @@ public class McpServerPermissionServiceTests
     {
         _graph.GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
-        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<string>>([]));
+        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>?>([]));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
 
@@ -56,8 +56,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_DoesNotAcquireATokenOnTheSuccessPath()
     {
-        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<string>>([ByoAppId]));
+        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>?>([ByoAppId]));
         _graph.LookupServicePrincipalByAppIdAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult<string?>(ByoSpObjectId));
 
@@ -70,8 +70,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_LooksUpTheByoSuffixedApplication()
     {
-        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<string>>([ByoAppId]));
+        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>?>([ByoAppId]));
         _graph.LookupServicePrincipalByAppIdAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult<string?>(ByoSpObjectId));
 
@@ -88,12 +88,30 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenApplicationNotFound()
     {
-        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<string>>([]));
+        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>?>([]));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
 
         result.Should().BeNull();
+        await _graph.DidNotReceive().LookupServicePrincipalByAppIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
+        await _graph.DidNotReceive().GetGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ResolveServerResourceAsync_WhenTheReadFails_DoesNotReportTheApplicationAsAbsent()
+    {
+        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>?>(null));
+        _graph.GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+
+        var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
+
+        result.Should().BeNull();
+        await _graph.Received(1).GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>());
         await _graph.DidNotReceive().LookupServicePrincipalByAppIdAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
     }
@@ -101,8 +119,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenServicePrincipalMissing()
     {
-        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<string>>([ByoAppId]));
+        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>?>([ByoAppId]));
         _graph.LookupServicePrincipalByAppIdAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
             .Returns(Task.FromResult<string?>(null));
 
@@ -115,8 +133,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenMultipleApplicationsShareTheDisplayName()
     {
-        _graph.FindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<string>>([ByoAppId, "99999999-9999-9999-9999-999999999999"]));
+        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>?>([ByoAppId, "99999999-9999-9999-9999-999999999999"]));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
 

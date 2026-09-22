@@ -117,7 +117,7 @@ public class GraphApiService
         _tokenProvider = tokenProvider;
         _retryHelper = retryHelper ?? new RetryHelper(_logger);
         // Default: try az CLI first (if present), fall back to JWT cache in AuthenticationService.
-        _loginHintResolver = loginHintResolver ?? (() => ResolveLoginHintWithFallbackAsync(authService));
+        _loginHintResolver = loginHintResolver ?? (() => ResolveLoginHintWithFallbackAsync(authService, EffectiveGraphClientId));
         _graphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl;
         _agentRegistryRetryDelay = agentRegistryRetryDelay ?? TimeSpan.FromSeconds(30);
     }
@@ -146,15 +146,24 @@ public class GraphApiService
     {
     }
 
-    private static async Task<string?> ResolveLoginHintWithFallbackAsync(IAuthenticationService authService)
+    private static async Task<string?> ResolveLoginHintWithFallbackAsync(IAuthenticationService authService, string? clientId)
     {
         // Try az CLI first — most reliable when the user has run 'az login'.
         var hint = await AzCliHelper.ResolveLoginHintAsync();
         if (!string.IsNullOrWhiteSpace(hint))
             return hint;
-        // Fall back to the UPN embedded in a previously cached MSAL JWT.
-        return await authService.ResolveLoginHintFromCacheAsync();
+        // Fall back to the UPN embedded in a previously cached MSAL JWT. MSAL partitions its cache
+        // per client, so this must read the same app the token is acquired as (issue #500).
+        return await authService.ResolveLoginHintFromCacheAsync(clientId);
     }
+
+    /// <summary>
+    /// Client app used for in-process MSAL acquisition. The Azure PowerShell client is not
+    /// preauthorized for Graph delegated scopes (AADSTS65002), so the device-code path must use
+    /// the Graph CLI client. Null leaves the default in place for the normal path.
+    /// </summary>
+    private string? EffectiveGraphClientId =>
+        UseDeviceCodeAuthentication ? AuthenticationConstants.GraphPowershellClientId : null;
 
     /// <summary>
     /// Clears the persistent MSAL token cache. Passthrough to <see cref="IAuthenticationService.ClearTokenCacheAsync"/>
@@ -176,9 +185,7 @@ public class GraphApiService
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var loginHint = await _loginHintResolver();
-            // The Azure PowerShell client is not preauthorized for Graph delegated scopes
-            // (AADSTS65002), so the device-code path must use the Graph CLI client.
-            var clientId = UseDeviceCodeAuthentication ? AuthenticationConstants.GraphPowershellClientId : null;
+            var clientId = EffectiveGraphClientId;
             var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, clientId: clientId, useInteractiveBrowser: !UseDeviceCodeAuthentication, userId: loginHint, ct: ct);
             if (!string.IsNullOrWhiteSpace(token))
             {
@@ -903,8 +910,18 @@ public class GraphApiService
     /// </summary>
     public virtual async Task<IReadOnlyList<string>> FindApplicationAppIdsByDisplayNameAsync(
         string tenantId, string displayName, CancellationToken ct = default)
+        => await TryFindApplicationAppIdsByDisplayNameAsync(tenantId, displayName, ct) ?? [];
+
+    /// <summary>
+    /// Same as <see cref="FindApplicationAppIdsByDisplayNameAsync"/> but returns null when the read
+    /// itself failed (no token, 403, or a transport error), so callers can tell "no such
+    /// application" apart from "we could not find out" instead of sending the user off to create an
+    /// application that may already exist.
+    /// </summary>
+    public virtual async Task<IReadOnlyList<string>?> TryFindApplicationAppIdsByDisplayNameAsync(
+        string tenantId, string displayName, CancellationToken ct = default)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct: ct)) return [];
+        if (!await EnsureGraphHeadersAsync(tenantId, ct: ct)) return null;
 
         // OData requires single quotes to be escaped by doubling them: ' → ''
         var escaped = displayName.Replace("'", "''", StringComparison.Ordinal);
@@ -924,7 +941,7 @@ public class GraphApiService
             if (!resp.IsSuccessStatusCode)
             {
                 _logger.LogDebug("FindApplicationByDisplayName {Name} failed {Code}", displayName, (int)resp.StatusCode);
-                return [];
+                return null;
             }
 
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
@@ -945,7 +962,7 @@ public class GraphApiService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogDebug(ex, "Failed to find application by display name {Name}", displayName);
-            return [];
+            return null;
         }
     }
 
@@ -1135,9 +1152,8 @@ public class GraphApiService
         var isPrincipal = string.Equals(consentType, "Principal", StringComparison.OrdinalIgnoreCase);
 
         // Read existing — extract string values immediately so JsonDocument can be disposed.
-        // AllPrincipals grants can filter by clientId+resourceId server-side.
-        // Principal grants must filter by clientId only, then match resourceId/consentType/principalId in code
-        // because the Graph API oauth2PermissionGrants endpoint has limited $filter support.
+        // Both shapes filter server-side; the in-code re-check guards against a tenant whose Graph
+        // ignores part of the $filter and returns rows of the other consentType.
         string? existingId = null;
         string existingScopes = "";
 
