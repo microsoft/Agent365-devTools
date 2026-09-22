@@ -120,6 +120,19 @@ public class Agent365ToolingServicePureFunctionTests
     }
 
     [Fact]
+    public void RedactSecretsFromPayload_RedactsA365ProxyClientSecret()
+    {
+        // The publish request serializes the newly created A365 proxy Entra app secret as
+        // a365ProxyClientSecret; it must be redacted so verbose request logging never writes the
+        // live client secret in plaintext.
+        var payload = """{"a365ProxyClientId":"proxy-id","a365ProxyClientSecret":"proxysecret"}""";
+        var result = Agent365ToolingService.RedactSecretsFromPayload(payload);
+        result.Should().NotContain("proxysecret", because: "the A365 proxy client secret must never be logged in plaintext");
+        result.Should().Contain("***REDACTED***");
+        result.Should().Contain("proxy-id", because: "the non-secret proxy client id is safe to log and aids diagnostics");
+    }
+
+    [Fact]
     public void RedactSecretsFromPayload_PreservesNonSecretFields()
     {
         var payload = """{"serverName":"ext_Test","serverUrl":"https://example.com","authMetadata":{"clientApp1Id":"id1","clientApp1Secret":"secret"}}""";

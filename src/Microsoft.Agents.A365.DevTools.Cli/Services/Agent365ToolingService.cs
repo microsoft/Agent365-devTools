@@ -196,7 +196,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     {
         var secretKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "clientApp1Secret", "clientApp2Secret", "clientSecret"
+            "clientApp1Secret", "clientApp2Secret", "clientSecret", "a365ProxyClientSecret"
         };
 
         foreach (var key in obj.Select(p => p.Key).ToList())
