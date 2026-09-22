@@ -53,7 +53,7 @@ public class McpServerPermissionsSubcommandsTests
             .Returns(Task.FromResult<IReadOnlyList<AgentInstancePermissionStatus>>(statuses));
 
     private Command ListCommand() =>
-        McpServerPermissionsSubcommands.CreateGrantAgentPermissionsSubcommand(_logger, _permissionService);
+        McpServerPermissionsSubcommands.CreateGrantAgentsAccessSubcommand(_logger, _permissionService);
 
     [Fact]
     public async Task GrantAgentPermissions_NoBlueprintSpecified_ExitsWithOne()
@@ -86,7 +86,7 @@ public class McpServerPermissionsSubcommandsTests
     [Fact]
     public void ListAgentInstances_HasExpectedName()
     {
-        ListCommand().Name.Should().Be("grant-agent-mcpserver-permissions");
+        ListCommand().Name.Should().Be("grant-agents-access");
     }
 
     [Fact]
@@ -105,7 +105,7 @@ public class McpServerPermissionsSubcommandsTests
     public async Task ListAgentInstances_NonGuidBlueprintId_ListsFirstPartyBlueprintsInError()
     {
         var capturing = new CapturingLogger();
-        var command = McpServerPermissionsSubcommands.CreateGrantAgentPermissionsSubcommand(capturing, _permissionService);
+        var command = McpServerPermissionsSubcommands.CreateGrantAgentsAccessSubcommand(capturing, _permissionService);
 
         await command.InvokeAsync(
             ["--agent-blueprint-id", "not-a-guid", "--mcp-server-name", ServerName, "--tenant-id", TenantId]);

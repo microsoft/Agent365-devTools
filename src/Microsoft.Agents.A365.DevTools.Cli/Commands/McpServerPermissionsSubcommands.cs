@@ -17,17 +17,17 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands;
 /// </summary>
 public static class McpServerPermissionsSubcommands
 {
-    private const string GrantAgentCommandName = "grant-agent-mcpserver-permissions";
+    private const string GrantAgentsAccessCommandName = "grant-agents-access";
 
     /// <summary>
-    /// Creates the grant-agent-mcpserver-permissions subcommand, which reports the agent instances
+    /// Creates the grant-agents-access subcommand, which reports the agent instances
     /// of a blueprint that are missing the MCP server scope and offers to grant it.
     /// </summary>
-    public static Command CreateGrantAgentPermissionsSubcommand(
+    public static Command CreateGrantAgentsAccessSubcommand(
         ILogger logger,
         McpServerPermissionService permissionService)
     {
-        var command = new Command(GrantAgentCommandName,
+        var command = new Command(GrantAgentsAccessCommandName,
             $"Grant the '{McpConstants.V2ScopeValue}' permission for an MCP server to agent identities. " +
             "Lists the blueprint's agent instances missing it and prompts before granting.");
 
