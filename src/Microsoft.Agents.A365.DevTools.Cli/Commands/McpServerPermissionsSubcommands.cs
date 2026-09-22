@@ -20,27 +20,24 @@ public static class McpServerPermissionsSubcommands
     private const string GrantAgentCommandName = "grant-agent-mcpserver-permissions";
 
     /// <summary>
-    /// Creates the grant-agent-mcpserver-permissions subcommand. Given a blueprint it reports the
-    /// agent instances missing the MCP server scope and offers to grant it; given a single agent
-    /// identity it grants directly.
+    /// Creates the grant-agent-mcpserver-permissions subcommand, which reports the agent instances
+    /// of a blueprint that are missing the MCP server scope and offers to grant it.
     /// </summary>
     public static Command CreateGrantAgentPermissionsSubcommand(
         ILogger logger,
         McpServerPermissionService permissionService)
     {
         var command = new Command(GrantAgentCommandName,
-            $"Grant the '{McpConstants.V2ScopeValue}' permission for an MCP server to agent identities.\n" +
-            "With --agent-blueprint-id, lists the blueprint's agent instances missing it and prompts before granting.\n" +
-            "With --agent-serviceprincipal-id, grants a single agent identity directly.");
+            $"Grant the '{McpConstants.V2ScopeValue}' permission for an MCP server to agent identities. " +
+            "Lists the blueprint's agent instances missing it and prompts before granting.");
 
         var blueprintIdOption = new Option<string?>(
             "--agent-blueprint-id",
             description: "Agent blueprint ID (GUID) whose agent instances should be checked. " +
-                         $"First-party blueprints: {AgentBlueprintCatalog.FormatForHelp()}.");
-
-        var agentSpIdOption = new Option<string?>(
-            "--agent-serviceprincipal-id",
-            description: "Object ID (GUID) of a single agent identity service principal to grant directly, instead of checking a whole blueprint.");
+                         $"First-party blueprints: {AgentBlueprintCatalog.FormatForHelp()}.")
+        {
+            IsRequired = true,
+        };
 
         var serverNameOption = new Option<string?>(
             ["--mcp-server-name", "-s"],
@@ -62,7 +59,6 @@ public static class McpServerPermissionsSubcommands
             description: "Use device code authentication instead of the interactive browser flow (the WAM broker on Windows). Use when WAM cannot show a sign-in dialog, such as an embedded or remote terminal. Opens https://microsoft.com/devicelogin in your browser.");
 
         command.AddOption(blueprintIdOption);
-        command.AddOption(agentSpIdOption);
         command.AddOption(serverNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(yesOption);
@@ -72,7 +68,6 @@ public static class McpServerPermissionsSubcommands
         command.SetHandler(async (InvocationContext context) =>
         {
             var blueprintIdRaw = context.ParseResult.GetValueForOption(blueprintIdOption);
-            var agentSpIdRaw = context.ParseResult.GetValueForOption(agentSpIdOption);
             var serverName = context.ParseResult.GetValueForOption(serverNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
             var grantAll = context.ParseResult.GetValueForOption(yesOption);
@@ -80,33 +75,8 @@ public static class McpServerPermissionsSubcommands
 
             permissionService.UseDeviceCodeAuthentication = context.ParseResult.GetValueForOption(deviceCodeOption);
 
-            var hasBlueprint = !string.IsNullOrWhiteSpace(blueprintIdRaw);
-            var hasAgentSp = !string.IsNullOrWhiteSpace(agentSpIdRaw);
-
-            // Neither target is individually required, so the pairing has to be checked here:
-            // System.CommandLine cannot express "exactly one of these two".
-            if (hasBlueprint == hasAgentSp)
-            {
-                logger.LogError(hasBlueprint
-                    ? "Specify only one of --agent-blueprint-id or --agent-serviceprincipal-id."
-                    : "Specify --agent-blueprint-id to check a blueprint's agent instances, or --agent-serviceprincipal-id to grant a single agent identity.");
-                context.ExitCode = 1;
-                return;
-            }
-
-            string blueprintId = string.Empty;
-            string agentSpId = string.Empty;
-
-            if (hasBlueprint)
-            {
-                if (!TryValidateGuid(blueprintIdRaw, "--agent-blueprint-id", logger, out blueprintId,
-                        listBlueprints: true))
-                {
-                    context.ExitCode = 1;
-                    return;
-                }
-            }
-            else if (!TryValidateGuid(agentSpIdRaw, "--agent-serviceprincipal-id", logger, out agentSpId))
+            if (!TryValidateGuid(blueprintIdRaw, "--agent-blueprint-id", logger, out var blueprintId,
+                    listBlueprints: true))
             {
                 context.ExitCode = 1;
                 return;
@@ -129,13 +99,6 @@ public static class McpServerPermissionsSubcommands
             if (resource is null)
             {
                 context.ExitCode = 1;
-                return;
-            }
-
-            if (hasAgentSp)
-            {
-                context.ExitCode = await GrantToSingleIdentityAsync(
-                    permissionService, tenantId, resource, agentSpId, logger, ct);
                 return;
             }
 
@@ -194,44 +157,8 @@ public static class McpServerPermissionsSubcommands
     }
 
     /// <summary>
-    /// Grants the MCP server scope to one agent identity. Returns the process exit code.
-    /// </summary>
-    private static async Task<int> GrantToSingleIdentityAsync(
-        McpServerPermissionService permissionService,
-        string tenantId,
-        McpServerResource resource,
-        string agentSpId,
-        ILogger logger,
-        CancellationToken ct)
-    {
-        bool granted;
-        try
-        {
-            granted = await permissionService.GrantServerScopeAsync(
-                tenantId, agentSpId, resource.ServicePrincipalObjectId, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogError("Failed to grant '{Scope}' on '{DisplayName}' to agent identity {AgentSpId}: {Message}",
-                McpConstants.V2ScopeValue, resource.DisplayName, agentSpId, ex.Message);
-            return 1;
-        }
-
-        if (!granted)
-        {
-            logger.LogError("Failed to grant '{Scope}' on '{DisplayName}' to agent identity {AgentSpId}.",
-                McpConstants.V2ScopeValue, resource.DisplayName, agentSpId);
-            return 1;
-        }
-
-        logger.LogInformation("Granted '{Scope}' on '{DisplayName}' to agent identity {AgentSpId}.",
-            McpConstants.V2ScopeValue, resource.DisplayName, agentSpId);
-        return 0;
-    }
-
-    /// <summary>
     /// Determines which instances to grant: all when --yes is set, the user's selection when a
-    /// terminal is attached, or none (printing the equivalent commands) when input is redirected.
+    /// terminal is attached, or none when input is redirected and there is nobody to prompt.
     /// </summary>
     private static List<AgentInstancePermissionStatus> ResolveSelection(
         List<AgentInstancePermissionStatus> missing,
@@ -245,14 +172,9 @@ public static class McpServerPermissionsSubcommands
             return missing;
         }
 
-        if (Console.IsInputRedirected)
+        if (ConsoleHelper.IsInputRedirected)
         {
-            logger.LogInformation("Input is redirected. Re-run with --yes to grant, or run the commands below:");
-            foreach (var instance in missing)
-            {
-                logger.LogInformation("  a365 develop-mcp {Command} --agent-serviceprincipal-id {SpObjectId} --mcp-server-name {ServerName}",
-                    GrantAgentCommandName, instance.ServicePrincipalObjectId, resource.ServerName);
-            }
+            logger.LogInformation("Input is redirected, so the agent instances above cannot be selected interactively. Re-run with --yes to grant to all of them.");
             return [];
         }
 

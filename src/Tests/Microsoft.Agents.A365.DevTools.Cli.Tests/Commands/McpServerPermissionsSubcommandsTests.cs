@@ -55,31 +55,15 @@ public class McpServerPermissionsSubcommandsTests
     private Command ListCommand() =>
         McpServerPermissionsSubcommands.CreateGrantAgentPermissionsSubcommand(_logger, _permissionService);
 
-    private Command GrantCommand() => ListCommand();
-
     [Fact]
-    public async Task GrantAgentPermissions_NeitherTargetSpecified_ExitsWithOne()
+    public async Task GrantAgentPermissions_NoBlueprintSpecified_ExitsWithOne()
     {
         var exitCode = await ListCommand().InvokeAsync(
             ["--mcp-server-name", ServerName, "--tenant-id", TenantId]);
 
         exitCode.Should().Be(1,
-            because: "the command cannot guess whether the caller means a whole blueprint or one " +
-                     "identity, and silently doing nothing would look like success");
-        await _permissionService.DidNotReceive().ResolveServerResourceAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task GrantAgentPermissions_BothTargetsSpecified_ExitsWithOne()
-    {
-        var exitCode = await ListCommand().InvokeAsync(
-            ["--agent-blueprint-id", BlueprintId, "--agent-serviceprincipal-id", AgentSpId,
-             "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
-
-        exitCode.Should().Be(1,
-            because: "the two targets select different behaviours, so accepting both would make " +
-                     "which one wins an invisible implementation detail");
+            because: "the blueprint selects which agent instances are checked, so without it there " +
+                     "is no work to do and silently succeeding would hide the mistake");
         await _permissionService.DidNotReceive().ResolveServerResourceAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
@@ -135,20 +119,6 @@ public class McpServerPermissionsSubcommandsTests
             output.Should().Contain(blueprint.DisplayName,
                 because: "the ID is only recognizable when shown next to the product name");
         }
-    }
-
-    [Fact]
-    public async Task ListAgentInstances_NonGuidServicePrincipalId_DoesNotListBlueprints()
-    {
-        var capturing = new CapturingLogger();
-        var command = McpServerPermissionsSubcommands.CreateGrantAgentPermissionsSubcommand(capturing, _permissionService);
-
-        await command.InvokeAsync(
-            ["--agent-serviceprincipal-id", "not-a-guid", "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
-
-        string.Join("\n", capturing.Messages).Should().NotContain("First-party blueprints",
-            because: "the agent service principal ID is a tenant-specific object ID, so listing " +
-                     "blueprint IDs there would offer values that can never be valid for the option");
     }
 
     private sealed class CapturingLogger : ILogger
@@ -213,7 +183,7 @@ public class McpServerPermissionsSubcommandsTests
     {
         SetupResolvedResource();
         SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Agent", HasScope: false));
-        // Covers both paths: redirected input prints the equivalent commands, a terminal prompts and gets an empty answer.
+        // Covers both paths: redirected input skips the prompt, a terminal prompts and gets an empty answer.
         ConsoleHelper.ReadLineOverrideForTests.Value = () => string.Empty;
         try
         {
@@ -279,68 +249,66 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
-    public async Task GrantPermissions_WithoutDeviceCodeFlag_UsesDefaultInteractiveSignIn()
+    public async Task ListAgentInstances_WithoutDeviceCodeFlag_UsesDefaultInteractiveSignIn()
     {
         SetupResolvedResource();
-        _permissionService.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(true));
+        SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Agent", HasScope: true));
 
-        await GrantCommand().InvokeAsync(
-            ["--agent-serviceprincipal-id", AgentSpId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+        await ListCommand().InvokeAsync(
+            ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
 
         _permissionService.Received().UseDeviceCodeAuthentication = false;
     }
 
     [Fact]
-    public async Task GrantPermissions_NonGuidAgentServicePrincipalId_ExitsWithOne()
-    {
-        var exitCode = await GrantCommand().InvokeAsync(
-            ["--agent-serviceprincipal-id", "not-a-guid", "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
-
-        exitCode.Should().Be(1);
-        await _permissionService.DidNotReceive().GrantServerScopeAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task GrantPermissions_UnresolvableServer_ExitsWithOne()
-    {
-        _permissionService.ResolveServerResourceAsync(TenantId, ServerName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<McpServerResource?>(null));
-
-        var exitCode = await GrantCommand().InvokeAsync(
-            ["--agent-serviceprincipal-id", AgentSpId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
-
-        exitCode.Should().Be(1);
-        await _permissionService.DidNotReceive().GrantServerScopeAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task GrantPermissions_Success_ExitsWithZeroAndGrantsAgainstResolvedResource()
+    public async Task ListAgentInstances_InteractiveSelection_GrantsOnlyTheChosenInstance()
     {
         SetupResolvedResource();
+        SetupInstances(
+            new AgentInstancePermissionStatus(AgentSpId, "First", HasScope: false),
+            new AgentInstancePermissionStatus("sp-second", "Second", HasScope: false));
         _permissionService.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(true));
+        ConsoleHelper.ReadLineOverrideForTests.Value = () => "1";
+        ConsoleHelper.IsInputRedirectedOverrideForTests.Value = false;
+        try
+        {
+            var exitCode = await ListCommand().InvokeAsync(
+                ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
 
-        var exitCode = await GrantCommand().InvokeAsync(
-            ["--agent-serviceprincipal-id", AgentSpId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
-
-        exitCode.Should().Be(0);
-        await _permissionService.Received(1).GrantServerScopeAsync(
-            TenantId, AgentSpId, ByoSpObjectId, Arg.Any<CancellationToken>());
+            exitCode.Should().Be(0);
+            await _permissionService.Received(1).GrantServerScopeAsync(
+                TenantId, AgentSpId, ByoSpObjectId, Arg.Any<CancellationToken>());
+            await _permissionService.DidNotReceive().GrantServerScopeAsync(
+                TenantId, "sp-second", ByoSpObjectId, Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            ConsoleHelper.ReadLineOverrideForTests.Value = null;
+            ConsoleHelper.IsInputRedirectedOverrideForTests.Value = null;
+        }
     }
 
     [Fact]
-    public async Task GrantPermissions_GraphRejectsGrant_ExitsWithOne()
+    public async Task ListAgentInstances_RedirectedInput_DoesNotPromptOrGrant()
     {
         SetupResolvedResource();
-        _permissionService.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(false));
+        SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Missing", HasScope: false));
+        ConsoleHelper.ReadLineOverrideForTests.Value = () => "all";
+        ConsoleHelper.IsInputRedirectedOverrideForTests.Value = true;
+        try
+        {
+            var exitCode = await ListCommand().InvokeAsync(
+                ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
 
-        var exitCode = await GrantCommand().InvokeAsync(
-            ["--agent-serviceprincipal-id", AgentSpId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
-
-        exitCode.Should().Be(1);
+            exitCode.Should().Be(0);
+            await _permissionService.DidNotReceive().GrantServerScopeAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            ConsoleHelper.ReadLineOverrideForTests.Value = null;
+            ConsoleHelper.IsInputRedirectedOverrideForTests.Value = null;
+        }
     }
 }
