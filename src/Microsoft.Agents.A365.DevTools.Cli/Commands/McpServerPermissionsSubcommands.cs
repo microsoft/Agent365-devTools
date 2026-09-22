@@ -118,6 +118,7 @@ public static class McpServerPermissionsSubcommands
             if (statuses.Count == 0)
             {
                 logger.LogWarning("No agent instances are linked to blueprint {BlueprintId}.", blueprintId);
+                context.ExitCode = 1;
                 return;
             }
 

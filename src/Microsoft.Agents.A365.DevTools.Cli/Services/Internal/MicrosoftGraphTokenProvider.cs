@@ -377,13 +377,6 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     }
 
     /// <summary>
-    /// Acquires a Microsoft Graph access token via MSAL.NET (primary authentication path).
-    /// On Windows uses WAM (no browser, CAP-compliant); on Linux/macOS uses device code.
-    /// Uses MsalBrowserCredential whose token cache is keyed by user identity, preventing
-    /// cross-user token contamination on shared machines.
-    /// Returns null if clientAppId is unavailable; caller falls back to PowerShell Connect-MgGraph.
-    /// </summary>
-    /// <summary>
     /// Selects the client app used for in-process MSAL acquisition. Device code has no usable
     /// PowerShell fallback, so it resolves to the Graph command-line app that Connect-MgGraph
     /// would have authenticated as; otherwise a missing client app keeps the subprocess path.
@@ -393,6 +386,13 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             ? AuthenticationConstants.GraphPowershellClientId
             : clientAppId;
 
+    /// <summary>
+    /// Acquires a Microsoft Graph access token via MSAL.NET (primary authentication path).
+    /// On Windows uses WAM (no browser, CAP-compliant); on Linux/macOS uses device code.
+    /// Uses MsalBrowserCredential whose token cache is keyed by user identity, preventing
+    /// cross-user token contamination on shared machines.
+    /// Returns null if clientAppId is unavailable; caller falls back to PowerShell Connect-MgGraph.
+    /// </summary>
     private async Task<string?> AcquireGraphTokenViaMsalAsync(
         string tenantId,
         string[] scopes,
@@ -403,7 +403,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         bool useDeviceCode = false)
     {
         // Device code must run in-process: Connect-MgGraph cannot render its prompt from a
-        // child process with redirected I/O, so fall back to the well-known PowerShell client
+        // child process with redirected I/O, so fall back to the Graph command-line client
         // app rather than the unusable subprocess path.
         var effectiveClientAppId = ResolveMsalClientAppId(clientAppId, useDeviceCode);
 

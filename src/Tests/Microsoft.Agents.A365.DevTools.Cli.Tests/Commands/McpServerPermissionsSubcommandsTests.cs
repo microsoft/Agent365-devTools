@@ -59,6 +59,21 @@ public class McpServerPermissionsSubcommandsTests
         McpServerPermissionsSubcommands.CreateGrantPermissionsSubcommand(_logger, _permissionService);
 
     [Fact]
+    public async Task ListAgentInstances_NoInstancesLinkedToBlueprint_ExitsWithOne()
+    {
+        SetupResolvedResource();
+        SetupInstances();
+
+        var exitCode = await ListCommand().InvokeAsync(
+            ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", TenantId]);
+
+        exitCode.Should().Be(1,
+            because: "a blueprint with no agent instances means the caller passed an ID that cannot " +
+                     "be acted on, and a script must be able to detect that rather than reading a " +
+                     "success code for work that never happened");
+    }
+
+    [Fact]
     public void ListAgentInstances_HasExpectedName()
     {
         ListCommand().Name.Should().Be("list-agent-instances");

@@ -101,39 +101,4 @@ public class AgentBlueprintCatalogTests
         idColumns.Should().HaveCount(1,
             because: "names are padded to a common width so IDs form a single readable column");
     }
-
-    [Fact]
-    public void TryGetDisplayName_KnownId_ReturnsName()
-    {
-        var known = AgentBlueprintCatalog.FirstPartyBlueprints[0];
-
-        AgentBlueprintCatalog.TryGetDisplayName(known.BlueprintId)
-            .Should().Be(known.DisplayName);
-    }
-
-    [Fact]
-    public void TryGetDisplayName_IsCaseAndWhitespaceInsensitive()
-    {
-        var known = AgentBlueprintCatalog.FirstPartyBlueprints[0];
-
-        AgentBlueprintCatalog.TryGetDisplayName($"  {known.BlueprintId.ToUpperInvariant()}  ")
-            .Should().Be(known.DisplayName,
-                because: "GUIDs pasted from portals and docs vary in casing and carry stray " +
-                         "whitespace, and none of that changes which blueprint is meant");
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    [InlineData("not-a-guid")]
-    [InlineData("11111111-2222-3333-4444-555555555555")]
-    public void TryGetDisplayName_UnknownOrInvalidId_ReturnsNull(string? blueprintId)
-    {
-        AgentBlueprintCatalog.TryGetDisplayName(blueprintId)
-            .Should().BeNull(
-                because: "tenant-specific blueprints are legitimate and simply absent from the " +
-                         "first-party catalog, so an unknown ID must be reported as unknown rather " +
-                         "than throwing or guessing a name");
-    }
 }

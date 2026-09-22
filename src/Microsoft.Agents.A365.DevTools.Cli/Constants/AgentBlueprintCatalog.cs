@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Constants;
+
 /// <summary>
 /// Well-known Microsoft first-party agent blueprints, so callers can find a blueprint ID by name
 /// instead of having to know the GUID. Third-party and tenant-specific blueprints are not listed.
@@ -22,28 +23,6 @@ public static class AgentBlueprintCatalog
     [
         new("eae28989-4f01-479b-8072-22902e554780", "Sales Development Agent"),
     ];
-
-    /// <summary>
-    /// Returns the display name for a known first-party blueprint, or null when the ID is not
-    /// first-party. A null result is expected for tenant-specific blueprints and is not an error.
-    /// </summary>
-    public static string? TryGetDisplayName(string? blueprintId)
-    {
-        if (string.IsNullOrWhiteSpace(blueprintId))
-        {
-            return null;
-        }
-
-        foreach (var blueprint in FirstPartyBlueprints)
-        {
-            if (string.Equals(blueprint.BlueprintId, blueprintId.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                return blueprint.DisplayName;
-            }
-        }
-
-        return null;
-    }
 
     /// <summary>
     /// Formats the catalog as a single line for option help text.
