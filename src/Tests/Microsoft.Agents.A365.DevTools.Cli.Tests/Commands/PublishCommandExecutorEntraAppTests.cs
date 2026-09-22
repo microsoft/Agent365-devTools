@@ -167,6 +167,51 @@ public class PublishCommandExecutorEntraAppTests
             Arg.Any<Func<object, Exception?, string>>());
     }
 
+    /// <summary>
+    /// The A365 proxy app is the OAuth client of the platform-created connector, with McpServerAppId
+    /// as its resource. Without a required-resource-access grant for that resource on the proxy app,
+    /// Entra rejects the connector's token request (AADSTS650057). The grant must therefore land on
+    /// BOTH the proxy app and the Public Clients app.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_GrantsMcpServerResourceAccess_OnBothProxyAndPublicClientsApps()
+    {
+        var logger = Substitute.For<ILogger>();
+        var tooling = Substitute.For<IAgent365ToolingService>();
+        var graph = Substitute.For<GraphApiService>();
+
+        var (_, _, proxyObjectId) = ArrangeSuccessfulAppCreation(graph);
+
+        const string mcpServerAppId = "1a2a0eb6-0000-0000-0000-000000000000";
+        const string mcpServerScope = "Tools.ListInvoke.All";
+        var scopeId = Guid.NewGuid();
+
+        graph.GetOAuth2PermissionScopeIdAsync(TenantId, mcpServerAppId, mcpServerScope, Arg.Any<CancellationToken>())
+            .Returns(scopeId);
+        graph.AddRequiredResourceAccessAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        tooling.PublishServerAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<PublishMcpServerRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new PublishMcpServerResponse
+            {
+                Status = "Success",
+                McpServerAppId = mcpServerAppId,
+                McpServerScope = mcpServerScope,
+            });
+
+        var executor = MakeExecutor(logger, tooling, graph);
+
+        var result = await executor.ExecuteAsync(MakeArgs(), CancellationToken.None);
+
+        result.Should().BeTrue();
+        await graph.Received(1).AddRequiredResourceAccessAsync(
+            TenantId, proxyObjectId, mcpServerAppId, scopeId, Arg.Any<CancellationToken>());
+        await graph.Received(1).AddRequiredResourceAccessAsync(
+            TenantId, "pc-object-id", mcpServerAppId, scopeId, Arg.Any<CancellationToken>());
+        await graph.Received(2).AddRequiredResourceAccessAsync(
+            Arg.Any<string>(), Arg.Any<string>(), mcpServerAppId, scopeId, Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task RollbackEntraAppsAsync_DeletesBothPublicClientsAndProxyApps()
     {

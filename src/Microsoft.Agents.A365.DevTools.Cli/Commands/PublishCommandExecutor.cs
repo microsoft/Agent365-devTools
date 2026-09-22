@@ -440,6 +440,12 @@ internal class PublishCommandExecutor
 
         if (resourceScopeId.HasValue)
         {
+            // The platform wires the A365 proxy connector with the proxy app as its OAuth client and
+            // McpServerAppId as the resource, so the proxy app must hold this required-resource-access
+            // grant or Entra rejects the token request (AADSTS650057). Grant it on both the proxy app
+            // and the Public Clients app, mirroring register.
+            tasks.Add(AddRequiredResourceAccessAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, resourceAppId!, resourceScopeId.Value, concurrentWarnings, ct));
+
             if (apps.PublicClientsObjectId != null)
             {
                 tasks.Add(AddRequiredResourceAccessAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, resourceAppId!, resourceScopeId.Value, concurrentWarnings, ct));
