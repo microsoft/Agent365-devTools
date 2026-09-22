@@ -174,6 +174,27 @@ public class McpServerPermissionServiceTests
     }
 
     [Fact]
+    public async Task GetAgentInstanceStatusesAsync_IgnoresPrincipalScopedGrants()
+    {
+        _blueprintService.GetAgentInstancesForBlueprintAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>(
+            [
+                new AgentInstanceInfo { IdentitySpId = AgentSpId, DisplayName = "Agent" },
+            ]));
+
+        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
+            {
+                (ByoSpObjectId, McpConstants.V2ScopeValue, "Principal"),
+            }));
+
+        var statuses = await _service.GetAgentInstanceStatusesAsync(TenantId, BlueprintId, ByoSpObjectId);
+
+        statuses.Single().HasScope.Should().BeFalse(
+            because: "the command writes a tenant-wide AllPrincipals grant, so a grant scoped to a single user does not satisfy it and the read must agree with the write");
+    }
+
+    [Fact]
     public async Task GetAgentInstanceStatusesAsync_IgnoresGrantsAgainstOtherResources()
     {
         _blueprintService.GetAgentInstancesForBlueprintAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>())

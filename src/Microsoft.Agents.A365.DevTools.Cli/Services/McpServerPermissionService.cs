@@ -128,6 +128,7 @@ public class McpServerPermissionService
 
             var hasScope = grants.Any(g =>
                 string.Equals(g.resourceId, resourceSpObjectId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(g.consentType, "AllPrincipals", StringComparison.OrdinalIgnoreCase) &&
                 ScopeStringContains(g.scope, McpConstants.V2ScopeValue));
 
             statuses.Add(new AgentInstancePermissionStatus(instance.IdentitySpId, instance.DisplayName, hasScope));

@@ -918,6 +918,89 @@ public class GraphApiServiceTests
     }
 
     [Fact]
+    public async Task GetGraphAccessTokenAsync_WithDeviceCode_UsesTheGraphCommandLineToolsClient()
+    {
+        // The Azure PowerShell client is not preauthorized for Graph delegated scopes, so requesting
+        // a Graph token under it fails with AADSTS65002. The device-code path must request the
+        // Graph Command Line Tools client instead.
+        using var handler = new TestHttpMessageHandler();
+        var auth = Substitute.For<IAuthenticationService>();
+        auth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult("fake-token"));
+
+        var service = new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            auth, handler, loginHintResolver: () => Task.FromResult<string?>(null))
+        {
+            UseDeviceCodeAuthentication = true
+        };
+
+        await service.GetGraphAccessTokenAsync("tenant-123");
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(),
+            AuthenticationConstants.GraphPowershellClientId,
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_WithoutDeviceCode_LeavesTheClientIdAtItsDefault()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var auth = Substitute.For<IAuthenticationService>();
+        auth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult("fake-token"));
+
+        var service = new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            auth, handler, loginHintResolver: () => Task.FromResult<string?>(null));
+
+        await service.GetGraphAccessTokenAsync("tenant-123");
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(),
+            null,
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateOauth2PermissionGrantAsync_AllPrincipals_DoesNotPatchAPrincipalScopedGrant()
+    {
+        // A Principal-scoped grant for the same client and resource is what 'setup --authmode obo'
+        // creates. Patching it would report success while the requested tenant-wide grant never
+        // exists, so the lookup must be constrained to AllPrincipals and a new grant POSTed.
+        var requests = new List<(string Method, string Uri)>();
+        using var handler = new CapturingHttpMessageHandler(r => requests.Add((r.Method.Method, r.RequestUri!.ToString())));
+
+        // Graph returns a Principal row even though AllPrincipals was requested.
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[{\"id\":\"principal-grant-id\",\"consentType\":\"Principal\",\"scope\":\"User.Read\"}]}")
+        });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") });
+
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var service = new GraphApiService(logger, executor, FakeAuthReturning("fake-token"), handler,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        var result = await service.CreateOrUpdateOauth2PermissionGrantAsync(
+            "tenant-123", "client-sp", "resource-sp", ["Tools.ListInvoke.All"]);
+
+        result.Should().BeTrue();
+        requests[0].Uri.Should().Contain(
+            "consentType eq 'AllPrincipals'",
+            because: "the lookup must not match a Principal-scoped grant for the same client and resource");
+        requests[1].Method.Should().Be(
+            "POST",
+            because: "an unrelated Principal grant must not be patched in place of creating the tenant-wide grant");
+    }
+
+    [Fact]
     public async Task IsCurrentUserAdminAsync_UserWithGlobalAdminRole_ReturnsHasRole()
     {
         // Arrange — MSAL token contains wids claim with Global Administrator template ID

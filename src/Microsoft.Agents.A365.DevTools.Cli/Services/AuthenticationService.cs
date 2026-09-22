@@ -281,7 +281,7 @@ public class AuthenticationService : IAuthenticationService
                 // Device code flow - works in all environments including SSH/remote sessions
                 _logger.LogDebug("Using device code authentication...");
                 _logger.LogDebug("Please sign in with your Microsoft account");
-                credential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
+                credential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId, loginHint, forceRefresh);
             }
 
             var tokenRequestContext = new TokenRequestContext(scopes);
@@ -295,7 +295,7 @@ public class AuthenticationService : IAuthenticationService
                 _logger.LogWarning("Browser authentication is not supported on this platform, falling back to device code flow...");
                 _logger.LogDebug("Using device code authentication...");
                 _logger.LogDebug("Please sign in with your Microsoft account");
-                var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
+                var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId, loginHint, forceRefresh);
                 tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, ct);
             }
             _logger.LogDebug("Authentication successful!");
@@ -551,11 +551,11 @@ public class AuthenticationService : IAuthenticationService
     /// browser-based authentication is unavailable.
     /// Protected virtual to allow substitution in tests.
     /// </summary>
-    protected virtual TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
+    protected virtual TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId, string? loginHint = null, bool forceRefresh = false)
         // Routed through MsalBrowserCredential so device code shares the OS-protected MSAL
         // persistent cache and acquires silently when an account is already signed in. A bare
         // DeviceCodeCredential has no AuthenticationRecord, so each new instance re-prompts.
-        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, useWam: false, useDeviceCode: true);
+        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, useWam: false, loginHint: loginHint, forceRefresh: forceRefresh, useDeviceCode: true);
 
     /// <summary>
     /// Resolves the login hint (UPN) from the OS-protected MSAL persistent cache by reading the

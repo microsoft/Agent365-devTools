@@ -176,7 +176,10 @@ public class GraphApiService
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var loginHint = await _loginHintResolver();
-            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, useInteractiveBrowser: !UseDeviceCodeAuthentication, userId: loginHint, ct: ct);
+            // The Azure PowerShell client is not preauthorized for Graph delegated scopes
+            // (AADSTS65002), so the device-code path must use the Graph CLI client.
+            var clientId = UseDeviceCodeAuthentication ? AuthenticationConstants.GraphPowershellClientId : null;
+            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, clientId: clientId, useInteractiveBrowser: !UseDeviceCodeAuthentication, userId: loginHint, ct: ct);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -1140,7 +1143,7 @@ public class GraphApiService
 
         var existingFilter = principalId is not null
             ? $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}' and consentType eq 'Principal' and principalId eq '{principalId}'"
-            : $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'";
+            : $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}' and consentType eq 'AllPrincipals'";
 
         using (var listDoc = await GraphGetAsync(
             tenantId,
@@ -1169,12 +1172,20 @@ public class GraphApiService
                         }
                     }
                 }
-                else if (arr.GetArrayLength() > 0)
+                else
                 {
-                    // AllPrincipals grants: the server-side filter is precise enough.
-                    var grant = arr[0];
-                    existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
-                    existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
+                    // AllPrincipals grants: match consentType in code as well, so a Principal row
+                    // is never patched in place of the tenant-wide grant being requested.
+                    foreach (var grant in arr.EnumerateArray())
+                    {
+                        var grantConsentType = grant.TryGetProperty("consentType", out var ctp) ? ctp.GetString() : null;
+                        if (!string.Equals(grantConsentType, "AllPrincipals", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                        existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
+                        break;
+                    }
                 }
             }
         }
