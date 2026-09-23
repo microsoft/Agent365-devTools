@@ -13,24 +13,15 @@
       1. Resolves the Microsoft Graph service principal and builds a name -> GUID map from its
          published appRoles. Nothing is hardcoded, so a tenant that has not yet surfaced a preview
          permission fails with a clear message instead of a mystery 400.
-<<<<<<< Updated upstream
-      2. Creates (or reuses) the application registration.
-=======
       2. Creates (or reuses) the application registration and declares the selected application
          permissions and delegated scopes on it.
->>>>>>> Stashed changes
       3. Creates (or reuses) its service principal - the app role grants attach to the SP, not the
          application.
       4. Adds credentials: a client secret, a certificate, and/or a federated identity credential
          for workload identity federation (GitHub Actions, Azure DevOps, Kubernetes).
-<<<<<<< Updated upstream
-      5. Grants each app role via POST /servicePrincipals/{graphSpId}/appRoleAssignedTo, which is
-         admin consent. Already-granted roles are skipped, so re-running is safe.
-=======
       5. Unless -SkipGrant, grants each app role via POST
          /servicePrincipals/{graphSpId}/appRoleAssignedTo, which is admin consent. Already-granted
          roles are skipped, so re-running is safe.
->>>>>>> Stashed changes
       6. Reads the grants back and prints ready-to-paste invocations for the other scripts.
 
     Every step is idempotent: re-running reconciles rather than duplicates.
@@ -105,12 +96,8 @@
     the Registration and All scenarios.
 
 .PARAMETER SkipGrant
-<<<<<<< Updated upstream
-    Create the app and credentials but do not grant the app roles.
-=======
     Declare the selected application permissions and delegated scopes, but do not grant consent.
     An administrator can finish from the Entra portal without adding permissions manually.
->>>>>>> Stashed changes
 
 .PARAMETER OutputPath
     Writes a JSON summary to this path. The client secret is NOT written to it.
@@ -237,10 +224,7 @@ $script:MicrosoftGraphAppId = '00000003-0000-0000-c000-000000000000'
 function Test-HasProperty {
     param($Object, [Parameter(Mandatory)][string] $Name)
     if ($null -eq $Object) { return $false }
-<<<<<<< Updated upstream
-=======
     if ($Object -is [System.Collections.IDictionary]) { return $Object.Contains($Name) }
->>>>>>> Stashed changes
     $properties = $Object.PSObject.Properties
     if ($null -eq $properties) { return $false }
     foreach ($property in $properties) {
@@ -249,8 +233,6 @@ function Test-HasProperty {
     return $false
 }
 
-<<<<<<< Updated upstream
-=======
 function Merge-GraphRequiredResourceAccess {
     param(
         [object[]] $ExistingAccess = @(),
@@ -321,7 +303,6 @@ function Merge-GraphRequiredResourceAccess {
     }
 }
 
->>>>>>> Stashed changes
 function Get-GraphErrorInfo {
     param($ErrorRecord)
 
@@ -1208,44 +1189,6 @@ else {
 $applicationObjectId = [string]$application.id
 $applicationAppId    = [string]$application.appId
 
-<<<<<<< Updated upstream
-# Request the delegated scopes on the app object so an admin can consent to them in one action.
-if ($delegatedToRequest.Count -gt 0) {
-    $current = Invoke-Graph -Method GET -Uri "/applications/$applicationObjectId`?`$select=requiredResourceAccess"
-    $existingAccess = @()
-    if (Test-HasProperty $current 'requiredResourceAccess') { $existingAccess = @($current.requiredResourceAccess) }
-
-    $graphEntry = $existingAccess | Where-Object { $_.resourceAppId -eq $script:MicrosoftGraphAppId } | Select-Object -First 1
-    $existingIds = @()
-    if ($graphEntry -and (Test-HasProperty $graphEntry 'resourceAccess')) {
-        $existingIds = @($graphEntry.resourceAccess | ForEach-Object { [string]$_.id })
-    }
-
-    $toAdd = @($delegatedToRequest | Where-Object { $existingIds -notcontains $_.Id })
-    if ($toAdd.Count -gt 0) {
-        $resourceAccess = @()
-        if ($graphEntry -and (Test-HasProperty $graphEntry 'resourceAccess')) {
-            foreach ($ra in @($graphEntry.resourceAccess)) {
-                $resourceAccess += @{ id = [string]$ra.id; type = [string]$ra.type }
-            }
-        }
-        foreach ($scope in $toAdd) { $resourceAccess += @{ id = $scope.Id; type = 'Scope' } }
-
-        $others = @($existingAccess | Where-Object { $_.resourceAppId -ne $script:MicrosoftGraphAppId } | ForEach-Object {
-            @{ resourceAppId = [string]$_.resourceAppId
-               resourceAccess = @($_.resourceAccess | ForEach-Object { @{ id = [string]$_.id; type = [string]$_.type } }) }
-        })
-        $payload = @{ requiredResourceAccess = @($others + @{ resourceAppId = $script:MicrosoftGraphAppId; resourceAccess = $resourceAccess }) }
-
-        if ($PSCmdlet.ShouldProcess($DisplayName, "PATCH requiredResourceAccess (+$($toAdd.Count) delegated scope(s))")) {
-            Invoke-Graph -Method PATCH -Uri "/applications/$applicationObjectId" -Body $payload | Out-Null
-            Write-Host "  Requested delegated scope(s): $(($toAdd | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Green
-        }
-    }
-    else {
-        Write-Host '  Delegated scopes already requested on the application.' -ForegroundColor Gray
-    }
-=======
 # Declare permissions even with -SkipGrant so an administrator can consent from the portal.
 $current = Invoke-Graph -Method GET -Uri "/applications/$applicationObjectId`?`$select=requiredResourceAccess"
 $existingAccess = @()
@@ -1270,7 +1213,6 @@ if ($permissionMerge.Changed) {
 }
 else {
     Write-Host '  Application permissions and delegated scopes already declared on the application.' -ForegroundColor Gray
->>>>>>> Stashed changes
 }
 
 # ---------------------------------------------------------------------------
@@ -1414,11 +1356,7 @@ $alreadyHeld = @()
 $failedGrant = @()
 
 if ($SkipGrant) {
-<<<<<<< Updated upstream
-    Write-Host '  Skipped by -SkipGrant.' -ForegroundColor Yellow
-=======
     Write-Host '  Skipped by -SkipGrant. The selected permissions are declared for portal consent.' -ForegroundColor Yellow
->>>>>>> Stashed changes
 }
 else {
     $assigned = Invoke-Graph -Method GET `
@@ -1545,12 +1483,6 @@ if ($plainSecret) {
     }
 }
 
-<<<<<<< Updated upstream
-if ($delegatedToRequest.Count -gt 0) {
-    Write-Host ''
-    Write-Host '  Delegated scopes were REQUESTED but still need admin consent. Grant them here:' -ForegroundColor Yellow
-    Write-Host "  https://login.microsoftonline.com/$($ctx.TenantId)/adminconsent?client_id=$applicationAppId" -ForegroundColor Cyan
-=======
 $portalPermissionsUrl = "https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Permissions/objectId/$servicePrincipalId/appId/$applicationAppId"
 
 if ($SkipGrant -or $delegatedToRequest.Count -gt 0 -or $failedGrant.Count -gt 0) {
@@ -1573,21 +1505,12 @@ if ($SkipGrant -or $delegatedToRequest.Count -gt 0 -or $failedGrant.Count -gt 0)
     Write-Host "    Portal : Enterprise applications > $DisplayName > Security > Permissions > Grant admin consent" -ForegroundColor Cyan
     Write-Host "             $portalPermissionsUrl" -ForegroundColor Cyan
     Write-Host "    Link   : https://login.microsoftonline.com/$($ctx.TenantId)/adminconsent?client_id=$applicationAppId" -ForegroundColor Cyan
->>>>>>> Stashed changes
 }
 
 # The custom security attribute permissions are the one pair on this app that a directory role can
 # still block. Saying so here turns a guaranteed later 403 into something actionable, because the
 # failure names no permission when it happens.
 if ($Scenario -in 'AgentIdentity', 'All') {
-<<<<<<< Updated upstream
-    $csaGranted = @($resolved | Where-Object { $_.Name -like 'CustomSecAttribute*' })
-    if ($csaGranted.Count -gt 0) {
-        Write-Host ''
-        Write-Host '  Custom security attributes:' -ForegroundColor Cyan
-        Write-Host ('    Application roles granted: {0}' -f (($csaGranted | ForEach-Object { $_.Name }) -join ', ')) -ForegroundColor Gray
-        Write-Host '    That is all an UNATTENDED (app-only) run needs.' -ForegroundColor Gray
-=======
     $csaRoles = @($resolved | Where-Object { $_.Name -like 'CustomSecAttribute*' })
     if ($csaRoles.Count -gt 0) {
         Write-Host ''
@@ -1598,7 +1521,6 @@ if ($Scenario -in 'AgentIdentity', 'All') {
         if (-not $SkipGrant -and -not $csaGrantFailed) {
             Write-Host '    That is all an UNATTENDED (app-only) run needs.' -ForegroundColor Gray
         }
->>>>>>> Stashed changes
         Write-Host '    An INTERACTIVE run needs more: the signed-in user must also hold the' -ForegroundColor Yellow
         Write-Host '    Attribute Assignment Administrator directory role. No application permission' -ForegroundColor Yellow
         Write-Host '    grants it, and Global Administrator does NOT include it.' -ForegroundColor Yellow
@@ -1628,27 +1550,19 @@ $summary = [ordered]@{
     applicationObjectId   = $applicationObjectId
     servicePrincipalId    = $servicePrincipalId
     scenario              = $Scenario
-<<<<<<< Updated upstream
-=======
     grantSkipped          = [bool]$SkipGrant
     appRolesDeclared      = @($resolved | ForEach-Object { $_.Name })
     appRolesAddedToRequest = @($permissionMerge.RolesAdded | ForEach-Object { $_.Name })
->>>>>>> Stashed changes
     appRolesGranted       = @($grantedNow)
     appRolesAlreadyHeld   = @($alreadyHeld)
     appRolesVerified      = @($verifiedNames)
     appRolesUnresolved    = @($missing)
-<<<<<<< Updated upstream
-    delegatedScopesRequested = @($delegatedToRequest | ForEach-Object { $_.Name })
-    adminConsentUrl       = "https://login.microsoftonline.com/$($ctx.TenantId)/adminconsent?client_id=$applicationAppId"
-=======
     delegatedScopesDeclared = @($delegatedToRequest | ForEach-Object { $_.Name })
     delegatedScopesRequested = @($delegatedToRequest | ForEach-Object { $_.Name })
     delegatedScopesAddedToRequest = @($permissionMerge.ScopesAdded | ForEach-Object { $_.Name })
     consentFailures       = @($failedGrant)
     adminConsentUrl       = "https://login.microsoftonline.com/$($ctx.TenantId)/adminconsent?client_id=$applicationAppId"
     portalPermissionsUrl  = $portalPermissionsUrl
->>>>>>> Stashed changes
     keyVault              = $script:KeyVaultResult
     generatedUtc          = [DateTimeOffset]::UtcNow.ToString('o')
 }
