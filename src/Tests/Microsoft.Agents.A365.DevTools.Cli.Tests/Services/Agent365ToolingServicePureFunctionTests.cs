@@ -3,6 +3,9 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Extensions.Logging.Abstractions;
+using System.Net;
+using System.Text.Json;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
@@ -85,6 +88,92 @@ public class Agent365ToolingServicePureFunctionTests
     {
         var json = """{"status":"Failed","code":500}""";
         Agent365ToolingService.ExtractErrorMessage(json).Should().BeNull();
+    }
+
+    // --- BuildPublishFailureResponse tests ---
+
+    [Fact]
+    public void BuildPublishFailureResponse_SurfacesEnvelopeMessage_WhenDoubleSerialized()
+    {
+        // The platform returns its already-JSON string via Ok(string), which serializes it a second
+        // time. This is the exact shape a duplicate-instance rejection reaches the CLI as.
+        const string expected = "MCP server 'msdyn_DataverseMCPServer' is already published in environment 'env' under alias 'DG_DV_S22'. Only one published instance is allowed per server. Unpublish the existing instance before republishing.";
+        var inner = JsonSerializer.Serialize(new { Status = "Failed", Message = expected });
+        var doubleSerialized = JsonSerializer.Serialize(inner);
+
+        var result = Agent365ToolingService.BuildPublishFailureResponse(doubleSerialized, HttpStatusCode.OK, NullLogger.Instance);
+
+        result.Should().NotBeNull();
+        result.Status.Should().Be("Failed");
+        result.IsSuccess.Should().BeFalse();
+        result.Message.Should().Be(expected);
+    }
+
+    [Fact]
+    public void BuildPublishFailureResponse_SurfacesEnvelopeMessage_WhenSingleSerialized()
+    {
+        const string expected = "Custom MCP server 'x' in the environment 'env' is not setup correctly. Please recreate the server and try publishing again.";
+        var body = JsonSerializer.Serialize(new { Status = "Failed", Message = expected });
+
+        var result = Agent365ToolingService.BuildPublishFailureResponse(body, HttpStatusCode.OK, NullLogger.Instance);
+
+        result.Status.Should().Be("Failed");
+        result.IsSuccess.Should().BeFalse();
+        result.Message.Should().Be(expected);
+    }
+
+    [Fact]
+    public void BuildPublishFailureResponse_SurfacesError_FromAspNetProblemBody()
+    {
+        var body = """{"error":"DisplayName is required in the request body"}""";
+
+        var result = Agent365ToolingService.BuildPublishFailureResponse(body, HttpStatusCode.BadRequest, NullLogger.Instance);
+
+        result.Status.Should().Be("Failed");
+        result.IsSuccess.Should().BeFalse();
+        result.Message.Should().Be("DisplayName is required in the request body");
+    }
+
+    [Fact]
+    public void BuildPublishFailureResponse_PrefersDetails_FromAspNetErrorAndDetailsBody()
+    {
+        var body = """{"error":"Failed to publish (v2) MCP server to Dataverse environment","details":"TEDS API call failed with status 403"}""";
+
+        var result = Agent365ToolingService.BuildPublishFailureResponse(body, HttpStatusCode.InternalServerError, NullLogger.Instance);
+
+        result.Status.Should().Be("Failed");
+        result.IsSuccess.Should().BeFalse();
+        result.Message.Should().Be("TEDS API call failed with status 403");
+    }
+
+    [Fact]
+    public void BuildPublishFailureResponse_FallsBackToStatusCode_WhenBodyIsEmpty()
+    {
+        var result = Agent365ToolingService.BuildPublishFailureResponse(string.Empty, HttpStatusCode.BadGateway, NullLogger.Instance);
+
+        result.Status.Should().Be("Failed");
+        result.IsSuccess.Should().BeFalse();
+        result.Message.Should().Be("Server returned BadGateway");
+    }
+
+    [Fact]
+    public void BuildPublishFailureResponse_FallsBackToStatusCode_WhenBodyIsNull()
+    {
+        var result = Agent365ToolingService.BuildPublishFailureResponse(null, HttpStatusCode.InternalServerError, NullLogger.Instance);
+
+        result.Status.Should().Be("Failed");
+        result.IsSuccess.Should().BeFalse();
+        result.Message.Should().Be("Server returned InternalServerError");
+    }
+
+    [Fact]
+    public void BuildPublishFailureResponse_SurfacesRawContent_WhenBodyIsNotJson()
+    {
+        var result = Agent365ToolingService.BuildPublishFailureResponse("Bad Gateway", HttpStatusCode.BadGateway, NullLogger.Instance);
+
+        result.Status.Should().Be("Failed");
+        result.IsSuccess.Should().BeFalse();
+        result.Message.Should().Be("Bad Gateway");
     }
 
     // --- RedactSecretsFromPayload tests ---
