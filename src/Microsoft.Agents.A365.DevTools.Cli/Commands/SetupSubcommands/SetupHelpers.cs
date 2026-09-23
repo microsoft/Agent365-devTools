@@ -49,12 +49,13 @@ internal static class SetupHelpers
     /// Returns the fixed-scope ResourcePermissionSpecs for the platform APIs that every
     /// agent blueprint requires.
     /// <para>
-    /// Observability API and Power Platform API are always included. Messaging Bot API is
+    /// Power Platform API is always included. Observability API is included unless
+    /// <paramref name="includeObservability"/> is false. Messaging Bot API is
     /// included only when <paramref name="isM365"/> is true — non-M365 (blueprint-only) agents
     /// have no messaging surface so Bot scopes serve no purpose.
     /// </para>
     /// </summary>
-    internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable, bool isM365)
+    internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable, bool isM365, bool includeObservability = true)
     {
         var specs = new List<ResourcePermissionSpec>();
         if (isM365)
@@ -73,12 +74,15 @@ internal static class SetupHelpers
                 new[] { ConfigConstants.MessagingBotApiAdminConsentScope },
                 setInheritable));
         }
-        specs.Add(new ResourcePermissionSpec(
-            ConfigConstants.ObservabilityApiAppId,
-            "Observability API",
-            new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
-            setInheritable,
-            AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope }));
+        if (includeObservability)
+        {
+            specs.Add(new ResourcePermissionSpec(
+                ConfigConstants.ObservabilityApiAppId,
+                "Observability API",
+                new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+                setInheritable,
+                AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope }));
+        }
         specs.Add(new ResourcePermissionSpec(
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             "Power Platform API",
@@ -93,7 +97,8 @@ internal static class SetupHelpers
     /// <para>
     /// Always includes Microsoft Graph (with <c>config.AgentApplicationScopes</c>),
     /// manifest-derived Agent 365 Tools scopes (when <c>ToolingManifest.json</c> is present),
-    /// Observability API, Power Platform API, and any valid custom blueprint permissions.
+    /// Power Platform API, and any valid custom blueprint permissions. Observability API is
+    /// included unless <paramref name="includeObservability"/> is false.
     /// Messaging Bot API is included only when <paramref name="isM365"/> is true.
     /// </para>
     /// <para>
@@ -107,7 +112,8 @@ internal static class SetupHelpers
         bool setInheritable,
         bool isM365 = true,
         Dictionary<string, string[]>? scopesByAudience = null,
-        Dictionary<string, List<string>>? serverNamesByAudience = null)
+        Dictionary<string, List<string>>? serverNamesByAudience = null,
+        bool includeObservability = true)
     {
         // Manifest read at most once, and only when scopesByAudience is not pre-supplied.
         // Callers that already have the manifest loaded (e.g. AllSubcommand.BuildPermissionSpecsAsync)
@@ -146,7 +152,7 @@ internal static class SetupHelpers
                     : "Agent 365 Tools",
                 kvp.Value,
                 SetInheritable: setInheritable)));
-        specs.AddRange(GetFixedApiPermissionSpecs(setInheritable, isM365));
+        specs.AddRange(GetFixedApiPermissionSpecs(setInheritable, isM365, includeObservability));
 
         foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
         {
@@ -721,6 +727,8 @@ internal static class SetupHelpers
                     logger.LogInformation(DryRunRow(6, "Agent Registration") + registrationVerb + " '{Name}' (ID: {Id})",
                         results.AgentRegistrationDisplayName ?? "unknown", results.AgentInstanceId ?? "unknown");
                 }
+                else if (results.AgentRegistrationFailed && results.ObservabilityPermissionsSkipped)
+                    logger.LogError(DryRunRow(6, "Agent Registration") + "failed — see errors");
                 else if (results.AgentRegistrationFailed)
                     logger.LogWarning(DryRunRow(6, "Agent Registration") + "failed — see warnings");
             }
@@ -831,7 +839,10 @@ internal static class SetupHelpers
                 if (isNonDw && string.IsNullOrWhiteSpace(consentUrl))
                 {
                     logger.LogInformation("  {N}. Permission Grants — must be granted by {Roles} in the Entra portal:", actionCount, AuthenticationConstants.DelegatedGrantRequiredRoles);
-                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, tenantId: results.TenantId);
+                    var consentSpecs = results.ObservabilityPermissionsSkipped
+                        ? NonDwAdminConsentSpecs.Where(s => !string.Equals(s.ResourceAppId, ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase)).ToList()
+                        : null;
+                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, consentSpecs, tenantId: results.TenantId);
                 }
                 else
                 {
@@ -1074,10 +1085,10 @@ internal static class SetupHelpers
     /// resources. Called when the current user lacks the Global Administrator role so that the URLs
     /// can be saved to <c>a365.generated.config.json</c> and shared with a tenant administrator.
     /// <para>
-    /// Graph, Agent 365 Tools (MCP), Observability API, and Power Platform API URLs are always
-    /// generated. Messaging Bot API is included only when <paramref name="isM365"/> is true —
-    /// non-M365 tenants typically lack the Messaging Bot resource SP and the consent endpoint
-    /// returns AADSTS650053 otherwise.
+    /// Graph, Agent 365 Tools (MCP), and Power Platform API URLs are always generated; Observability
+    /// API unless <paramref name="includeObservability"/> is false. Messaging Bot API is included only
+    /// when <paramref name="isM365"/> is true — non-M365 tenants typically lack the Messaging Bot
+    /// resource SP and the consent endpoint returns AADSTS650053 otherwise.
     /// </para>
     /// </summary>
     /// <returns>Display names of the resources for which URLs were saved.</returns>
@@ -1087,9 +1098,10 @@ internal static class SetupHelpers
         IEnumerable<string> mcpScopes,
         bool isM365 = true,
         IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
-        IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null)
+        IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null,
+        bool includeObservability = true)
     {
-        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, config.AgentApplicationScopes, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames);
+        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, config.AgentApplicationScopes, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames, includeObservability);
 
         // Map resource names to App IDs for upsert into ResourceConsents. The fixed-name
         // entries cover Graph + Bot + Obs + PP + the WorkIQ shared MCP audience. V2
@@ -1264,8 +1276,8 @@ internal static class SetupHelpers
     /// Builds per-resource admin consent URLs covering every resource stamped on the blueprint
     /// (mirrors <see cref="BuildConfiguredPermissionSpecsAsync"/>): Microsoft Graph (when
     /// <paramref name="graphScopes"/> non-empty), Agent 365 Tools (when <paramref name="mcpScopes"/>
-    /// non-empty), Messaging Bot API (when <paramref name="isM365"/> is true), Observability API,
-    /// and Power Platform API.
+    /// non-empty), Messaging Bot API (when <paramref name="isM365"/> is true), Observability API
+    /// (unless <paramref name="includeObservability"/> is false), and Power Platform API.
     /// <para>
     /// Messaging Bot is gated on <paramref name="isM365"/> because non-M365 tenants typically
     /// lack the Messaging Bot resource SP, in which case the /v2.0/adminconsent endpoint returns
@@ -1280,7 +1292,8 @@ internal static class SetupHelpers
         IEnumerable<string> mcpScopes,
         bool isM365 = true,
         IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
-        IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null)
+        IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null,
+        bool includeObservability = true)
     {
         var urls = new List<(string, string)>();
 
@@ -1342,7 +1355,8 @@ internal static class SetupHelpers
         if (isM365)
             urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
 
-        urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiOtelWriteScope })));
+        if (includeObservability)
+            urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiOtelWriteScope })));
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
@@ -1350,7 +1364,8 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Builds a single combined /v2.0/adminconsent URL covering every resource stamped on the
-    /// blueprint: Graph, Agent 365 Tools (MCP), Observability API, Power Platform API, and
+    /// blueprint: Graph, Agent 365 Tools (MCP), Observability API (unless
+    /// <paramref name="includeObservability"/> is false), Power Platform API, and
     /// Messaging Bot API (only when <paramref name="isM365"/> is true).
     /// <para>
     /// Messaging Bot is gated on <paramref name="isM365"/> because non-M365 tenants typically
@@ -1365,7 +1380,8 @@ internal static class SetupHelpers
         IEnumerable<string> graphScopes,
         IEnumerable<string> mcpScopes,
         bool isM365 = true,
-        IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null)
+        IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
+        bool includeObservability = true)
     {
         var allScopes = new List<string>();
         foreach (var s in graphScopes)
@@ -1397,7 +1413,8 @@ internal static class SetupHelpers
 
         if (isM365)
             allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
-        allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
+        if (includeObservability)
+            allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
         return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);
     }
@@ -1407,8 +1424,9 @@ internal static class SetupHelpers
     /// when the running account is not a Global Administrator. Called by both DW and non-DW setup paths
     /// after the batch permissions step.
     /// <para>
-    /// Messaging Bot API URLs are included only when <paramref name="isM365"/> is true; all other
-    /// resources (Graph, MCP, Observability, Power Platform) are always included so a tenant admin
+    /// Messaging Bot API URLs are included only when <paramref name="isM365"/> is true, and
+    /// Observability API URLs are omitted with <c>--skip-observability-permissions</c>; the other
+    /// resources (Graph, MCP, Power Platform) are always included so a tenant admin
     /// can complete the hand-off with a single URL. No-op if admin consent was already granted or
     /// the blueprint ID is absent.
     /// </para>
@@ -1425,12 +1443,13 @@ internal static class SetupHelpers
         if (ctx.Results.TenantWideConsentOutcome == Models.GrantOutcome.Granted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
             return;
 
-        var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames);
+        var includeObservability = !ctx.SkipObservabilityPermissions;
+        var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames, includeObservability);
         ctx.Results.ConsentUrlsSavedToPath = ctx.GeneratedConfigPath;
         ctx.Results.ConsentResourceNames.AddRange(consentResourceNames);
         ctx.Results.CombinedConsentUrl = BuildCombinedConsentUrl(
             ctx.Config.TenantId!, ctx.Config.AgentBlueprintId!,
-            graphScopes, mcpScopes, isM365, mcpScopesByAudience);
+            graphScopes, mcpScopes, isM365, mcpScopesByAudience, includeObservability);
     }
 
     /// <summary>

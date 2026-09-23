@@ -70,6 +70,9 @@ internal static class AllSubcommand
         return checks;
     }
 
+    private const string SkipObservabilityAuthModeError =
+        "--skip-observability-permissions cannot be combined with authMode '{AuthMode}': the Observability API app role is the only application permission that mode grants. Use --authmode obo.";
+
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
@@ -165,6 +168,12 @@ internal static class AllSubcommand
                         "is a post-deploy artifact, so it can be set later with\n" +
                         "'a365 setup blueprint --endpoint-only --messaging-endpoint <url>'.");
 
+        var skipObservabilityPermissionsOption = new Option<bool>(
+            "--skip-observability-permissions",
+            description: "Skip Observability API permissions (Agent365.Observability.OtelWrite) for blueprint agents.\n" +
+                        "Use when the agent exports telemetry through the app-only S2S endpoint, which authorizes\n" +
+                        "registered agents without them. Not supported with --aiteammate or --authmode s2s|both.");
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -177,6 +186,7 @@ internal static class AllSubcommand
         command.AddOption(authModeOption);
         command.AddOption(skipSpProvisioningOption);
         command.AddOption(messagingEndpointOption);
+        command.AddOption(skipObservabilityPermissionsOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -203,6 +213,7 @@ internal static class AllSubcommand
             // hard error, not silently treated as omitted (which would prompt/defer instead).
             var messagingEndpointSpecified = context.ParseResult.CommandResult.FindResultFor(messagingEndpointOption) != null;
             var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
+            var skipObservabilityPermissions = context.ParseResult.GetValueForOption(skipObservabilityPermissionsOption);
             var ct = context.GetCancellationToken();
 
             if (messagingEndpointSpecified && string.IsNullOrWhiteSpace(messagingEndpointFlag))
@@ -241,6 +252,14 @@ internal static class AllSubcommand
                     context.ExitCode = 1;
                     return;
                 }
+            }
+
+            // Reject a contradicting --authmode flag before bootstrap signs in; a persisted authMode is checked after loading.
+            if (skipObservabilityPermissions && authMode is ("s2s" or "both"))
+            {
+                logger.LogError(SkipObservabilityAuthModeError, authMode);
+                context.ExitCode = 1;
+                return;
             }
 
             // Generate correlation ID at workflow entry point
@@ -397,13 +416,28 @@ internal static class AllSubcommand
                 return;
             }
 
+            // AI Teammate setup always grants Observability API permissions, and OtelWrite is the only
+            // app role s2s/both grant, so fail fast rather than ignore or contradict the flag.
+            if (skipObservabilityPermissions && nonDwConfig is null)
+            {
+                logger.LogError("--skip-observability-permissions applies only to blueprint agents. AI Teammate setup always configures Observability API permissions.");
+                context.ExitCode = 1;
+                return;
+            }
+            if (skipObservabilityPermissions && effectiveAuthModeForValidation is ("s2s" or "both"))
+            {
+                logger.LogError(SkipObservabilityAuthModeError, effectiveAuthModeForValidation);
+                context.ExitCode = 1;
+                return;
+            }
+
             if (nonDwConfig is not null)
             {
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
                     var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag, skipObservabilityPermissions);
                     return;
                 }
 
@@ -442,7 +476,8 @@ internal static class AllSubcommand
                     confirmationProvider: confirmationProvider,
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
-                    nonInteractive: Console.IsInputRedirected);
+                    nonInteractive: Console.IsInputRedirected,
+                    skipObservabilityPermissions: skipObservabilityPermissions);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -1018,7 +1053,8 @@ internal static class AllSubcommand
         // for both DW and non-DW agents; serverNamesByAudience drives the per-server display
         // names so V2 audiences read as e.g. "mcp_MailTools" rather than "Agent 365 Tools".
         var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
-            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience);
+            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience,
+            includeObservability: !ctx.SkipObservabilityPermissions);
 
         // Return the full scopesByAudience map alongside the V1-compat mcpScopes so V2
         // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to the bare

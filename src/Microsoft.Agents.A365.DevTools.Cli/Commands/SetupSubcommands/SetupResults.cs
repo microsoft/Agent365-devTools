@@ -286,6 +286,12 @@ public class SetupResults
     /// </summary>
     public bool PermissionGrantsSkipped { get; set; }
 
+    /// <summary>
+    /// True when --skip-observability-permissions was passed. Registration failure is then an error,
+    /// and the admin consent walkthrough omits Observability API.
+    /// </summary>
+    public bool ObservabilityPermissionsSkipped { get; set; }
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
 

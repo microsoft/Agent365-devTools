@@ -242,12 +242,12 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
     /// <summary>
     /// Builds a SetupContext suited for testing the agent identity + registration steps
-    /// (Steps 5–6) via the AgentInstanceOnly path.
+    /// (Steps 5–6), by default via the AgentInstanceOnly path.
     /// Returns the context, graph service mock, and blueprint service mock so tests can
     /// configure stub return values.
     /// </summary>
     private static (SetupContext ctx, GraphApiService graph, AgentBlueprintService blueprintService)
-        BuildIdempotencyTestContext(Agent365Config? config = null)
+        BuildIdempotencyTestContext(Agent365Config? config = null, bool agentInstanceOnly = true, bool skipObservabilityPermissions = false)
     {
         var graph = Substitute.ForPartsOf<GraphApiService>();
 
@@ -298,8 +298,9 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(
                 Substitute.For<ILogger<FederatedCredentialService>>(), graph),
             clientAppValidator: Substitute.For<IClientAppValidator>(),
-            agentInstanceOnly: true,
-            loginHintResolver: () => Task.FromResult<string?>(null));
+            agentInstanceOnly: agentInstanceOnly,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            skipObservabilityPermissions: skipObservabilityPermissions);
 
         return (ctx, graph, blueprintService);
     }
@@ -652,6 +653,72 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    private static Agent365Config RegistrationReadyConfig(string deploymentProjectPath = "") => new()
+    {
+        AiTeammate = false,
+        TenantId = "tenant-id",
+        AgentBlueprintId = "blueprint-id",
+        AgentIdentityDisplayName = "Test Agent Identity",
+        ClientAppId = "client-app-id",
+        AgenticAppId = "agentic-app-id",
+        DeploymentProjectPath = deploymentProjectPath,
+    };
+
+    private static void StubRegistrationFailure(GraphApiService graph) =>
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(((string?)null, false));
+
+    /// <summary>
+    /// Step 6 (--agent-registration-only): registration is the command's only purpose, so its failure must exit 1.
+    /// </summary>
+    [Fact]
+    public async Task Step6_AgentRegistrationOnly_ReturnsExitCode1_WhenRegistrationFails()
+    {
+        var (ctx, graph, _) = BuildIdempotencyTestContext(RegistrationReadyConfig());
+        StubRegistrationFailure(graph);
+
+        var exitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        exitCode.Should().Be(1,
+            because: "a registration-only run that did not register the agent failed, and scripts rely on the exit code");
+        ctx.Results.Errors.Should().Contain(e => e.Contains("Agent registration failed"),
+            because: "the registration-only summary row points to the errors list for the failure details");
+    }
+
+    /// <summary>
+    /// Step 6: with --skip-observability-permissions, registration is the agent's only Observability
+    /// authorization, so its failure is an error; without the flag it stays a warning.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Step6_RegistrationFailureIsError_OnlyWhenObservabilityPermissionsSkipped(bool skipObservabilityPermissions)
+    {
+        // Empty project directory: the project settings step finds no project and writes nothing.
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwRegistrationTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var (ctx, graph, _) = BuildIdempotencyTestContext(
+                RegistrationReadyConfig(projectDir), agentInstanceOnly: false, skipObservabilityPermissions: skipObservabilityPermissions);
+            StubRegistrationFailure(graph);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.AgentRegistrationFailed.Should().BeTrue(because: "precondition: the stubbed registration API returned no ID");
+            ctx.Results.Errors.Any(e => e.Contains("Agent registration failed")).Should().Be(skipObservabilityPermissions,
+                because: "without OtelWrite an unregistered agent cannot export telemetry, so setup must fail (exit 1)");
+            ctx.Results.Warnings.Any(w => w.Contains("Agent registration failed")).Should().Be(!skipObservabilityPermissions,
+                because: "without the flag the agent keeps OtelWrite, and a failed registration remains a non-fatal warning");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
     }
 
     // -------------------------------------------------------------------------

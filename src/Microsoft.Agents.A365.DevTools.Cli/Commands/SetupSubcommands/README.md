@@ -92,6 +92,16 @@ a365 setup all --authmode s2s
 a365 setup all --authmode both
 ```
 
+### Observability permissions (`--skip-observability-permissions`)
+
+By default `setup all` requests `Agent365.Observability.OtelWrite` (delegated scope and app role) for the blueprint and agent identity. Blueprint agents that export telemetry through the app-only S2S endpoint are authorized by their agent registration instead, so `--skip-observability-permissions` omits the Observability API from the inheritable permissions, app role grants, and admin consent URLs. Registration then becomes the agent's only authorization, so a registration failure is reported as an error (exit code 1).
+
+The flag is rejected for AI Teammate agents and with `--authmode s2s|both`, because `OtelWrite` is the only app role those modes grant. It applies to the current run only and does not revoke permissions granted earlier.
+
+```bash
+a365 setup all --skip-observability-permissions
+```
+
 ---
 
 ### Messaging endpoint (M365 agents)

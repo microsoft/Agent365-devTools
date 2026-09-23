@@ -101,6 +101,12 @@ internal sealed class SetupContext
     public bool NonInteractive { get; }
 
     /// <summary>
+    /// When true, Observability API permissions are omitted from every grant and consent URL (non-DW blueprint only),
+    /// making agent registration the agent's only Observability authorization.
+    /// </summary>
+    public bool SkipObservabilityPermissions { get; }
+
+    /// <summary>
     /// Overrides the az CLI login hint resolver used during blueprint creation.
     /// Null in production — injected as a no-op in tests to avoid spawning 'az account show'.
     /// </summary>
@@ -154,7 +160,8 @@ internal sealed class SetupContext
         IConfirmationProvider? confirmationProvider = null,
         bool skipSpProvisioning = false,
         string? messagingEndpointOverride = null,
-        bool nonInteractive = false)
+        bool nonInteractive = false,
+        bool skipObservabilityPermissions = false)
     {
         Config = config;
         Results = results;
@@ -172,6 +179,7 @@ internal sealed class SetupContext
         MessagingEndpointOverride = string.IsNullOrWhiteSpace(messagingEndpointOverride) ? null : messagingEndpointOverride.Trim();
         SkipSpProvisioning = skipSpProvisioning;
         NonInteractive = nonInteractive;
+        SkipObservabilityPermissions = skipObservabilityPermissions;
         ConfigService = configService;
         Executor = executor;
         BackendConfigurator = backendConfigurator;
