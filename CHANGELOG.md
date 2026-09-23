@@ -63,7 +63,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
-- A tenant-wide permission grant is no longer silently skipped when a user-scoped grant already exists for the same application and resource; `setup` and `create-instance` now report this as a failure instead of reporting success, and completing the grant may require a Global Administrator (#500).
+- `setup` and `create-instance` now create the tenant-wide permission grant when only a user-scoped grant exists, instead of reporting success without it; this may require a Global Administrator (#500).
 - Device code sign-in no longer prompts repeatedly within a single command, and no longer fails in embedded or remote terminals where the sign-in prompt could not be displayed (#500).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).

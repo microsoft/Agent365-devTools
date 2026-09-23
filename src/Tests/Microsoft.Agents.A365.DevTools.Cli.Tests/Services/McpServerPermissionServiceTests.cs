@@ -43,14 +43,22 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReportsSignInFailure_WithoutClaimingTheAppIsMissing()
     {
+        var logger = new CapturingLogger<McpServerPermissionService>();
+        var service = new McpServerPermissionService(_graph, _blueprintService, logger);
+        // Null means the read itself failed, which is the only way to reach the sign-in probe.
+        // An empty list is "no such application" and would never exercise this branch.
+        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<string>?>(null));
         _graph.GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<string>?>([]));
 
-        var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
+        var result = await service.ResolveServerResourceAsync(TenantId, ServerName);
 
         result.Should().BeNull();
+        logger.Messages.Should().Contain(m => m.Contains("Could not sign in"),
+            because: "a failed sign-in must be reported as such, not as a missing application");
+        logger.Messages.Should().NotContain(m => m.Contains("was found"),
+            because: "telling the user the application does not exist would send them off to create one that may already exist");
     }
 
     [Fact]
@@ -103,15 +111,20 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_WhenTheReadFails_DoesNotReportTheApplicationAsAbsent()
     {
+        var logger = new CapturingLogger<McpServerPermissionService>();
+        var service = new McpServerPermissionService(_graph, _blueprintService, logger);
         _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<string>?>(null));
         _graph.GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>("token"));
 
-        var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
+        var result = await service.ResolveServerResourceAsync(TenantId, ServerName);
 
         result.Should().BeNull();
-        await _graph.Received(1).GetGraphAccessTokenAsync(TenantId, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        logger.Messages.Should().Contain(m => m.Contains("Could not read application registrations"),
+            because: "a directory read the caller is not authorized for must be reported as a permission problem");
+        logger.Messages.Should().NotContain(m => m.Contains("was found"),
+            because: "an unreadable directory is not evidence the application is missing");
         await _graph.DidNotReceive().LookupServicePrincipalByAppIdAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>());
     }
@@ -289,5 +302,17 @@ public class McpServerPermissionServiceTests
     {
         McpConstants.BuildByoAppDisplayName(serverName).Should().Be(expected,
             because: "the CLI must derive the same display name the BYO registration flow created, or the resource lookup fails");
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 }

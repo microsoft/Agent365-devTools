@@ -212,7 +212,9 @@ public static class McpServerPermissionsSubcommands
         }
 
         var selected = new List<AgentInstancePermissionStatus>();
-        foreach (var token in response.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        // Not RemoveEmptyEntries: input like "," or "1," must be rejected, not silently treated
+        // as a skip, or a typo would leave agents without the permission and still exit 0.
+        foreach (var token in response.Split(',', StringSplitOptions.TrimEntries))
         {
             if (!int.TryParse(token, out var index) || index < 1 || index > missing.Count)
             {
@@ -225,6 +227,12 @@ public static class McpServerPermissionsSubcommands
             {
                 selected.Add(instance);
             }
+        }
+
+        if (selected.Count == 0)
+        {
+            logger.LogError("Invalid selection '{Response}'. Enter numbers between 1 and {Max}, or 'all'.", response, missing.Count);
+            return null;
         }
 
         return selected;

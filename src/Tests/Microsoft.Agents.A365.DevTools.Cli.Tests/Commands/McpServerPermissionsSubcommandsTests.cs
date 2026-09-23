@@ -268,6 +268,10 @@ public class McpServerPermissionsSubcommandsTests
     [InlineData("abc")]
     [InlineData("0")]
     [InlineData("99")]
+    [InlineData(",")]
+    [InlineData(", ,")]
+    [InlineData("1,")]
+    [InlineData(",1")]
     public async Task GrantAgentsAccess_InvalidSelection_ExitsWithOneAndGrantsNothing(string response)
     {
         SetupResolvedResource();
