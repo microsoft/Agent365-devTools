@@ -38,7 +38,7 @@ public class GraphApiService
     // Resolver delegate for the login hint.
     // Defaults to az CLI first, then AuthenticationService JWT cache as fallback.
     // Injectable via constructor so unit tests can bypass the real az process.
-    private readonly Func<Task<string?>> _loginHintResolver;
+    private readonly Func<string?, Task<string?>> _loginHintResolver;
 
     // Delay before retrying a 403 from the agent registry (role propagation lag).
     // Injectable so unit tests can pass TimeSpan.Zero and avoid the real 30s wait.
@@ -55,10 +55,10 @@ public class GraphApiService
     public string? CustomClientAppId { get; set; }
 
     /// <summary>
-    /// Routes interactive sign-in through the device code flow instead of the WAM broker.
-    /// Set when the caller knows WAM cannot present a dialog (headless or embedded terminals).
+    /// Most matches <see cref="TryFindApplicationAppIdsByDisplayNameAsync"/> reports. Anything
+    /// beyond this is already ambiguous, so paging further would not change the caller's decision.
     /// </summary>
-    public bool UseDeviceCodeAuthentication { get; set; }
+    public const int ApplicationDisplayNameMatchLimit = 10;
 
     /// <summary>
     /// Override the Microsoft Graph base URL for sovereign / government cloud tenants.
@@ -117,7 +117,9 @@ public class GraphApiService
         _tokenProvider = tokenProvider;
         _retryHelper = retryHelper ?? new RetryHelper(_logger);
         // Default: try az CLI first (if present), fall back to JWT cache in AuthenticationService.
-        _loginHintResolver = loginHintResolver ?? (() => ResolveLoginHintWithFallbackAsync(authService, EffectiveGraphClientId));
+        _loginHintResolver = loginHintResolver is not null
+            ? _ => loginHintResolver()
+            : clientId => ResolveLoginHintWithFallbackAsync(authService, clientId);
         _graphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl;
         _agentRegistryRetryDelay = agentRegistryRetryDelay ?? TimeSpan.FromSeconds(30);
     }
@@ -162,8 +164,8 @@ public class GraphApiService
     /// preauthorized for Graph delegated scopes (AADSTS65002), so the device-code path must use
     /// the Graph CLI client. Null leaves the default in place for the normal path.
     /// </summary>
-    private string? EffectiveGraphClientId =>
-        UseDeviceCodeAuthentication ? AuthenticationConstants.GraphPowershellClientId : null;
+    private static string? GetEffectiveGraphClientId(bool useDeviceCode) =>
+        useDeviceCode ? AuthenticationConstants.GraphPowershellClientId : null;
 
     /// <summary>
     /// Clears the persistent MSAL token cache. Passthrough to <see cref="IAuthenticationService.ClearTokenCacheAsync"/>
@@ -178,15 +180,19 @@ public class GraphApiService
     /// browser/device-code on macOS/Linux). Token is cached persistently by
     /// AuthenticationService — no az CLI subprocess involved.
     /// </summary>
-    public virtual async Task<string?> GetGraphAccessTokenAsync(string tenantId, bool forceRefresh = false, CancellationToken ct = default)
+    /// <param name="useDeviceCode">
+    /// Routes interactive sign-in through the device code flow instead of the WAM broker. Passed
+    /// per call rather than held on this singleton so it cannot leak into unrelated Graph calls.
+    /// </param>
+    public virtual async Task<string?> GetGraphAccessTokenAsync(string tenantId, bool forceRefresh = false, CancellationToken ct = default, bool useDeviceCode = false)
     {
         _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
         try
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
-            var loginHint = await _loginHintResolver();
-            var clientId = EffectiveGraphClientId;
-            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, clientId: clientId, useInteractiveBrowser: !UseDeviceCodeAuthentication, userId: loginHint, ct: ct);
+            var clientId = GetEffectiveGraphClientId(useDeviceCode);
+            var loginHint = await _loginHintResolver(clientId);
+            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, clientId: clientId, useInteractiveBrowser: !useDeviceCode, userId: loginHint, ct: ct);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -239,7 +245,8 @@ public class GraphApiService
         bool forceRefresh = false,
         IEnumerable<string>? scopes = null,
         CancellationToken ct = default,
-        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp,
+        bool useDeviceCode = false)
     {
         // Authentication strategy:
         //
@@ -283,9 +290,9 @@ public class GraphApiService
             _logger.LogDebug(
                 "Acquiring Graph token via token provider (clientId: {AppId}, scopes: {Scopes})",
                 CustomClientAppId, string.Join(", ", effectiveScopes));
-            var loginHint = await ResolveLoginHintAsync();
+            var loginHint = await ResolveLoginHintAsync(useDeviceCode);
             token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, effectiveScopes, UseDeviceCodeAuthentication, CustomClientAppId, ct, loginHint, forceRefresh);
+                tenantId, effectiveScopes, useDeviceCode, CustomClientAppId, ct, loginHint, forceRefresh);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -379,9 +386,9 @@ public class GraphApiService
     /// Executes a GET request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool useDeviceCode = false)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return null;
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct, useDeviceCode: useDeviceCode)) return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         try
         {
@@ -525,9 +532,9 @@ public class GraphApiService
     /// <summary>
     /// POST to Graph but always return HTTP response details (status, body, parsed JSON)
     /// </summary>
-    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool forceRefresh = false)
+    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool forceRefresh = false, bool useDeviceCode = false)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, forceRefresh: forceRefresh, scopes: scopes, ct: ct))
+        if (!await EnsureGraphHeadersAsync(tenantId, forceRefresh: forceRefresh, scopes: scopes, ct: ct, useDeviceCode: useDeviceCode))
         {
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
         }
@@ -569,9 +576,9 @@ public class GraphApiService
     /// Executes a PATCH request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+    public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool useDeviceCode = false)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct)) return false;
+        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct, useDeviceCode: useDeviceCode)) return false;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         try
@@ -650,7 +657,7 @@ public class GraphApiService
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
     public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(
-        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null)
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool useDeviceCode = false)
     {
         // $filter=appId eq is "Default+Advanced" per Graph docs - no ConsistencyLevel header required.
         // The token must have Application.Read.All; pass scopes to ensure MSAL token is used when needed.
@@ -658,7 +665,8 @@ public class GraphApiService
             tenantId,
             $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id",
             ct,
-            scopes);
+            scopes,
+            useDeviceCode);
         if (doc == null) return null;
         if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;
         return value[0].GetProperty("id").GetString();
@@ -899,34 +907,12 @@ public class GraphApiService
     public virtual async Task<string?> FindApplicationByDisplayNameAsync(
         string tenantId, string displayName, CancellationToken ct = default)
     {
-        var appIds = await FindApplicationAppIdsByDisplayNameAsync(tenantId, displayName, ct);
-        return appIds.Count > 0 ? appIds[0] : null;
-    }
-
-    /// <summary>
-    /// Finds every application whose display name matches exactly. Display names are not unique in
-    /// Entra, so callers that act on the result must decide what an ambiguous match means rather
-    /// than silently taking the first. Returns an empty list if none match or on error.
-    /// </summary>
-    public virtual async Task<IReadOnlyList<string>> FindApplicationAppIdsByDisplayNameAsync(
-        string tenantId, string displayName, CancellationToken ct = default)
-        => await TryFindApplicationAppIdsByDisplayNameAsync(tenantId, displayName, ct) ?? [];
-
-    /// <summary>
-    /// Same as <see cref="FindApplicationAppIdsByDisplayNameAsync"/> but returns null when the read
-    /// itself failed (no token, 403, or a transport error), so callers can tell "no such
-    /// application" apart from "we could not find out" instead of sending the user off to create an
-    /// application that may already exist.
-    /// </summary>
-    public virtual async Task<IReadOnlyList<string>?> TryFindApplicationAppIdsByDisplayNameAsync(
-        string tenantId, string displayName, CancellationToken ct = default)
-    {
         if (!await EnsureGraphHeadersAsync(tenantId, ct: ct)) return null;
 
         // OData requires single quotes to be escaped by doubling them: ' → ''
         var escaped = displayName.Replace("'", "''", StringComparison.Ordinal);
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl,
-            $"/v1.0/applications?$filter=displayName eq '{escaped}'&$select=appId&$top=10&$count=true");
+            $"/v1.0/applications?$filter=displayName eq '{escaped}'&$select=appId&$top=1&$count=true");
 
         try
         {
@@ -945,8 +931,68 @@ public class GraphApiService
             }
 
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0)
+                return null;
+
+            return value[0].TryGetProperty("appId", out var appId) ? appId.GetString() : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Failed to find application by display name {Name}", displayName);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Outcome of an application search by display name. Distinguishes a sign-in failure from an
+    /// authorized-but-failed read so callers can report the right cause without acquiring a second
+    /// token, which would prompt the user again after a cancelled sign-in (issue #500).
+    /// </summary>
+    /// <param name="AppIds">Matching appIds, or null when the read did not succeed.</param>
+    /// <param name="SignInFailed">True when no token could be acquired for the tenant.</param>
+    public sealed record ApplicationDisplayNameSearchResult(IReadOnlyList<string>? AppIds, bool SignInFailed);
+
+    /// <summary>
+    /// Finds applications whose display name matches exactly, up to
+    /// <see cref="ApplicationDisplayNameMatchLimit"/>. Display names are not unique in Entra, so
+    /// callers that act on the result must decide what an ambiguous match means rather than
+    /// silently taking the first. A null <c>AppIds</c> means the read itself failed (no token,
+    /// 403, or a transport error), so callers can tell "no such application" apart from "we could
+    /// not find out" instead of sending the user off to create an application that may already
+    /// exist.
+    /// </summary>
+    public virtual async Task<ApplicationDisplayNameSearchResult> TryFindApplicationAppIdsByDisplayNameAsync(
+        string tenantId, string displayName, CancellationToken ct = default, bool useDeviceCode = false)
+    {
+        if (!await EnsureGraphHeadersAsync(tenantId, ct: ct, useDeviceCode: useDeviceCode))
+            return new ApplicationDisplayNameSearchResult(null, SignInFailed: true);
+
+        // OData requires single quotes to be escaped by doubling them: ' → ''
+        var escaped = displayName.Replace("'", "''", StringComparison.Ordinal);
+        // One past the limit so a truncated page is detectable: callers only need to distinguish
+        // none / exactly one / more than one, and any overflow is reported as ambiguous.
+        var url = GraphApiConstants.BuildUrl(_graphBaseUrl,
+            $"/v1.0/applications?$filter=displayName eq '{escaped}'&$select=appId&$top={ApplicationDisplayNameMatchLimit + 1}&$count=true");
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            // Copy auth header set by EnsureGraphHeadersAsync onto the shared _httpClient
+            if (_httpClient.DefaultRequestHeaders.Authorization is { } auth)
+                request.Headers.Authorization = auth;
+            // Required for advanced query filters (displayName eq)
+            request.Headers.TryAddWithoutValidation("ConsistencyLevel", "eventual");
+
+            using var resp = await _httpClient.SendAsync(request, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("FindApplicationAppIdsByDisplayName {Name} failed {Code}", displayName, (int)resp.StatusCode);
+                return new ApplicationDisplayNameSearchResult(null, SignInFailed: false);
+            }
+
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
             if (!doc.RootElement.TryGetProperty("value", out var value))
-                return [];
+                return new ApplicationDisplayNameSearchResult([], SignInFailed: false);
 
             var appIds = new List<string>(value.GetArrayLength());
             foreach (var app in value.EnumerateArray())
@@ -957,12 +1003,12 @@ public class GraphApiService
                 }
             }
 
-            return appIds;
+            return new ApplicationDisplayNameSearchResult(appIds, SignInFailed: false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogDebug(ex, "Failed to find application by display name {Name}", displayName);
-            return null;
+            return new ApplicationDisplayNameSearchResult(null, SignInFailed: false);
         }
     }
 
@@ -1056,7 +1102,9 @@ public class GraphApiService
         string resourceSpObjectId,
         IEnumerable<string> scopes,
         CancellationToken ct = default,
-        IEnumerable<string>? permissionGrantScopes = null)
+        IEnumerable<string>? permissionGrantScopes = null,
+        bool requireMatchingConsentType = false,
+        bool useDeviceCode = false)
     {
         var (success, _, _) = await CreateOrUpdateOauth2PermissionGrantCoreAsync(
             tenantId,
@@ -1066,7 +1114,9 @@ public class GraphApiService
             consentType: "AllPrincipals",
             scopes,
             ct,
-            permissionGrantScopes);
+            permissionGrantScopes,
+            requireMatchingConsentType,
+            useDeviceCode);
         return success;
     }
 
@@ -1144,7 +1194,9 @@ public class GraphApiService
         string consentType,
         IEnumerable<string> scopes,
         CancellationToken ct,
-        IEnumerable<string>? permissionGrantScopes)
+        IEnumerable<string>? permissionGrantScopes,
+        bool requireMatchingConsentType = false,
+        bool useDeviceCode = false)
     {
         int lastStatusCode = 0;
         string? lastErrorCode = null;
@@ -1152,20 +1204,24 @@ public class GraphApiService
         var isPrincipal = string.Equals(consentType, "Principal", StringComparison.OrdinalIgnoreCase);
 
         // Read existing — extract string values immediately so JsonDocument can be disposed.
-        // Both shapes filter server-side; the in-code re-check guards against a tenant whose Graph
-        // ignores part of the $filter and returns rows of the other consentType.
+        // AllPrincipals grants can filter by clientId+resourceId server-side.
+        // Principal grants must filter by clientId only, then match resourceId/consentType/principalId in code
+        // because the Graph API oauth2PermissionGrants endpoint has limited $filter support.
         string? existingId = null;
         string existingScopes = "";
 
         var existingFilter = principalId is not null
             ? $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}' and consentType eq 'Principal' and principalId eq '{principalId}'"
-            : $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}' and consentType eq 'AllPrincipals'";
+            : requireMatchingConsentType
+                ? $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}' and consentType eq 'AllPrincipals'"
+                : $"clientId eq '{clientSpObjectId}' and resourceId eq '{resourceSpObjectId}'";
 
         using (var listDoc = await GraphGetAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter={existingFilter}",
             ct,
-            permissionGrantScopes))
+            permissionGrantScopes,
+            useDeviceCode))
         {
             if (listDoc?.RootElement.TryGetProperty("value", out var arr) == true)
             {
@@ -1188,15 +1244,20 @@ public class GraphApiService
                         }
                     }
                 }
-                else
+                else if (arr.GetArrayLength() > 0)
                 {
-                    // AllPrincipals grants: match consentType in code as well, so a Principal row
-                    // is never patched in place of the tenant-wide grant being requested.
+                    // AllPrincipals grants: the server-side filter is precise enough.
                     foreach (var grant in arr.EnumerateArray())
                     {
-                        var grantConsentType = grant.TryGetProperty("consentType", out var ctp) ? ctp.GetString() : null;
-                        if (!string.Equals(grantConsentType, "AllPrincipals", StringComparison.OrdinalIgnoreCase))
-                            continue;
+                        // Opt-in re-check so a Principal row is never patched in place of the
+                        // tenant-wide grant being requested (issue #500). Off by default because
+                        // changing it for the setup path is a separate behavior change.
+                        if (requireMatchingConsentType)
+                        {
+                            var grantConsentType = grant.TryGetProperty("consentType", out var ctp) ? ctp.GetString() : null;
+                            if (!string.Equals(grantConsentType, "AllPrincipals", StringComparison.OrdinalIgnoreCase))
+                                continue;
+                        }
 
                         existingId = grant.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
                         existingScopes = grant.TryGetProperty("scope", out var scopeProp) ? scopeProp.GetString() ?? "" : "";
@@ -1223,7 +1284,7 @@ public class GraphApiService
             const int baseDelaySeconds = 5;
             for (int attempt = 0; attempt < maxRetries; attempt++)
             {
-                var grantResponse = await GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes);
+                var grantResponse = await GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes, useDeviceCode: useDeviceCode);
                 // Dispose the error JSON immediately — only IsSuccess and Body are needed below.
                 grantResponse.Json?.Dispose();
                 lastStatusCode = grantResponse.StatusCode;
@@ -1275,7 +1336,7 @@ public class GraphApiService
         currentSet.UnionWith(desiredSet);
         var merged = string.Join(' ', currentSet);
 
-        var patchOk = await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes);
+        var patchOk = await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes, useDeviceCode);
         return (patchOk, 0, null);
     }
 
@@ -1301,14 +1362,16 @@ public class GraphApiService
     public virtual async Task<List<(string resourceId, string scope, string consentType)>?> TryGetOauth2PermissionGrantsAsync(
         string tenantId,
         string clientSpObjectId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool useDeviceCode = false)
     {
         var grants = new List<(string resourceId, string scope, string consentType)>();
 
         using var doc = await GraphGetAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}'",
-            ct);
+            ct,
+            useDeviceCode: useDeviceCode);
 
         if (doc == null) return null;
 
@@ -1535,13 +1598,13 @@ public class GraphApiService
     /// Azure CLI identity instead of the Windows default account.
     /// Returns null if az account show fails or the user field is absent.
     /// </summary>
-    private async Task<string?> ResolveLoginHintAsync()
+    private async Task<string?> ResolveLoginHintAsync(bool useDeviceCode = false)
     {
         if (_loginHintResolved)
             return _loginHint;
 
         _loginHintResolved = true;
-        _loginHint = await _loginHintResolver();
+        _loginHint = await _loginHintResolver(GetEffectiveGraphClientId(useDeviceCode));
         return _loginHint;
     }
 

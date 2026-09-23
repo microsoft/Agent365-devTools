@@ -281,7 +281,7 @@ public class AuthenticationService : IAuthenticationService
                 // Device code flow - works in all environments including SSH/remote sessions
                 _logger.LogDebug("Using device code authentication...");
                 _logger.LogDebug("Please sign in with your Microsoft account");
-                credential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId, loginHint, forceRefresh);
+                credential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
             }
 
             var tokenRequestContext = new TokenRequestContext(scopes);
@@ -295,7 +295,7 @@ public class AuthenticationService : IAuthenticationService
                 _logger.LogWarning("Browser authentication is not supported on this platform, falling back to device code flow...");
                 _logger.LogDebug("Using device code authentication...");
                 _logger.LogDebug("Please sign in with your Microsoft account");
-                var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId, loginHint, forceRefresh);
+                var deviceCodeCredential = CreateDeviceCodeCredential(effectiveClientId, effectiveTenantId);
                 tokenResult = await deviceCodeCredential.GetTokenAsync(tokenRequestContext, ct);
             }
             _logger.LogDebug("Authentication successful!");
@@ -546,16 +546,36 @@ public class AuthenticationService : IAuthenticationService
         => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, loginHint: loginHint, forceRefresh: forceRefresh);
 
     /// <summary>
-    /// Creates a credential configured for interactive device code authentication.
+    /// Creates a DeviceCodeCredential configured for interactive device code authentication.
     /// This flow works in all environments including SSH, remote sessions, and platforms where
     /// browser-based authentication is unavailable.
     /// Protected virtual to allow substitution in tests.
     /// </summary>
-    protected virtual TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId, string? loginHint = null, bool forceRefresh = false)
-        // Routed through MsalBrowserCredential so device code shares the OS-protected MSAL
-        // persistent cache and acquires silently when an account is already signed in. A bare
-        // DeviceCodeCredential has no AuthenticationRecord, so each new instance re-prompts.
-        => new MsalBrowserCredential(clientId, tenantId, redirectUri: null, _logger, useWam: false, loginHint: loginHint, forceRefresh: forceRefresh, useDeviceCode: true);
+    protected virtual TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
+    {
+        return new DeviceCodeCredential(new DeviceCodeCredentialOptions
+        {
+            TenantId = tenantId,
+            ClientId = clientId,
+            AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
+            TokenCachePersistenceOptions = new TokenCachePersistenceOptions
+            {
+                Name = AuthenticationConstants.ApplicationName
+            },
+            DeviceCodeCallback = (code, cancellation) =>
+            {
+                _logger.LogInformation("");
+                _logger.LogInformation("==========================================================================");
+                _logger.LogInformation("To sign in, use a web browser to open the page:");
+                _logger.LogInformation("    {VerificationUri}", code.VerificationUri);
+                _logger.LogInformation("");
+                _logger.LogInformation("And enter the code: {UserCode}", code.UserCode);
+                _logger.LogInformation("==========================================================================");
+                _logger.LogInformation("");
+                return Task.CompletedTask;
+            }
+        });
+    }
 
     /// <summary>
     /// Resolves the login hint (UPN) from the OS-protected MSAL persistent cache by reading the

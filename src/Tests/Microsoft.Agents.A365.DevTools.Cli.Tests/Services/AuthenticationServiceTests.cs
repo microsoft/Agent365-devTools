@@ -802,44 +802,11 @@ public class AuthenticationServiceTests : IDisposable
             _deviceCodeCredential = deviceCodeCredential;
         }
 
-        public string? LastDeviceCodeLoginHint { get; private set; }
-
-        public bool LastDeviceCodeForceRefresh { get; private set; }
-
         protected override TokenCredential CreateBrowserCredential(string clientId, string tenantId, string? loginHint = null, bool forceRefresh = false)
             => _browserCredential;
 
-        protected override TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId, string? loginHint = null, bool forceRefresh = false)
-        {
-            LastDeviceCodeLoginHint = loginHint;
-            LastDeviceCodeForceRefresh = forceRefresh;
-            return _deviceCodeCredential;
-        }
-    }
-
-    [Fact]
-    public async Task GetAccessTokenAsync_DeviceCode_PassesLoginHintAndForceRefreshToTheCredential()
-    {
-        // Device code must preserve the same identity and refresh semantics as the browser flow:
-        // without the login hint MSAL can silently return a different cached account's token, and
-        // without forceRefresh the caller's explicit refresh request is ignored.
-        var browserCredential = new StubTokenCredential("unused", DateTimeOffset.UtcNow.AddHours(1));
-        var deviceCodeCredential = new StubTokenCredential("device-token", DateTimeOffset.UtcNow.AddHours(1));
-        var logger = Substitute.For<ILogger<AuthenticationService>>();
-        var sut = new TestableAuthenticationService(logger, browserCredential, deviceCodeCredential);
-
-        await sut.GetAccessTokenAsync(
-            "https://graph.microsoft.com",
-            "11111111-1111-1111-1111-111111111111",
-            forceRefresh: true,
-            useInteractiveBrowser: false,
-            userId: "user@contoso.com");
-
-        sut.LastDeviceCodeLoginHint.Should().Be(
-            "user@contoso.com",
-            because: "device code must target the requested account, not whichever account MSAL happens to have cached");
-        sut.LastDeviceCodeForceRefresh.Should().BeTrue(
-            because: "an explicit forceRefresh must bypass the MSAL silent cache on the device-code path too");
+        protected override TokenCredential CreateDeviceCodeCredential(string clientId, string tenantId)
+            => _deviceCodeCredential;
     }
 
     [Fact]

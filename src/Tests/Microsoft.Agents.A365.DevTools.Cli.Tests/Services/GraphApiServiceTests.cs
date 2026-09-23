@@ -932,12 +932,9 @@ public class GraphApiServiceTests
         var service = new GraphApiService(
             Substitute.For<ILogger<GraphApiService>>(),
             Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
-            auth, handler, loginHintResolver: () => Task.FromResult<string?>(null))
-        {
-            UseDeviceCodeAuthentication = true
-        };
+            auth, handler, loginHintResolver: () => Task.FromResult<string?>(null));
 
-        await service.GetGraphAccessTokenAsync("tenant-123");
+        await service.GetGraphAccessTokenAsync("tenant-123", useDeviceCode: true);
 
         await auth.Received(1).GetAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(),
@@ -981,7 +978,7 @@ public class GraphApiServiceTests
 
         var service = CreateServiceWithToken(handler);
 
-        var appIds = await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+        var appIds = (await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO")).AppIds;
 
         appIds.Should().BeEquivalentTo(["app-id-1", "app-id-2"],
             because: "every match must be returned so callers can detect an ambiguous display name rather than granting against whichever app Graph happened to list first");
@@ -995,7 +992,7 @@ public class GraphApiServiceTests
 
         var service = CreateServiceWithToken(handler);
 
-        var appIds = await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+        var appIds = (await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO")).AppIds;
 
         appIds.Should().BeNull(
             because: "a failed read is not an absent application - conflating them tells the user to create an app that may already exist");
@@ -1009,7 +1006,7 @@ public class GraphApiServiceTests
 
         var service = CreateServiceWithToken(handler);
 
-        var appIds = await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+        var appIds = (await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO")).AppIds;
 
         appIds.Should().NotBeNull(
             because: "a successful read that found nothing is a conclusive answer and must be distinguishable from a failed read");
@@ -1017,17 +1014,22 @@ public class GraphApiServiceTests
     }
 
     [Fact]
-    public async Task FindApplicationAppIdsByDisplayNameAsync_WhenTheReadFails_ReturnsEmptyForLegacyCallers()
+    public async Task TryFindApplicationAppIdsByDisplayNameAsync_RequestsOnePastTheLimit_SoTruncationIsDetectable()
     {
+        // $top must exceed the reported limit, or a tenant with exactly one more duplicate than the
+        // page size would come back looking unambiguous and the caller would grant against the
+        // wrong application.
         using var handler = new TestHttpMessageHandler();
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("{}") });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"value\":[]}") });
 
         var service = CreateServiceWithToken(handler);
 
-        var appIds = await service.FindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+        await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
 
-        appIds.Should().BeEmpty(
-            because: "existing callers treat a failed lookup as 'no application' and must keep that behaviour unchanged");
+        handler.RequestUris.Should().ContainSingle()
+            .Which.Query.Should().Contain(
+                $"$top={GraphApiService.ApplicationDisplayNameMatchLimit + 1}",
+                because: "fetching one past the limit is what makes an over-limit result detectable as ambiguous instead of silently truncated");
     }
 
     private static GraphApiService CreateServiceWithToken(HttpMessageHandler handler)
@@ -1044,11 +1046,11 @@ public class GraphApiServiceTests
     }
 
     [Fact]
-    public async Task CreateOrUpdateOauth2PermissionGrantAsync_AllPrincipals_DoesNotPatchAPrincipalScopedGrant()
+    public async Task CreateOrUpdateOauth2PermissionGrantAsync_WhenConsentTypeIsRequired_DoesNotPatchAPrincipalScopedGrant()
     {
         // A Principal-scoped grant for the same client and resource is what 'setup --authmode obo'
         // creates. Patching it would report success while the requested tenant-wide grant never
-        // exists, so the lookup must be constrained to AllPrincipals and a new grant POSTed.
+        // exists, so callers that opt in constrain the lookup to AllPrincipals and POST a new grant.
         var requests = new List<(string Method, string Uri)>();
         using var handler = new CapturingHttpMessageHandler(r => requests.Add((r.Method.Method, r.RequestUri!.ToString())));
 
@@ -1065,7 +1067,8 @@ public class GraphApiServiceTests
             loginHintResolver: () => Task.FromResult<string?>(null));
 
         var result = await service.CreateOrUpdateOauth2PermissionGrantAsync(
-            "tenant-123", "client-sp", "resource-sp", ["Tools.ListInvoke.All"]);
+            "tenant-123", "client-sp", "resource-sp", ["Tools.ListInvoke.All"],
+            requireMatchingConsentType: true);
 
         result.Should().BeTrue();
         requests[0].Uri.Should().Contain(
@@ -1074,6 +1077,38 @@ public class GraphApiServiceTests
         requests[1].Method.Should().Be(
             "POST",
             because: "an unrelated Principal grant must not be patched in place of creating the tenant-wide grant");
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateOauth2PermissionGrantAsync_ByDefault_StillPatchesAnExistingGrant()
+    {
+        // setup and create-instance rely on the historical behaviour of patching whatever grant row
+        // exists for the client/resource pair. That must stay untouched: only callers that opt in
+        // to requireMatchingConsentType get the stricter AllPrincipals lookup.
+        var requests = new List<(string Method, string Uri)>();
+        using var handler = new CapturingHttpMessageHandler(r => requests.Add((r.Method.Method, r.RequestUri!.ToString())));
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[{\"id\":\"principal-grant-id\",\"consentType\":\"Principal\",\"scope\":\"User.Read\"}]}")
+        });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var service = new GraphApiService(logger, executor, FakeAuthReturning("fake-token"), handler,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        var result = await service.CreateOrUpdateOauth2PermissionGrantAsync(
+            "tenant-123", "client-sp", "resource-sp", ["Tools.ListInvoke.All"]);
+
+        result.Should().BeTrue();
+        requests[0].Uri.Should().NotContain(
+            "consentType",
+            because: "the default lookup must keep its original filter so existing setup flows are unaffected");
+        requests[1].Method.Should().Be(
+            "PATCH",
+            because: "existing callers must keep patching the grant row they find rather than creating a second one");
     }
 
     [Fact]
@@ -1501,12 +1536,9 @@ public class GraphApiServiceLoginHintTests : IDisposable
         var service = new GraphApiService(
             Substitute.For<ILogger<GraphApiService>>(),
             Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
-            auth, handler)
-        {
-            UseDeviceCodeAuthentication = true
-        };
+            auth, handler);
 
-        await service.GetGraphAccessTokenAsync("tenant-123");
+        await service.GetGraphAccessTokenAsync("tenant-123", useDeviceCode: true);
 
         await auth.Received(1).ResolveLoginHintFromCacheAsync(AuthenticationConstants.GraphPowershellClientId);
     }
@@ -1557,11 +1589,16 @@ internal class TestHttpMessageHandler : HttpMessageHandler
 
     public int RequestCount { get; private set; }
 
+    /// <summary>Request URIs seen, so tests can assert on the query string the service built.</summary>
+    public List<Uri> RequestUris { get; } = [];
+
     public void QueueResponse(HttpResponseMessage resp) => _responses.Enqueue(resp);
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         RequestCount++;
+        if (request.RequestUri is { } uri)
+            RequestUris.Add(uri);
         if (_responses.Count == 0)
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("") });
 

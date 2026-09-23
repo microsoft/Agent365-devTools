@@ -19,13 +19,11 @@ public class McpServerPermissionService
 
     /// <summary>
     /// Routes sign-in through the device code flow instead of the WAM broker, for terminals
-    /// where WAM cannot present a dialog.
+    /// where WAM cannot present a dialog. Held here rather than on the shared
+    /// <see cref="GraphApiService"/> singleton so it cannot affect unrelated Graph calls, and
+    /// passed explicitly on every call this service makes.
     /// </summary>
-    public virtual bool UseDeviceCodeAuthentication
-    {
-        get => _graphApiService.UseDeviceCodeAuthentication;
-        set => _graphApiService.UseDeviceCodeAuthentication = value;
-    }
+    public virtual bool UseDeviceCodeAuthentication { get; set; }
 
     public McpServerPermissionService(
         GraphApiService graphApiService,
@@ -52,12 +50,14 @@ public class McpServerPermissionService
 
         var displayName = McpConstants.BuildByoAppDisplayName(serverName);
 
-        var appIds = await _graphApiService.TryFindApplicationAppIdsByDisplayNameAsync(tenantId, displayName, ct);
+        var lookup = await _graphApiService.TryFindApplicationAppIdsByDisplayNameAsync(
+            tenantId, displayName, ct, UseDeviceCodeAuthentication);
+        var appIds = lookup.AppIds;
         if (appIds is null)
         {
             // A failed read is not an absent application — reporting "not found" would send the
             // user off to create an application that may already exist (issue #500).
-            if (string.IsNullOrWhiteSpace(await _graphApiService.GetGraphAccessTokenAsync(tenantId, ct: ct)))
+            if (lookup.SignInFailed)
             {
                 _logger.LogError("Could not sign in to tenant {TenantId}, so '{DisplayName}' could not be looked up.", tenantId, displayName);
             }
@@ -79,19 +79,22 @@ public class McpServerPermissionService
         }
 
         // Display names are not unique, so granting against an arbitrary match could hand the
-        // agent access to a different MCP server than the caller named.
+        // agent access to a different MCP server than the caller named. The lookup fetches one
+        // past its limit, so an overflow is reported as ambiguous rather than silently truncated.
         if (appIds.Count > 1)
         {
+            var shown = appIds.Take(GraphApiService.ApplicationDisplayNameMatchLimit).ToList();
+            var suffix = appIds.Count > GraphApiService.ApplicationDisplayNameMatchLimit ? ", ..." : "";
             _logger.LogError(
-                "Tenant {TenantId} has {Count} applications named '{DisplayName}' ({AppIds}). Rename or remove the duplicates so the MCP server resolves to one application.",
-                tenantId, appIds.Count, displayName, string.Join(", ", appIds));
+                "Tenant {TenantId} has {Count} applications named '{DisplayName}' ({AppIds}{Suffix}). Rename or remove the duplicates so the MCP server resolves to one application.",
+                tenantId, appIds.Count, displayName, string.Join(", ", shown), suffix);
             return null;
         }
 
         var appId = appIds[0];
 
         var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
-            tenantId, appId, ct, AuthenticationConstants.RequiredPermissionGrantScopes);
+            tenantId, appId, ct, AuthenticationConstants.RequiredPermissionGrantScopes, UseDeviceCodeAuthentication);
         if (string.IsNullOrWhiteSpace(spObjectId))
         {
             _logger.LogError(
@@ -120,14 +123,16 @@ public class McpServerPermissionService
         ArgumentException.ThrowIfNullOrWhiteSpace(blueprintId);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceSpObjectId);
 
-        var instances = await _blueprintService.GetAgentInstancesForBlueprintAsync(tenantId, blueprintId, ct);
+        var instances = await _blueprintService.GetAgentInstancesForBlueprintAsync(
+            tenantId, blueprintId, ct, UseDeviceCodeAuthentication);
 
         var statuses = new List<AgentInstancePermissionStatus>(instances.Count);
         foreach (var instance in instances)
         {
             ct.ThrowIfCancellationRequested();
 
-            var grants = await _graphApiService.TryGetOauth2PermissionGrantsAsync(tenantId, instance.IdentitySpId, ct);
+            var grants = await _graphApiService.TryGetOauth2PermissionGrantsAsync(
+                tenantId, instance.IdentitySpId, ct, UseDeviceCodeAuthentication);
             if (grants is null)
             {
                 // An empty list is also what a failed read returns, and reporting that as "missing"
@@ -168,7 +173,11 @@ public class McpServerPermissionService
             resourceSpObjectId,
             [McpConstants.V2ScopeValue],
             ct,
-            AuthenticationConstants.RequiredPermissionGrantScopes);
+            AuthenticationConstants.RequiredPermissionGrantScopes,
+            // Never patch a user-scoped grant in place of the tenant-wide one this command
+            // reports on, or the agent would still be missing the permission (issue #500).
+            requireMatchingConsentType: true,
+            UseDeviceCodeAuthentication);
     }
 
     /// <summary>
