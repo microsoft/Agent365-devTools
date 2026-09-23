@@ -310,7 +310,7 @@ public class GraphApiService
             // yet (initial app lookup) or when no token provider is configured (tests). Token
             // does NOT carry custom-app optional claims — callers that depend on those must
             // not reach this branch.
-            token = await GetGraphAccessTokenAsync(tenantId, forceRefresh: forceRefresh, ct: ct);
+            token = await GetGraphAccessTokenAsync(tenantId, forceRefresh: forceRefresh, ct: ct, useDeviceCode: useDeviceCode);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -1107,7 +1107,8 @@ public class GraphApiService
         CancellationToken ct = default,
         IEnumerable<string>? permissionGrantScopes = null,
         bool requireMatchingConsentType = false,
-        bool useDeviceCode = false)
+        bool useDeviceCode = false,
+        bool abortWhenLookupFails = false)
     {
         var (success, _, _) = await CreateOrUpdateOauth2PermissionGrantCoreAsync(
             tenantId,
@@ -1119,7 +1120,8 @@ public class GraphApiService
             ct,
             permissionGrantScopes,
             requireMatchingConsentType,
-            useDeviceCode);
+            useDeviceCode,
+            abortWhenLookupFails);
         return success;
     }
 
@@ -1199,7 +1201,8 @@ public class GraphApiService
         CancellationToken ct,
         IEnumerable<string>? permissionGrantScopes,
         bool requireMatchingConsentType = false,
-        bool useDeviceCode = false)
+        bool useDeviceCode = false,
+        bool abortWhenLookupFails = false)
     {
         int lastStatusCode = 0;
         string? lastErrorCode = null;
@@ -1226,6 +1229,18 @@ public class GraphApiService
             permissionGrantScopes,
             useDeviceCode))
         {
+            if (listDoc is null && abortWhenLookupFails)
+            {
+                // A failed read is not "no grant". Creating from unknown state can return
+                // "Permission entry already exists", which the POST path below reports as
+                // success even though the desired scope was never merged (issue #500).
+                _logger.LogError(
+                    "Could not read the existing permission grants for client {ClientSpId} on resource {ResourceSpId}. " +
+                    "No grant was attempted because the current state is unknown.",
+                    clientSpObjectId, resourceSpObjectId);
+                return (false, 0, null);
+            }
+
             if (listDoc?.RootElement.TryGetProperty("value", out var arr) == true)
             {
                 if (isPrincipal)

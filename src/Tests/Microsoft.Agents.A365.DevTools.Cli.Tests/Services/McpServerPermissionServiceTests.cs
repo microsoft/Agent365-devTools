@@ -308,7 +308,7 @@ public class McpServerPermissionServiceTests
                 TenantId, AgentSpId, ByoSpObjectId,
                 Arg.Is<IEnumerable<string>>(s => s.SequenceEqual(new[] { McpConstants.V2ScopeValue })),
                 Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(),
-                Arg.Any<bool>(), Arg.Any<bool>())
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>())
             .Returns(Task.FromResult(true));
 
         var granted = await _service.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId);
@@ -318,7 +318,7 @@ public class McpServerPermissionServiceTests
         await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(),
-            true, Arg.Any<bool>());
+            true, Arg.Any<bool>(), true);
     }
 
     [Fact]
@@ -327,7 +327,7 @@ public class McpServerPermissionServiceTests
         _graph.CreateOrUpdateOauth2PermissionGrantAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                 Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(),
-                Arg.Any<bool>(), Arg.Any<bool>())
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>())
             .Returns(Task.FromResult(false));
 
         var granted = await _service.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId);

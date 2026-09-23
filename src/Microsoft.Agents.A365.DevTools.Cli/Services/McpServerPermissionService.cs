@@ -195,7 +195,10 @@ public class McpServerPermissionService
             // Never patch a user-scoped grant in place of the tenant-wide one this command
             // reports on, or the agent would still be missing the permission (issue #500).
             requireMatchingConsentType: true,
-            UseDeviceCodeAuthentication);
+            UseDeviceCodeAuthentication,
+            // A failed read is not "no grant" — creating from unknown state can report success
+            // on "Permission entry already exists" without merging the scope (issue #500).
+            abortWhenLookupFails: true);
     }
 
     /// <summary>

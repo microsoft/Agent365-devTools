@@ -1139,6 +1139,66 @@ public class GraphApiServiceTests
     }
 
     [Fact]
+    public async Task CreateOrUpdateOauth2PermissionGrantAsync_WhenAbortWhenLookupFails_DoesNotPostAfterAFailedRead()
+    {
+        // A failed read is not "no grant". Posting from unknown state can return
+        // "Permission entry already exists", which the POST path reports as success even though
+        // the desired scope was never merged (issue #500).
+        var requests = new List<(string Method, string Uri)>();
+        using var handler = new CapturingHttpMessageHandler(r => requests.Add((r.Method.Method, r.RequestUri!.ToString())));
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("{\"error\":{\"code\":\"Authorization_RequestDenied\"}}")
+        });
+
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var service = new GraphApiService(logger, executor, FakeAuthReturning("fake-token"), handler,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        var result = await service.CreateOrUpdateOauth2PermissionGrantAsync(
+            "tenant-123", "client-sp", "resource-sp", ["Tools.ListInvoke.All"],
+            abortWhenLookupFails: true);
+
+        result.Should().BeFalse(
+            because: "an unreadable grant state must be reported as a failure, not silently treated as success");
+        requests.Should().ContainSingle(
+            because: "no grant may be attempted when the current state is unknown");
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateOauth2PermissionGrantAsync_ByDefault_StillPostsAfterAFailedRead()
+    {
+        // setup and create-instance must keep their historical create-on-empty-read behaviour:
+        // only callers that opt in to abortWhenLookupFails get the stricter handling.
+        var requests = new List<(string Method, string Uri)>();
+        using var handler = new CapturingHttpMessageHandler(r => requests.Add((r.Method.Method, r.RequestUri!.ToString())));
+
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("{\"error\":{\"code\":\"Authorization_RequestDenied\"}}")
+        });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = new StringContent("{\"id\":\"new-grant\"}")
+        });
+
+        var logger = Substitute.For<ILogger<GraphApiService>>();
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var service = new GraphApiService(logger, executor, FakeAuthReturning("fake-token"), handler,
+            loginHintResolver: () => Task.FromResult<string?>(null));
+
+        var result = await service.CreateOrUpdateOauth2PermissionGrantAsync(
+            "tenant-123", "client-sp", "resource-sp", ["Tools.ListInvoke.All"]);
+
+        result.Should().BeTrue();
+        requests[1].Method.Should().Be(
+            "POST",
+            because: "existing setup flows must keep creating the grant when the read returns nothing");
+    }
+
+    [Fact]
     public async Task IsCurrentUserAdminAsync_UserWithGlobalAdminRole_ReturnsHasRole()
     {
         // Arrange — MSAL token contains wids claim with Global Administrator template ID
