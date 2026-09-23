@@ -1014,22 +1014,49 @@ public class GraphApiServiceTests
     }
 
     [Fact]
-    public async Task TryFindApplicationAppIdsByDisplayNameAsync_RequestsOnePastTheLimit_SoTruncationIsDetectable()
+    public async Task TryFindApplicationAppIdsByDisplayNameAsync_FollowsNextLink_SoNoMatchIsOmitted()
     {
-        // $top must exceed the reported limit, or a tenant with exactly one more duplicate than the
-        // page size would come back looking unambiguous and the caller would grant against the
-        // wrong application.
+        // The caller lists every match for the user to choose from, so a truncated result would
+        // hide the application they meant and let them grant against the wrong MCP server.
         using var handler = new TestHttpMessageHandler();
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"value\":[]}") });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[{\"appId\":\"app-1\"},{\"appId\":\"app-2\"}],\"@odata.nextLink\":\"https://graph.microsoft.com/v1.0/applications?$skiptoken=page2\"}")
+        });
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"value\":[{\"appId\":\"app-3\"}]}")
+        });
 
         var service = CreateServiceWithToken(handler);
 
-        await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO");
+        var appIds = (await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO")).AppIds;
 
-        handler.RequestUris.Should().ContainSingle()
-            .Which.Query.Should().Contain(
-                $"$top={GraphApiService.ApplicationDisplayNameMatchLimit + 1}",
-                because: "fetching one past the limit is what makes an over-limit result detectable as ambiguous instead of silently truncated");
+        appIds.Should().BeEquivalentTo(["app-1", "app-2", "app-3"],
+            because: "every page of matches must be returned so the user can choose between duplicates");
+        handler.RequestUris.Should().HaveCount(2);
+        handler.RequestUris[0].Query.Should().NotContain(
+            "$top",
+            because: "capping the query would silently drop matches the user needs to choose from");
+    }
+
+    [Fact]
+    public async Task TryFindApplicationAppIdsByDisplayNameAsync_StopsWhenNextLinkRepeats()
+    {
+        // A nextLink echoing itself back would otherwise page forever.
+        using var handler = new TestHttpMessageHandler();
+        var selfReferencing = "{\"value\":[{\"appId\":\"app-1\"}],\"@odata.nextLink\":\"https://graph.microsoft.com/v1.0/applications?$skiptoken=loop\"}";
+        for (int i = 0; i < 5; i++)
+        {
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(selfReferencing) });
+        }
+
+        var service = CreateServiceWithToken(handler);
+
+        var appIds = (await service.TryFindApplicationAppIdsByDisplayNameAsync("tenant-123", "Foo - BYO")).AppIds;
+
+        appIds.Should().HaveCount(2, because: "the seed page and the repeated page are each read once before the cycle is detected");
+        handler.RequestUris.Should().HaveCount(2, because: "a repeated nextLink must terminate paging rather than loop");
     }
 
     private static GraphApiService CreateServiceWithToken(HttpMessageHandler handler)

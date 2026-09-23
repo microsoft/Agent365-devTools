@@ -45,7 +45,7 @@ public class McpServerPermissionsSubcommandsTests
         new(ServerName, McpConstants.BuildByoAppDisplayName(ServerName), ByoAppId, ByoSpObjectId);
 
     private void SetupResolvedResource() =>
-        _permissionService.ResolveServerResourceAsync(TenantId, ServerName, Arg.Any<CancellationToken>())
+        _permissionService.ResolveServerResourceAsync(TenantId, ServerName, Arg.Any<CancellationToken>(), Arg.Any<Func<IReadOnlyList<string>, string?>?>())
             .Returns(Task.FromResult<McpServerResource?>(Resource()));
 
     private void SetupInstances(params AgentInstancePermissionStatus[] statuses) =>
@@ -65,7 +65,7 @@ public class McpServerPermissionsSubcommandsTests
             because: "the blueprint selects which agent instances are checked, so without it there " +
                      "is no work to do and silently succeeding would hide the mistake");
         await _permissionService.DidNotReceive().ResolveServerResourceAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<Func<IReadOnlyList<string>, string?>?>());
     }
 
     [Fact]
@@ -98,7 +98,7 @@ public class McpServerPermissionsSubcommandsTests
         exitCode.Should().Be(1,
             because: "the blueprint ID is interpolated into a Graph OData filter, so a non-GUID must be rejected before any request is made");
         await _permissionService.DidNotReceive().ResolveServerResourceAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<Func<IReadOnlyList<string>, string?>?>());
     }
 
     [Fact]
@@ -131,7 +131,7 @@ public class McpServerPermissionsSubcommandsTests
             because: "an explicitly blank --tenant-id must not fall through to Azure CLI detection, " +
                      "which would grant tenant-wide access in whatever tenant az happens to be signed into");
         await _permissionService.DidNotReceive().ResolveServerResourceAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<Func<IReadOnlyList<string>, string?>?>());
     }
 
     [Fact]
@@ -145,7 +145,7 @@ public class McpServerPermissionsSubcommandsTests
             because: "the server name is interpolated into a Graph OData filter, so it must pass the " +
                      "same allowlist register-external-mcp-server applies rather than any non-blank string");
         await _permissionService.DidNotReceive().ResolveServerResourceAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<Func<IReadOnlyList<string>, string?>?>());
     }
 
     [Fact]
@@ -217,7 +217,7 @@ public class McpServerPermissionsSubcommandsTests
     [Fact]
     public async Task GrantAgentsAccess_UnresolvableServer_ExitsWithOne()
     {
-        _permissionService.ResolveServerResourceAsync(TenantId, ServerName, Arg.Any<CancellationToken>())
+        _permissionService.ResolveServerResourceAsync(TenantId, ServerName, Arg.Any<CancellationToken>(), Arg.Any<Func<IReadOnlyList<string>, string?>?>())
             .Returns(Task.FromResult<McpServerResource?>(null));
 
         var exitCode = await ListCommand().InvokeAsync(

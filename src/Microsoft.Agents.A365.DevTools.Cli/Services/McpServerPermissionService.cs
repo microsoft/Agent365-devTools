@@ -40,10 +40,16 @@ public class McpServerPermissionService
     /// which is the resourceId of the permission grant. Returns null when either the application
     /// or its service principal cannot be found.
     /// </summary>
+    /// <param name="selectAppId">
+    /// Invoked when more than one application shares the display name, to choose between them.
+    /// Returning null aborts. When not supplied, an ambiguous name is an error: display names are
+    /// not unique, so picking one unattended could grant against a different MCP server.
+    /// </param>
     public virtual async Task<McpServerResource?> ResolveServerResourceAsync(
         string tenantId,
         string serverName,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<IReadOnlyList<string>, string?>? selectAppId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
@@ -79,19 +85,31 @@ public class McpServerPermissionService
         }
 
         // Display names are not unique, so granting against an arbitrary match could hand the
-        // agent access to a different MCP server than the caller named. The lookup fetches one
-        // past its limit, so an overflow is reported as ambiguous rather than silently truncated.
+        // agent access to a different MCP server than the caller named. Every match is listed for
+        // the caller to choose from; with nobody to ask, this is an error rather than a guess.
+        string appId;
         if (appIds.Count > 1)
         {
-            var shown = appIds.Take(GraphApiService.ApplicationDisplayNameMatchLimit).ToList();
-            var suffix = appIds.Count > GraphApiService.ApplicationDisplayNameMatchLimit ? ", ..." : "";
-            _logger.LogError(
-                "Tenant {TenantId} has {Count} applications named '{DisplayName}' ({AppIds}{Suffix}). Rename or remove the duplicates so the MCP server resolves to one application.",
-                tenantId, appIds.Count, displayName, string.Join(", ", shown), suffix);
-            return null;
-        }
+            if (selectAppId is null)
+            {
+                _logger.LogError(
+                    "Tenant {TenantId} has {Count} applications named '{DisplayName}' ({AppIds}). Rename or remove the duplicates so the MCP server resolves to one application.",
+                    tenantId, appIds.Count, displayName, string.Join(", ", appIds));
+                return null;
+            }
 
-        var appId = appIds[0];
+            var chosen = selectAppId(appIds);
+            if (chosen is null)
+            {
+                return null;
+            }
+
+            appId = chosen;
+        }
+        else
+        {
+            appId = appIds[0];
+        }
 
         var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
             tenantId, appId, ct, AuthenticationConstants.RequiredPermissionGrantScopes, UseDeviceCodeAuthentication);

@@ -24,6 +24,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 ### Added
 - `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server, and prompts you to select which ones to grant it to (#500).
+- When more than one Entra application shares the MCP server's name, `a365 develop-mcp grant-agents-access` now lists them all and asks which one to use instead of failing (#500).
 - `a365 develop-mcp grant-agents-access --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere (#500).
 - `--device-code` option on `a365 develop-mcp grant-agents-access` — signs in with a device code instead of the browser or Windows sign-in dialog, for embedded and remote terminals (#500).
 - `--dry-run` option on `a365 develop-mcp grant-agents-access` — lists the agent instances that are missing the permission without granting it (#500).

@@ -98,7 +98,9 @@ public static class McpServerPermissionsSubcommands
                 return;
             }
 
-            var resource = await permissionService.ResolveServerResourceAsync(tenantId, serverName, ct);
+            var resource = await permissionService.ResolveServerResourceAsync(
+                tenantId, serverName, ct,
+                selectAppId: candidates => SelectServerApplication(candidates, serverName, logger, ct));
             if (resource is null)
             {
                 context.ExitCode = 1;
@@ -171,6 +173,48 @@ public static class McpServerPermissionsSubcommands
         });
 
         return command;
+    }
+
+    /// <summary>
+    /// Prompts for which application to use when several share the MCP server's display name.
+    /// Returns null when there is nobody to ask or the response is not a valid choice, so an
+    /// ambiguous name is never resolved by guessing.
+    /// </summary>
+    private static string? SelectServerApplication(
+        IReadOnlyList<string> candidates,
+        string serverName,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        logger.LogWarning("MCP server '{ServerName}' matches {Count} Entra applications:", serverName, candidates.Count);
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            logger.LogInformation("  [{Index}] {AppId}", i + 1, candidates[i]);
+        }
+        logger.LogInformation("");
+
+        if (ConsoleHelper.IsInputRedirected)
+        {
+            logger.LogError("Input is redirected, so the application cannot be selected interactively. Rename or remove the duplicates so '{ServerName}' resolves to one application.", serverName);
+            return null;
+        }
+
+        Console.Write($"Enter the number of the application to use (1-{candidates.Count}), or press Enter to cancel: ");
+        var response = ConsoleHelper.ReadLineCancellable(ct)?.Trim();
+
+        if (string.IsNullOrWhiteSpace(response))
+        {
+            logger.LogError("No application selected, so no permissions were granted.");
+            return null;
+        }
+
+        if (!int.TryParse(response, out var index) || index < 1 || index > candidates.Count)
+        {
+            logger.LogError("Invalid selection '{Response}'. Enter a number between 1 and {Max}.", response, candidates.Count);
+            return null;
+        }
+
+        return candidates[index - 1];
     }
 
     /// <summary>

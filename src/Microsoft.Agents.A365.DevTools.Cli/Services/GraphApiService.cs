@@ -55,12 +55,6 @@ public class GraphApiService
     public string? CustomClientAppId { get; set; }
 
     /// <summary>
-    /// Most matches <see cref="TryFindApplicationAppIdsByDisplayNameAsync"/> reports. Anything
-    /// beyond this is already ambiguous, so paging further would not change the caller's decision.
-    /// </summary>
-    public const int ApplicationDisplayNameMatchLimit = 10;
-
-    /// <summary>
     /// Override the Microsoft Graph base URL for sovereign / government cloud tenants.
     /// Defaults to <see cref="GraphApiConstants.BaseUrl"/> (commercial cloud).
     /// Set this after construction when the config is available (e.g. from Agent365Config.GraphBaseUrl).
@@ -953,8 +947,8 @@ public class GraphApiService
     public sealed record ApplicationDisplayNameSearchResult(IReadOnlyList<string>? AppIds, bool SignInFailed);
 
     /// <summary>
-    /// Finds applications whose display name matches exactly, up to
-    /// <see cref="ApplicationDisplayNameMatchLimit"/>. Display names are not unique in Entra, so
+    /// Finds every application whose display name matches exactly, following
+    /// <c>@odata.nextLink</c> so no match is omitted. Display names are not unique in Entra, so
     /// callers that act on the result must decide what an ambiguous match means rather than
     /// silently taking the first. A null <c>AppIds</c> means the read itself failed (no token,
     /// 403, or a transport error), so callers can tell "no such application" apart from "we could
@@ -969,38 +963,47 @@ public class GraphApiService
 
         // OData requires single quotes to be escaped by doubling them: ' → ''
         var escaped = displayName.Replace("'", "''", StringComparison.Ordinal);
-        // One past the limit so a truncated page is detectable: callers only need to distinguish
-        // none / exactly one / more than one, and any overflow is reported as ambiguous.
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl,
-            $"/v1.0/applications?$filter=displayName eq '{escaped}'&$select=appId&$top={ApplicationDisplayNameMatchLimit + 1}&$count=true");
+            $"/v1.0/applications?$filter=displayName eq '{escaped}'&$select=appId&$count=true");
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            // Copy auth header set by EnsureGraphHeadersAsync onto the shared _httpClient
-            if (_httpClient.DefaultRequestHeaders.Authorization is { } auth)
-                request.Headers.Authorization = auth;
-            // Required for advanced query filters (displayName eq)
-            request.Headers.TryAddWithoutValidation("ConsistencyLevel", "eventual");
+            var appIds = new List<string>();
+            string? next = url;
+            // Guards against a cycle if Graph ever echoes a nextLink back.
+            var visited = new HashSet<string>(StringComparer.Ordinal);
 
-            using var resp = await _httpClient.SendAsync(request, ct);
-            if (!resp.IsSuccessStatusCode)
+            while (next is not null && visited.Add(next))
             {
-                _logger.LogDebug("FindApplicationAppIdsByDisplayName {Name} failed {Code}", displayName, (int)resp.StatusCode);
-                return new ApplicationDisplayNameSearchResult(null, SignInFailed: false);
-            }
+                using var request = new HttpRequestMessage(HttpMethod.Get, next);
+                // Copy auth header set by EnsureGraphHeadersAsync onto the shared _httpClient
+                if (_httpClient.DefaultRequestHeaders.Authorization is { } auth)
+                    request.Headers.Authorization = auth;
+                // Required for advanced query filters (displayName eq)
+                request.Headers.TryAddWithoutValidation("ConsistencyLevel", "eventual");
 
-            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-            if (!doc.RootElement.TryGetProperty("value", out var value))
-                return new ApplicationDisplayNameSearchResult([], SignInFailed: false);
-
-            var appIds = new List<string>(value.GetArrayLength());
-            foreach (var app in value.EnumerateArray())
-            {
-                if (app.TryGetProperty("appId", out var appId) && appId.GetString() is { Length: > 0 } id)
+                using var resp = await _httpClient.SendAsync(request, ct);
+                if (!resp.IsSuccessStatusCode)
                 {
-                    appIds.Add(id);
+                    _logger.LogDebug("FindApplicationAppIdsByDisplayName {Name} failed {Code}", displayName, (int)resp.StatusCode);
+                    return new ApplicationDisplayNameSearchResult(null, SignInFailed: false);
                 }
+
+                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                if (!doc.RootElement.TryGetProperty("value", out var value))
+                    break;
+
+                foreach (var app in value.EnumerateArray())
+                {
+                    if (app.TryGetProperty("appId", out var appId) && appId.GetString() is { Length: > 0 } id)
+                    {
+                        appIds.Add(id);
+                    }
+                }
+
+                next = doc.RootElement.TryGetProperty("@odata.nextLink", out var link)
+                    ? link.GetString()
+                    : null;
             }
 
             return new ApplicationDisplayNameSearchResult(appIds, SignInFailed: false);
