@@ -186,7 +186,14 @@ public class GraphApiService
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var clientId = GetEffectiveGraphClientId(useDeviceCode);
             var loginHint = await _loginHintResolver(clientId);
-            var token = await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, clientId: clientId, useInteractiveBrowser: !useDeviceCode, userId: loginHint, ct: ct);
+
+            // AuthenticationService builds a fresh DeviceCodeCredential per call with no
+            // AuthenticationRecord, so it re-prompts for a device code on every acquisition. The
+            // token provider attempts a silent cache read first, so route device code through it.
+            var token = useDeviceCode && _tokenProvider != null
+                ? await _tokenProvider.GetMgGraphAccessTokenAsync(
+                    tenantId, [AuthenticationConstants.UserReadScope], true, null, ct, loginHint, forceRefresh)
+                : await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, clientId: clientId, useInteractiveBrowser: !useDeviceCode, userId: loginHint, ct: ct);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");

@@ -918,6 +918,58 @@ public class GraphApiServiceTests
     }
 
     [Fact]
+    public async Task GetGraphAccessTokenAsync_WithDeviceCodeAndTokenProvider_RoutesThroughTheProviderSoTheCacheIsReadFirst()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var auth = Substitute.For<IAuthenticationService>();
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+        tokenProvider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+                Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>())
+            .Returns(Task.FromResult<string?>("fake-token"));
+
+        var service = new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            auth, handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
+
+        var token = await service.GetGraphAccessTokenAsync("tenant-123", useDeviceCode: true);
+
+        token.Should().Be("fake-token");
+        await tokenProvider.Received(1).GetMgGraphAccessTokenAsync(
+            "tenant-123", Arg.Any<IEnumerable<string>>(), true, null,
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>());
+        await auth.DidNotReceiveWithAnyArgs().GetAccessTokenAsync(
+            default!, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_WithoutDeviceCode_StillUsesTheAuthenticationServiceEvenWhenAProviderExists()
+    {
+        // Every pre-existing caller uses the default useDeviceCode: false. This pins that the
+        // device-code routing cannot divert them onto the token-provider path.
+        using var handler = new TestHttpMessageHandler();
+        var auth = Substitute.For<IAuthenticationService>();
+        auth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult("fake-token"));
+        var tokenProvider = Substitute.For<IMicrosoftGraphTokenProvider>();
+
+        var service = new GraphApiService(
+            Substitute.For<ILogger<GraphApiService>>(),
+            Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>()),
+            auth, handler, tokenProvider, loginHintResolver: () => Task.FromResult<string?>(null));
+
+        await service.GetGraphAccessTokenAsync("tenant-123");
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), null,
+            Arg.Any<IEnumerable<string>?>(), true, Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        await tokenProvider.DidNotReceiveWithAnyArgs().GetMgGraphAccessTokenAsync(
+            default!, default!, default, default, default, default, default);
+    }
+
+    [Fact]
     public async Task GetGraphAccessTokenAsync_WithDeviceCode_UsesTheGraphCommandLineToolsClient()
     {
         // The Azure PowerShell client is not preauthorized for Graph delegated scopes, so requesting
