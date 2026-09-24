@@ -8,9 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade Notes
 
-#### Existing agents: grant Observability API permissions
+#### Agents exporting through the delegated (OBO) route: grant Observability API permissions
 
-Agents provisioned before this release need `Agent365.Observability.OtelWrite` granted as both a **delegated** and an **application** permission on the blueprint app. Requires Global Administrator.
+Agents that export telemetry through the delegated (OBO) route need `Agent365.Observability.OtelWrite` granted as both a **delegated** and an **application** permission on the blueprint app. Requires Global Administrator.
 
 **Option A — Entra portal** (no config files required):
 
@@ -22,7 +22,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
-Blueprint agents that export telemetry through the app-only S2S endpoint no longer need these permissions; grant them with Option A only for agents that still export through the delegated (OBO) route (#501).
+Blueprint agents that export telemetry through the app-only S2S endpoint don't need these permissions, and `a365 setup all` no longer requests them for blueprint agents (#501).
 
 ### Added
 - Setup and bootstrap now use Microsoft's first-party Agent 365 CLI application when it is present in your tenant, validating it without changing Microsoft's app registration, and fall back to a tenant-owned "Agent 365 CLI" app when it is not (#489).
