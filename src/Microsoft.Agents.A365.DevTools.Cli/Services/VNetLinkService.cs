@@ -119,12 +119,31 @@ public class VNetLinkService : IVNetLinkService
 
         // Wall clock, not summed sleeps: each status call costs real time, and a caller who asked
         // for five minutes should not wait eight because the service was slow.
+        //
+        // The stopwatch alone only bounds the gap between completed polls. A poll that starts just
+        // inside the ceiling can still run to the HttpClient's own timeout, overshooting by minutes,
+        // so the ceiling is also armed on the token every request is made with.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+
         var stopwatch = Stopwatch.StartNew();
         VNetStatusResponse? last = null;
 
         while (true)
         {
-            last = await GetStatusAsync(tenantId, operationId, cancellationToken);
+            try
+            {
+                last = await GetStatusAsync(tenantId, operationId, timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The ceiling elapsed mid-request. That is a timeout, not a failure: report the
+                // last known state, exactly as the pre-sleep check below does.
+                _logger.LogInformation(
+                    "Stopped waiting after {Elapsed:0}s. The operation is still running.",
+                    stopwatch.Elapsed.TotalSeconds);
+                return last;
+            }
 
             if (last == null || !IsRunning(last.Status))
                 return last;
@@ -133,6 +152,8 @@ public class VNetLinkService : IVNetLinkService
                 return last;
 
             _logger.LogInformation("Still running... ({Elapsed:0}s elapsed)", stopwatch.Elapsed.TotalSeconds);
+            // The pre-sleep check above guarantees this delay finishes inside the ceiling, so it
+            // waits on the caller's token only -- the timeout can't fire here.
             await Task.Delay(PollInterval, cancellationToken);
         }
     }

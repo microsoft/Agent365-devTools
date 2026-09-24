@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
@@ -31,8 +32,12 @@ public class VNetLinkServiceTests
     private static IAuthenticationService FakeAuth(string token = "fake-a365-token")
     {
         var mock = Substitute.For<IAuthenticationService>();
+
+        // The 8th parameter is the CancellationToken. Omitting a matcher for it pins the setup to
+        // ct == default, so any call carrying a real token -- a caller's, or the wait ceiling's --
+        // silently misses and returns null, which the service reports as a failed token acquisition.
         mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(token));
         return mock;
     }
@@ -414,6 +419,59 @@ public class VNetLinkServiceTests
         var act = async () => await svc.WaitForCompletionAsync(TenantId, operationId!, TimeSpan.FromMinutes(5));
 
         await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task WaitForCompletionAsync_WhenCeilingElapsesDuringAPoll_StopsWaitingOnTheInFlightCall()
+    {
+        // The pre-sleep stopwatch check only bounds the gap between completed polls. Without the
+        // ceiling armed on the request's own token, a poll that starts inside the budget runs to
+        // the HttpClient's timeout -- minutes past what the caller asked for.
+        using var handler = new SlowHttpMessageHandler(
+            TimeSpan.FromSeconds(30),
+            () => StatusResponse(HttpStatusCode.OK, "Running", OperationId));
+        var svc = CreateService(handler);
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.FromMilliseconds(200));
+        stopwatch.Stop();
+
+        result.Should().BeNull(because: "the ceiling elapsed before any status was read");
+        stopwatch.Elapsed.Should().BeLessThan(
+            TimeSpan.FromSeconds(10),
+            because: "the wait must abandon the in-flight request rather than block on it");
+    }
+
+    [Fact]
+    public async Task WaitForCompletionAsync_WhenCallerCancels_PropagatesRatherThanReportingATimeout()
+    {
+        // The timeout and a Ctrl+C both surface as OperationCanceledException. Only the timeout is
+        // swallowed into "still running"; a caller cancel has to reach the caller.
+        using var handler = new SlowHttpMessageHandler(
+            TimeSpan.FromSeconds(30),
+            () => StatusResponse(HttpStatusCode.OK, "Running", OperationId));
+        var svc = CreateService(handler);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        var act = async () => await svc.WaitForCompletionAsync(
+            TenantId, OperationId, TimeSpan.FromMinutes(5), cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Holds each request open for <paramref name="delay"/> unless the request's own token is
+    /// cancelled first, so a test can tell "abandoned the call" from "waited for the response".
+    /// </summary>
+    private sealed class SlowHttpMessageHandler(TimeSpan delay, Func<HttpResponseMessage> responseFactory)
+        : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(delay, cancellationToken);
+            return responseFactory();
+        }
     }
 
     // ────────────────────────── Token acquisition ──────────────────────────────
