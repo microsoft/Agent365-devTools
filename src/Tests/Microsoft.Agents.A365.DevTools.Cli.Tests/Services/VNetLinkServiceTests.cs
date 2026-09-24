@@ -459,6 +459,47 @@ public class VNetLinkServiceTests
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
+    [Fact]
+    public async Task GetStatusAsync_WhenTheTransportTimesOutWithNoCancellation_ReturnsNullRatherThanThrowing()
+    {
+        // HttpClient's own timeout surfaces as an OperationCanceledException with no token
+        // cancelled. That is an ordinary request failure, and callers of a bare link, unlink or
+        // status expect the documented null, not an exception thrown at them.
+        using var handler = new CancelThrowingHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var result = await svc.GetStatusAsync(TenantId);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_WhenTheCallerCancels_PropagatesRatherThanReturningNull()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        using var handler = new CancelThrowingHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var act = async () => await svc.GetStatusAsync(TenantId, operationId: null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Fails every request the way HttpClient's own timeout does — an OperationCanceledException
+    /// with no token cancelled — so a test can pin how the service classifies it.
+    /// </summary>
+    private sealed class CancelThrowingHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new TaskCanceledException("The request timed out.");
+        }
+    }
+
     /// <summary>
     /// Holds each request open for <paramref name="delay"/> unless the request's own token is
     /// cancelled first, so a test can tell "abandoned the call" from "waited for the response".

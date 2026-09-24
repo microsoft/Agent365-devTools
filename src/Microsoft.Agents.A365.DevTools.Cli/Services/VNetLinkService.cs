@@ -225,7 +225,11 @@ public class VNetLinkService : IVNetLinkService
                 ? new VNetStatusResponse()
                 : JsonSerializer.Deserialize<VNetStatusResponse>(body);
         }
-        catch (OperationCanceledException)
+        // Cancellation is the caller's business, or the wait ceiling firing on a linked token.
+        // HttpClient's own timeout also surfaces as OperationCanceledException with no token
+        // cancelled, and that is an ordinary request failure — it belongs in the catch below so it
+        // is logged and reported, not thrown at whoever called link, unlink or status.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
