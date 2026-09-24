@@ -87,6 +87,12 @@ public class AddMcpServerRequest
     /// </summary>
     [JsonPropertyName("force")]
     public bool Force { get; set; }
+
+    /// <summary>
+    /// Connectivity of the remote MCP server: "public" or "private". Null means private.
+    /// </summary>
+    [JsonPropertyName("connectivity")]
+    public string? Connectivity { get; set; }
 }
 
 /// <summary>

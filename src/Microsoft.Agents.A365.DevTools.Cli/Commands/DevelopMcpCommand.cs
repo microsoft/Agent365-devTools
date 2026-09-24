@@ -595,6 +595,9 @@ public static class DevelopMcpCommand
         var descriptionOption = new Option<string?>("--description", description: "Server description (required, used in MOS package metadata)");
         command.AddOption(descriptionOption);
 
+        var connectivityOption = new Option<string?>("--connectivity", description: "Whether the remote MCP server is reachable publicly or only inside the environment's VNet: 'public' or 'private'. Defaults to 'private', which keeps environment-level VNet injection on the connector. 'public' asks Power Platform to bypass that injection; the bypass applies only to environments enabled for it, so verify connectivity afterwards.");
+        command.AddOption(connectivityOption);
+
         var dryRunOption = new Option<bool>("--dry-run", description: "Show what would be done without executing");
         command.AddOption(dryRunOption);
 
@@ -622,6 +625,7 @@ public static class DevelopMcpCommand
                 SecretLifetimeMonths: context.ParseResult.GetValueForOption(secretLifetimeMonthsOption),
                 PublisherName: context.ParseResult.GetValueForOption(publisherOption),
                 Description: context.ParseResult.GetValueForOption(descriptionOption),
+                Connectivity: context.ParseResult.GetValueForOption(connectivityOption),
                 DryRun: context.ParseResult.GetValueForOption(dryRunOption));
 
             var executor = new RegisterCommandExecutor(logger, toolingService, graphApiService);
