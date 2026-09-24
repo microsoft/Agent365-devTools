@@ -185,6 +185,11 @@ class Program
             var logsLogger = serviceProvider.GetRequiredService<ILogger<LogsCommand>>();
             var logRedactionService = serviceProvider.GetRequiredService<ILogRedactionService>();
             rootCommand.AddCommand(LogsCommand.CreateCommand(logsLogger, logRedactionService));
+            var networkLogger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("network");
+            var azureCliService = serviceProvider.GetRequiredService<IAzureCliService>();
+            var gsaService = serviceProvider.GetRequiredService<IGsaService>();
+            rootCommand.AddCommand(NetworkCommand.CreateCommand(
+                networkLogger, azureCliService, gsaService, confirmationProvider));
 
             // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
             // and UseParseErrorReporting() (full help dump on any parse error), replacing both
@@ -376,6 +381,13 @@ class Program
 
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<ArmApiService>();
+
+        // Reuses the environment the tooling service already resolved (env var, then config file),
+        // so the two never disagree about which Agent 365 deployment the CLI is talking to.
+        services.AddSingleton<IGsaService>(provider => new GsaService(
+            provider.GetRequiredService<ILogger<GsaService>>(),
+            provider.GetRequiredService<IAuthenticationService>(),
+            provider.GetRequiredService<IAgent365ToolingService>().Environment));
         services.AddSingleton<AgentBlueprintService>();
         services.AddSingleton<BlueprintLookupService>();
         services.AddSingleton<FederatedCredentialService>();
