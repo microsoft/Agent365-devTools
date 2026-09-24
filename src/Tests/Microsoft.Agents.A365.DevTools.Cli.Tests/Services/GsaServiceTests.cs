@@ -488,6 +488,35 @@ public class GsaServiceTests
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
+    [Fact]
+    public async Task GetStatusAsync_CalledTwice_DoesNotDisposeTheInjectedHandlerOnTheFirstCall()
+    {
+        // A client is built per request, but the handler is a field and outlives all of them.
+        // HttpClient's default ownership would have the first client's disposal take the handler
+        // down with it, so every later request -- including every poll after the first in
+        // WaitForStatusAsync -- would fail with ObjectDisposedException.
+        using var handler = new DisposalAwareHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Disabled"));
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Enabled"));
+        var svc = CreateService(handler);
+
+        var first = await svc.GetStatusAsync(Account());
+        var second = await svc.GetStatusAsync(Account());
+
+        first.Should().NotBeNull();
+        first!.Status.Should().Be("Disabled");
+        first.Pending.Should().BeFalse();
+        first.Reason.Should().BeNull();
+
+        second.Should().NotBeNull();
+        second!.Status.Should().Be("Enabled");
+        second.Pending.Should().BeFalse();
+        second.Reason.Should().BeNull();
+
+        handler.DisposeCount.Should().Be(0);
+        handler.RequestCount.Should().Be(2);
+    }
+
     /// <summary>
     /// Fails every request with a supplied exception, so a test can pin how the service classifies
     /// it without racing a real timeout.
@@ -516,6 +545,36 @@ public class GsaServiceTests
             {
                 Content = new StringContent(JsonSerializer.Serialize(new { status = "Enabled", pending = false })),
             };
+        }
+    }
+
+    /// <summary>
+    /// Mimics a real handler's reaction to being disposed: it counts disposals and refuses to
+    /// serve afterwards, so a test can prove the service never disposes a handler it does not own.
+    /// A handler that ignores Dispose would let the defect pass unnoticed.
+    /// </summary>
+    private sealed class DisposalAwareHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Queue<HttpResponseMessage> _responses = new();
+
+        public int DisposeCount { get; private set; }
+
+        public int RequestCount { get; private set; }
+
+        public void QueueResponse(HttpResponseMessage response) => _responses.Enqueue(response);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            ObjectDisposedException.ThrowIf(DisposeCount > 0, this);
+            RequestCount++;
+            return Task.FromResult(_responses.Dequeue());
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            DisposeCount++;
+            base.Dispose(disposing);
         }
     }
 }
