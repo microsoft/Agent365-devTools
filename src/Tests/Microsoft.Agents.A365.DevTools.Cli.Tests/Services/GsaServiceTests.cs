@@ -33,24 +33,19 @@ public class GsaServiceTests
         return mock;
     }
 
-    private static IAzureCliService FakeAzureCli(
+    private static AzureAccountInfo Account(
         string tenantId = "11111111-1111-1111-1111-111111111111",
-        string upn = "admin@contoso.onmicrosoft.com")
-    {
-        var mock = Substitute.For<IAzureCliService>();
-        mock.GetCurrentAccountAsync().Returns(Task.FromResult<AzureAccountInfo?>(new AzureAccountInfo
+        string upn = "admin@contoso.onmicrosoft.com") =>
+        new()
         {
             TenantId = tenantId,
             User = new AzureUser { Name = upn },
-        }));
-        return mock;
-    }
+        };
 
     private static GsaService CreateService(
         HttpMessageHandler handler,
-        IAuthenticationService? auth = null,
-        IAzureCliService? azureCli = null) =>
-        new(NullLogger<GsaService>.Instance, auth ?? FakeAuth(), azureCli ?? FakeAzureCli(), "prod", handler);
+        IAuthenticationService? auth = null) =>
+        new(NullLogger<GsaService>.Instance, auth ?? FakeAuth(), "prod", handler);
 
     private static HttpResponseMessage StatusResponse(
         HttpStatusCode code,
@@ -79,7 +74,7 @@ public class GsaServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, enabled ? "Enabled" : "Disabled"));
         var svc = CreateService(handler);
 
-        var result = await svc.SetAsync(enabled);
+        var result = await svc.SetAsync(Account(), enabled);
 
         result.Should().NotBeNull();
         result!.Status.Should().Be(enabled ? "Enabled" : "Disabled");
@@ -103,7 +98,7 @@ public class GsaServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Enabled"));
         var svc = CreateService(handler);
 
-        await svc.SetAsync(enabled: true);
+        await svc.SetAsync(Account(), enabled: true);
 
         body.Should().BeEmpty();
         uri!.Query.Should().BeEmpty();
@@ -116,7 +111,7 @@ public class GsaServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.Accepted, "Disabled", pending: true));
         var svc = CreateService(handler);
 
-        var result = await svc.SetAsync(enabled: true);
+        var result = await svc.SetAsync(Account(), enabled: true);
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("Disabled");
@@ -137,7 +132,7 @@ public class GsaServiceTests
         });
         var svc = CreateService(handler);
 
-        var result = await svc.SetAsync(enabled: true);
+        var result = await svc.SetAsync(Account(), enabled: true);
 
         result.Should().BeNull();
         handler.RequestCount.Should().Be(1, because: "a governed setting cannot be fixed by retrying");
@@ -156,7 +151,7 @@ public class GsaServiceTests
         });
         var svc = CreateService(handler);
 
-        var result = await svc.SetAsync(enabled: false);
+        var result = await svc.SetAsync(Account(), enabled: false);
 
         result.Should().BeNull();
     }
@@ -171,7 +166,7 @@ public class GsaServiceTests
         });
         var svc = CreateService(handler);
 
-        var result = await svc.SetAsync(enabled: true);
+        var result = await svc.SetAsync(Account(), enabled: true);
 
         result.Should().BeNull();
     }
@@ -182,7 +177,7 @@ public class GsaServiceTests
         using var handler = new TestHttpMessageHandler();
         var svc = CreateService(handler, FakeAuth(token: string.Empty));
 
-        var result = await svc.SetAsync(enabled: true);
+        var result = await svc.SetAsync(Account(), enabled: true);
 
         result.Should().BeNull();
         handler.RequestCount.Should().Be(0);
@@ -195,7 +190,7 @@ public class GsaServiceTests
             () => new HttpRequestException("connection reset"));
         var svc = CreateService(handler);
 
-        var result = await svc.SetAsync(enabled: true);
+        var result = await svc.SetAsync(Account(), enabled: true);
 
         result.Should().BeNull();
     }
@@ -215,9 +210,9 @@ public class GsaServiceTests
         var auth = FakeAuth();
         using var handler = new TestHttpMessageHandler();
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Enabled"));
-        var svc = CreateService(handler, auth, FakeAzureCli(tenantId, upn));
+        var svc = CreateService(handler, auth);
 
-        await svc.SetAsync(enabled: true);
+        await svc.SetAsync(Account(tenantId, upn), enabled: true);
 
         await auth.Received(1).GetAccessTokenAsync(
             Arg.Any<string>(),
@@ -238,9 +233,9 @@ public class GsaServiceTests
         var auth = FakeAuth();
         using var handler = new TestHttpMessageHandler();
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Disabled"));
-        var svc = CreateService(handler, auth, FakeAzureCli(tenantId, upn));
+        var svc = CreateService(handler, auth);
 
-        await svc.GetStatusAsync();
+        await svc.GetStatusAsync(Account(tenantId, upn));
 
         await auth.Received(1).GetAccessTokenAsync(
             Arg.Any<string>(),
@@ -251,42 +246,6 @@ public class GsaServiceTests
             Arg.Any<bool>(),
             upn,
             Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task SetAsync_WhenAzLoginIsUnavailable_ReturnsNullWithoutCallingThePlatform()
-    {
-        var azureCli = Substitute.For<IAzureCliService>();
-        azureCli.GetCurrentAccountAsync().Returns(Task.FromResult<AzureAccountInfo?>(null));
-        using var handler = new TestHttpMessageHandler();
-        var svc = CreateService(handler, azureCli: azureCli);
-
-        var result = await svc.SetAsync(enabled: true);
-
-        result.Should().BeNull();
-        handler.RequestCount.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task SetAsync_WhenTheAzAccountCarriesNoTenant_ReturnsNullWithoutCallingThePlatform()
-    {
-        using var handler = new TestHttpMessageHandler();
-        var svc = CreateService(handler, azureCli: FakeAzureCli(tenantId: string.Empty));
-
-        var result = await svc.SetAsync(enabled: true);
-
-        result.Should().BeNull();
-        handler.RequestCount.Should().Be(0);
-    }
-
-    [Fact]
-    public void Constructor_WithoutAnAzureCliService_Throws()
-    {
-        using var handler = new TestHttpMessageHandler();
-
-        var act = () => new GsaService(NullLogger<GsaService>.Instance, FakeAuth(), null!, "prod", handler);
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("azureCliService");
     }
 
     // ──────────────────────────────── GetStatusAsync ────────────────────────────
@@ -304,7 +263,7 @@ public class GsaServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "NotConfigured"));
         var svc = CreateService(handler);
 
-        var result = await svc.GetStatusAsync();
+        var result = await svc.GetStatusAsync(Account());
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("NotConfigured");
@@ -325,7 +284,7 @@ public class GsaServiceTests
         });
         var svc = CreateService(handler);
 
-        var result = await svc.GetStatusAsync();
+        var result = await svc.GetStatusAsync(Account());
 
         result.Should().NotBeNull();
         result!.Status.Should().BeNull();
@@ -341,7 +300,7 @@ public class GsaServiceTests
             HttpStatusCode.OK, "NotConfigured", reason: "This tenant has no Agent 365 environment yet."));
         var svc = CreateService(handler);
 
-        var result = await svc.GetStatusAsync();
+        var result = await svc.GetStatusAsync(Account());
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("NotConfigured");
@@ -357,7 +316,7 @@ public class GsaServiceTests
         using var handler = new TestHttpMessageHandler();
         var svc = CreateService(handler);
 
-        var act = () => svc.WaitForStatusAsync(" ", TimeSpan.FromMinutes(1));
+        var act = () => svc.WaitForStatusAsync(Account(), " ", TimeSpan.FromMinutes(1));
 
         await act.Should().ThrowAsync<ArgumentException>();
     }
@@ -369,7 +328,7 @@ public class GsaServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Enabled"));
         var svc = CreateService(handler);
 
-        var result = await svc.WaitForStatusAsync("Enabled", TimeSpan.FromMinutes(1));
+        var result = await svc.WaitForStatusAsync(Account(), "Enabled", TimeSpan.FromMinutes(1));
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("Enabled");
@@ -385,7 +344,7 @@ public class GsaServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "enabled"));
         var svc = CreateService(handler);
 
-        var result = await svc.WaitForStatusAsync("Enabled", TimeSpan.FromMinutes(1));
+        var result = await svc.WaitForStatusAsync(Account(), "Enabled", TimeSpan.FromMinutes(1));
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("enabled");
@@ -404,7 +363,7 @@ public class GsaServiceTests
         });
         var svc = CreateService(handler);
 
-        var result = await svc.WaitForStatusAsync("Enabled", TimeSpan.FromMinutes(1));
+        var result = await svc.WaitForStatusAsync(Account(), "Enabled", TimeSpan.FromMinutes(1));
 
         result.Should().BeNull();
         handler.RequestCount.Should().Be(1);
@@ -418,7 +377,7 @@ public class GsaServiceTests
         var svc = CreateService(handler);
 
         // Shorter than the poll interval, so the first non-matching read is also the last.
-        var result = await svc.WaitForStatusAsync("Enabled", TimeSpan.FromSeconds(1));
+        var result = await svc.WaitForStatusAsync(Account(), "Enabled", TimeSpan.FromSeconds(1));
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("Disabled");
@@ -437,7 +396,7 @@ public class GsaServiceTests
         var svc = CreateService(handler);
 
         var stopwatch = Stopwatch.StartNew();
-        var result = await svc.WaitForStatusAsync("Enabled", TimeSpan.FromMilliseconds(200));
+        var result = await svc.WaitForStatusAsync(Account(), "Enabled", TimeSpan.FromMilliseconds(200));
         stopwatch.Stop();
 
         result.Should().BeNull(because: "the ceiling elapsed before any status was read");
@@ -455,56 +414,92 @@ public class GsaServiceTests
         var svc = CreateService(handler);
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
-        var act = async () => await svc.WaitForStatusAsync("Enabled", TimeSpan.FromMinutes(5), cts.Token);
+        var act = async () => await svc.WaitForStatusAsync(Account(), "Enabled", TimeSpan.FromMinutes(5), cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
-    // ───────────────────── az account resolution ────────────────────────────────
+    // ───────────────── The account is supplied, never read from the CLI ─────────
+    //
+    // az account show reflects mutable local state. Resolving it once for the confirmation prompt
+    // and again here would let the command confirm one tenant and change another, so the caller
+    // resolves it once and every method is told which account to act as.
 
     [Fact]
-    public async Task WaitForStatusAsync_ResolvesTheAzAccountOnceAcrossEveryPoll()
+    public async Task SetAsync_WithoutAnAccount_Throws()
     {
-        // Each resolution shells out to `az account show` and returns null on any CLI hiccup, so
-        // re-resolving per poll turns a transient failure mid-wait into "could not determine your
-        // Azure tenant" even though the tenant was known from the first call.
         using var handler = new TestHttpMessageHandler();
-        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Disabled", pending: true));
-        var azureCli = FakeAzureCli();
-        var svc = CreateService(handler, azureCli: azureCli);
+        var svc = CreateService(handler);
 
-        await svc.GetStatusAsync();
-        await svc.WaitForStatusAsync("Enabled", TimeSpan.FromSeconds(1));
+        var act = async () => await svc.SetAsync(null!, enabled: true);
 
-        await azureCli.Received(1).GetCurrentAccountAsync();
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("account");
+        handler.RequestCount.Should().Be(0);
     }
 
     [Fact]
-    public async Task GetStatusAsync_WhenTheAccountIsUnavailable_RetriesOnTheNextCall()
+    public async Task GetStatusAsync_WithoutAnAccount_Throws()
     {
-        // The cache must not pin a failure: an admin who runs `az login` after the first attempt
-        // should not have to restart the process.
         using var handler = new TestHttpMessageHandler();
-        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Enabled"));
-        var azureCli = Substitute.For<IAzureCliService>();
-        azureCli.GetCurrentAccountAsync().Returns(
-            Task.FromResult<AzureAccountInfo?>(null),
-            Task.FromResult<AzureAccountInfo?>(new AzureAccountInfo
-            {
-                TenantId = "11111111-1111-1111-1111-111111111111",
-                User = new AzureUser { Name = "admin@contoso.onmicrosoft.com" },
-            }));
-        var svc = CreateService(handler, azureCli: azureCli);
+        var svc = CreateService(handler);
 
-        var first = await svc.GetStatusAsync();
-        var second = await svc.GetStatusAsync();
+        var act = async () => await svc.GetStatusAsync(null!);
 
-        first.Should().BeNull(because: "no az account means no tenant to authenticate against");
-        second.Should().NotBeNull();
-        second!.Status.Should().Be("Enabled");
-        second.Pending.Should().BeFalse();
-        second.Reason.Should().BeNull();
-        await azureCli.Received(2).GetCurrentAccountAsync();
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("account");
+        handler.RequestCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task WaitForStatusAsync_WithoutAnAccount_Throws()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var act = async () => await svc.WaitForStatusAsync(null!, "Enabled", TimeSpan.FromMinutes(1));
+
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("account");
+        handler.RequestCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_WhenTheTransportTimesOutWithNoCancellation_ReturnsNullRatherThanThrowing()
+    {
+        // HttpClient's own timeout surfaces as an OperationCanceledException with no token
+        // cancelled. That is an ordinary request failure, and callers of a bare status, enable or
+        // disable expect the documented null, not an exception thrown at them.
+        using var handler = new ThrowingHttpMessageHandler(new TaskCanceledException("The request timed out."));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetStatusAsync(Account());
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_WhenTheCallerCancels_PropagatesRatherThanReturningNull()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        using var handler = new ThrowingHttpMessageHandler(new TaskCanceledException("Cancelled."));
+        var svc = CreateService(handler);
+
+        var act = async () => await svc.GetStatusAsync(Account(), cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Fails every request with a supplied exception, so a test can pin how the service classifies
+    /// it without racing a real timeout.
+    /// </summary>
+    private sealed class ThrowingHttpMessageHandler(Exception exception) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw exception;
+        }
     }
 
     /// <summary>

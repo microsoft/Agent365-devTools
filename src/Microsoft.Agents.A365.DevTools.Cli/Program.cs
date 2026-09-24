@@ -387,7 +387,6 @@ class Program
         services.AddSingleton<IGsaService>(provider => new GsaService(
             provider.GetRequiredService<ILogger<GsaService>>(),
             provider.GetRequiredService<IAuthenticationService>(),
-            provider.GetRequiredService<IAzureCliService>(),
             provider.GetRequiredService<IAgent365ToolingService>().Environment));
         services.AddSingleton<AgentBlueprintService>();
         services.AddSingleton<BlueprintLookupService>();

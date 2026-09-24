@@ -31,36 +31,29 @@ public class GsaService : IGsaService
 
     private readonly ILogger<GsaService> _logger;
     private readonly IAuthenticationService _authService;
-    private readonly IAzureCliService _azureCliService;
     private readonly string _environment;
     private readonly HttpMessageHandler? _handler;
-
-    /// <summary>
-    /// The az account, resolved once and reused. <see cref="WaitForStatusAsync"/> re-enters
-    /// <see cref="SendAsync"/> for every poll, and each resolution shells out to
-    /// <c>az account show</c>, which returns null on any CLI hiccup -- so without this a
-    /// transient failure part-way through a wait aborts the wait with "could not determine
-    /// your Azure tenant" even though the tenant was known all along.
-    /// </summary>
-    private AzureAccountInfo? _account;
 
     public GsaService(
         ILogger<GsaService> logger,
         IAuthenticationService authService,
-        IAzureCliService azureCliService,
         string environment = "prod",
         HttpMessageHandler? handler = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
-        _azureCliService = azureCliService ?? throw new ArgumentNullException(nameof(azureCliService));
         _environment = environment ?? "prod";
         _handler = handler;
     }
 
     /// <inheritdoc />
-    public async Task<GsaStatusResponse?> SetAsync(bool enabled, CancellationToken cancellationToken = default)
+    public async Task<GsaStatusResponse?> SetAsync(
+        AzureAccountInfo account,
+        bool enabled,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(account);
+
         var path = enabled ? EnablePath : DisablePath;
         var operationName = enabled ? "enable Global Secure Access" : "disable Global Secure Access";
 
@@ -68,19 +61,29 @@ public class GsaService : IGsaService
             "{Action} Global Secure Access on your Agent 365 environment...",
             enabled ? "Enabling" : "Disabling");
 
-        return await SendAsync(HttpMethod.Post, path, operationName, cancellationToken);
+        return await SendAsync(account, HttpMethod.Post, path, operationName, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<GsaStatusResponse?> GetStatusAsync(CancellationToken cancellationToken = default) =>
-        await SendAsync(HttpMethod.Get, StatusPath, "read Global Secure Access status", cancellationToken);
+    public async Task<GsaStatusResponse?> GetStatusAsync(
+        AzureAccountInfo account,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+
+        return await SendAsync(
+            account, HttpMethod.Get, StatusPath, "read Global Secure Access status", cancellationToken);
+    }
 
     /// <inheritdoc />
     public async Task<GsaStatusResponse?> WaitForStatusAsync(
+        AzureAccountInfo account,
         string expectedStatus,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(account);
+
         if (string.IsNullOrWhiteSpace(expectedStatus))
             throw new ArgumentException("Expected status is required.", nameof(expectedStatus));
 
@@ -100,7 +103,7 @@ public class GsaService : IGsaService
         {
             try
             {
-                last = await GetStatusAsync(timeoutCts.Token);
+                last = await GetStatusAsync(account, timeoutCts.Token);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -127,6 +130,7 @@ public class GsaService : IGsaService
     }
 
     private async Task<GsaStatusResponse?> SendAsync(
+        AzureAccountInfo account,
         HttpMethod method,
         string path,
         string operationName,
@@ -140,18 +144,11 @@ public class GsaService : IGsaService
         {
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
 
-            // Authenticate against the tenant of the current az login, not whichever account the
-            // Windows broker happens to prefer. Without an explicit tenant the authority is
-            // "common", and WAM silently returns the Windows account even when a login hint names
-            // a different one — so a tenant-wide setting would be changed on the wrong tenant.
-            // Passing the tenant also arms the mismatch self-heal in AuthenticationService.
-            var account = _account ??= await _azureCliService.GetCurrentAccountAsync();
-            if (account is null || string.IsNullOrWhiteSpace(account.TenantId))
-            {
-                _logger.LogError("Could not determine your Azure tenant. Run 'az login' and try again.");
-                return null;
-            }
-
+            // Authenticate against the tenant of the az login the caller resolved, not whichever
+            // account the Windows broker happens to prefer. Without an explicit tenant the
+            // authority is "common", and WAM silently returns the Windows account even when a login
+            // hint names a different one — so a tenant-wide setting would be changed on the wrong
+            // tenant. Passing the tenant also arms the mismatch self-heal in AuthenticationService.
             var authToken = await _authService.GetAccessTokenAsync(
                 audience, account.TenantId, userId: account.User.Name, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
@@ -191,7 +188,11 @@ public class GsaService : IGsaService
                 ? new GsaStatusResponse()
                 : JsonSerializer.Deserialize<GsaStatusResponse>(body);
         }
-        catch (OperationCanceledException)
+        // Cancellation is the caller's business, or the wait ceiling firing on a linked token.
+        // HttpClient's own timeout also surfaces as OperationCanceledException with no token
+        // cancelled, and that is an ordinary request failure — it belongs in the catch below so it
+        // is logged and reported, not thrown at whoever called enable, disable or status.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }

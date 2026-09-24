@@ -41,47 +41,33 @@ public static class NetworkCommand
             logger, gsaService, azureCliService, confirmationProvider, enabled: true));
         gsaCommand.AddCommand(CreateGsaSetSubcommand(
             logger, gsaService, azureCliService, confirmationProvider, enabled: false));
-        gsaCommand.AddCommand(CreateGsaStatusSubcommand(logger, gsaService));
+        gsaCommand.AddCommand(CreateGsaStatusSubcommand(logger, gsaService, azureCliService));
 
         networkCommand.AddCommand(gsaCommand);
         return networkCommand;
     }
 
     /// <summary>
-    /// Resolves the tenant to authenticate against, or logs why it could not and returns null.
+    /// Resolves the Azure account to act as, or logs why it could not and returns null.
     /// </summary>
     /// <remarks>
-    /// An explicitly blank <c>--tenant-id</c> is treated as a mistake rather than as a request for
-    /// the default. Falling back silently would run a tenant-wide change against whichever tenant
-    /// <c>az</c> happens to be signed in to, which is not what someone who typed the option meant.
+    /// Resolved once per invocation and passed to every call that follows. <c>az account show</c>
+    /// reads mutable local state, so reading it again for authentication after prompting could
+    /// confirm one tenant and change another, and a transient CLI failure between two reads could
+    /// fail a command that had already succeeded at resolving the tenant.
     /// </remarks>
-    internal static async Task<string?> ResolveTenantIdAsync(
+    internal static async Task<AzureAccountInfo?> ResolveAccountAsync(
         ILogger logger,
-        IAzureCliService azureCliService,
-        string? tenantIdOption)
+        IAzureCliService azureCliService)
     {
-        if (tenantIdOption is not null)
-        {
-            if (string.IsNullOrWhiteSpace(tenantIdOption))
-            {
-                logger.LogError(
-                    "--tenant-id was supplied but is empty. Pass a tenant id, or omit the option " +
-                    "to use the tenant of your current az login.");
-                return null;
-            }
-
-            return tenantIdOption;
-        }
-
         var account = await azureCliService.GetCurrentAccountAsync();
-        var tenantId = account?.TenantId;
-        if (string.IsNullOrWhiteSpace(tenantId))
+        if (account is null || string.IsNullOrWhiteSpace(account.TenantId))
         {
-            logger.LogError("Could not determine your Azure tenant. Run 'az login', or pass --tenant-id.");
+            logger.LogError("Could not determine your Azure tenant. Run 'az login' and try again.");
             return null;
         }
 
-        return tenantId;
+        return account;
     }
 
     /// <summary>
@@ -140,31 +126,34 @@ public static class NetworkCommand
             var yes = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
-            // GsaService authenticates against the same az login, so resolving here only names the
-            // tenant in the prompt — it does not pick a different one.
-            var tenantId = await ResolveTenantIdAsync(logger, azureCliService, tenantIdOption: null);
-            if (tenantId == null)
+            // Resolved once, then used for both the prompt and the call, so the tenant named in
+            // the prompt is provably the tenant changed.
+            var account = await ResolveAccountAsync(logger, azureCliService);
+            if (account == null)
             {
                 context.ExitCode = 1;
                 return;
             }
 
             if (!await ConfirmChangeAsync(
-                confirmationProvider, yes, $"Turn Global Secure Access {(enabled ? "on" : "off")}", tenantId))
+                confirmationProvider, yes, $"Turn Global Secure Access {(enabled ? "on" : "off")}", account.TenantId))
             {
                 logger.LogInformation("Cancelled.");
                 context.ExitCode = 1;
                 return;
             }
 
-            var result = await gsaService.SetAsync(enabled, ct);
-            context.ExitCode = await ReportGsaAsync(logger, gsaService, result, wait, enabled, ct);
+            var result = await gsaService.SetAsync(account, enabled, ct);
+            context.ExitCode = await ReportGsaAsync(logger, gsaService, account, result, wait, enabled, ct);
         });
 
         return command;
     }
 
-    private static Command CreateGsaStatusSubcommand(ILogger logger, IGsaService gsaService)
+    private static Command CreateGsaStatusSubcommand(
+        ILogger logger,
+        IGsaService gsaService,
+        IAzureCliService azureCliService)
     {
         var command = new Command(
             "status",
@@ -177,7 +166,14 @@ public static class NetworkCommand
         {
             var ct = context.GetCancellationToken();
 
-            var status = await gsaService.GetStatusAsync(ct);
+            var account = await ResolveAccountAsync(logger, azureCliService);
+            if (account == null)
+            {
+                context.ExitCode = 1;
+                return;
+            }
+
+            var status = await gsaService.GetStatusAsync(account, ct);
             if (status == null)
             {
                 context.ExitCode = 1;
@@ -198,6 +194,7 @@ public static class NetworkCommand
     internal static async Task<int> ReportGsaAsync(
         ILogger logger,
         IGsaService gsaService,
+        AzureAccountInfo account,
         GsaStatusResponse? result,
         bool wait,
         bool enabled,
@@ -213,7 +210,7 @@ public static class NetworkCommand
         if (wait && result.Pending)
         {
             logger.LogInformation("The change is still being applied. Waiting for it to appear...");
-            result = await gsaService.WaitForStatusAsync(expectedStatus, DefaultWaitTimeout, cancellationToken);
+            result = await gsaService.WaitForStatusAsync(account, expectedStatus, DefaultWaitTimeout, cancellationToken);
 
             if (result == null)
             {

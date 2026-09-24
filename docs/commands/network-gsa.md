@@ -17,12 +17,13 @@ platform to apply the change against the environment it resolves for your tenant
 - An `az login` to the tenant you intend to configure.
 - Public cloud only. Sovereign clouds are not supported.
 
-Nothing is read from Azure, but the `az login` still matters: it is what selects the tenant. The
-what selects the tenant. The commands authenticate against the tenant and account of your current
-`az account show`, so `az login --tenant <id>` is how you choose which tenant to configure when you
-have more than one. Without an explicit tenant the Windows broker silently returns whichever
-account Windows prefers, which would apply a tenant-wide setting to the wrong tenant. If the
-account you are signed into cannot be matched, the command fails rather than falling back.
+The `az login` is what selects the tenant. These commands read `az account show` once per run and
+authenticate against the tenant and account it reports, so `az login --tenant <id>` is how you
+choose which tenant to configure when you have more than one. Nothing else is read from Azure — the
+setting itself lives in Power Platform, not in your subscription. Without an explicit tenant the
+Windows broker silently returns whichever account Windows prefers, which would apply a tenant-wide
+setting to the wrong tenant. If the account you are signed into cannot be matched, the command
+fails rather than falling back.
 
 ## Subcommands
 

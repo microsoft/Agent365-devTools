@@ -40,6 +40,9 @@ public class NetworkCommandTests
         return azure;
     }
 
+    private static AzureAccountInfo Account(string tenantId = TenantId) =>
+        new() { TenantId = tenantId };
+
     private static IConfirmationProvider Confirming(bool answer)
     {
         var confirmation = Substitute.For<IConfirmationProvider>();
@@ -83,7 +86,7 @@ public class NetworkCommandTests
     public async Task GsaSetHandler_PromptsThenAppliesTheRequestedValue(string verb, bool enabled)
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.SetAsync(enabled, Arg.Any<CancellationToken>())
+        gsa.SetAsync(Arg.Any<AzureAccountInfo>(), enabled, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<GsaStatusResponse?>(
                 new GsaStatusResponse { Status = enabled ? "Enabled" : "Disabled" }));
         var confirmation = Confirming(true);
@@ -93,7 +96,7 @@ public class NetworkCommandTests
 
         exitCode.Should().Be(0);
         await confirmation.Received(1).ConfirmAsync(Arg.Any<string>());
-        await gsa.Received(1).SetAsync(enabled, Arg.Any<CancellationToken>());
+        await gsa.Received(1).SetAsync(Arg.Any<AzureAccountInfo>(), enabled, Arg.Any<CancellationToken>());
     }
 
     [Theory]
@@ -107,14 +110,14 @@ public class NetworkCommandTests
         var exitCode = await command.InvokeAsync($"gsa {verb}");
 
         exitCode.Should().Be(1);
-        await gsa.DidNotReceive().SetAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await gsa.DidNotReceive().SetAsync(Arg.Any<AzureAccountInfo>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task GsaSetHandler_WithYes_SkipsThePrompt()
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.SetAsync(true, Arg.Any<CancellationToken>())
+        gsa.SetAsync(Arg.Any<AzureAccountInfo>(), true, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<GsaStatusResponse?>(new GsaStatusResponse { Status = "Enabled" }));
         var confirmation = Confirming(false);
         var command = CreateCommand(confirmation: confirmation, gsa: gsa);
@@ -123,7 +126,7 @@ public class NetworkCommandTests
 
         exitCode.Should().Be(0);
         await confirmation.DidNotReceive().ConfirmAsync(Arg.Any<string>());
-        await gsa.Received(1).SetAsync(true, Arg.Any<CancellationToken>());
+        await gsa.Received(1).SetAsync(Arg.Any<AzureAccountInfo>(), true, Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -135,14 +138,49 @@ public class NetworkCommandTests
         var exitCode = await command.InvokeAsync("gsa enable");
 
         exitCode.Should().Be(1);
-        await gsa.DidNotReceive().SetAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await gsa.DidNotReceive().SetAsync(Arg.Any<AzureAccountInfo>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GsaSetHandler_ReadsTheAzAccountOnceAndActsOnTheTenantItConfirmed()
+    {
+        // az account show reads mutable local state, so a second read for authentication could
+        // confirm one tenant and change another. The account is resolved once and passed down.
+        const string tenantId = "44444444-4444-4444-4444-444444444444";
+        var azure = SignedInAzureCli(tenantId);
+        var gsa = Substitute.For<IGsaService>();
+        gsa.SetAsync(Arg.Any<AzureAccountInfo>(), true, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<GsaStatusResponse?>(new GsaStatusResponse { Status = "Enabled" }));
+        var confirmation = Confirming(true);
+        var command = CreateCommand(azure: azure, confirmation: confirmation, gsa: gsa);
+
+        var exitCode = await command.InvokeAsync("gsa enable");
+
+        exitCode.Should().Be(0);
+        await azure.Received(1).GetCurrentAccountAsync();
+        await confirmation.Received(1).ConfirmAsync(Arg.Is<string>(m => m.Contains(tenantId)));
+        await gsa.Received(1).SetAsync(
+            Arg.Is<AzureAccountInfo>(a => a.TenantId == tenantId), true, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GsaStatusHandler_WhenNoTenantCanBeResolved_FailsWithoutCallingTheService()
+    {
+        var gsa = Substitute.For<IGsaService>();
+        var command = CreateCommand(azure: SignedInAzureCli(tenantId: null), gsa: gsa);
+
+        var exitCode = await command.InvokeAsync("gsa status");
+
+        exitCode.Should().Be(1);
+        await gsa.DidNotReceive().GetStatusAsync(
+            Arg.Any<AzureAccountInfo>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task GsaSetHandler_WhenTheServiceFails_ReturnsFailure()
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.SetAsync(true, Arg.Any<CancellationToken>()).Returns(Task.FromResult<GsaStatusResponse?>(null));
+        gsa.SetAsync(Arg.Any<AzureAccountInfo>(), true, Arg.Any<CancellationToken>()).Returns(Task.FromResult<GsaStatusResponse?>(null));
         var command = CreateCommand(gsa: gsa);
 
         var exitCode = await command.InvokeAsync("gsa enable --yes");
@@ -154,24 +192,24 @@ public class NetworkCommandTests
     public async Task GsaSetHandler_WithWait_PollsForTheRequestedValue()
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.SetAsync(true, Arg.Any<CancellationToken>())
+        gsa.SetAsync(Arg.Any<AzureAccountInfo>(), true, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<GsaStatusResponse?>(
                 new GsaStatusResponse { Status = "Disabled", Pending = true }));
-        gsa.WaitForStatusAsync("Enabled", Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+        gsa.WaitForStatusAsync(Arg.Any<AzureAccountInfo>(), "Enabled", Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<GsaStatusResponse?>(new GsaStatusResponse { Status = "Enabled" }));
         var command = CreateCommand(gsa: gsa);
 
         var exitCode = await command.InvokeAsync("gsa enable --yes --wait");
 
         exitCode.Should().Be(0);
-        await gsa.Received(1).WaitForStatusAsync("Enabled", Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+        await gsa.Received(1).WaitForStatusAsync(Arg.Any<AzureAccountInfo>(), "Enabled", Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task GsaStatusHandler_ReadsStatusWithoutPrompting()
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.GetStatusAsync(Arg.Any<CancellationToken>())
+        gsa.GetStatusAsync(Arg.Any<AzureAccountInfo>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<GsaStatusResponse?>(new GsaStatusResponse { Status = "Enabled" }));
         var confirmation = Confirming(false);
         var command = CreateCommand(confirmation: confirmation, gsa: gsa);
@@ -180,14 +218,14 @@ public class NetworkCommandTests
 
         exitCode.Should().Be(0);
         await confirmation.DidNotReceive().ConfirmAsync(Arg.Any<string>());
-        await gsa.Received(1).GetStatusAsync(Arg.Any<CancellationToken>());
+        await gsa.Received(1).GetStatusAsync(Arg.Any<AzureAccountInfo>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task GsaStatusHandler_WhenStatusUnreadable_ReturnsFailure()
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.GetStatusAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult<GsaStatusResponse?>(null));
+        gsa.GetStatusAsync(Arg.Any<AzureAccountInfo>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult<GsaStatusResponse?>(null));
         var command = CreateCommand(gsa: gsa);
 
         var exitCode = await command.InvokeAsync("gsa status");
@@ -222,11 +260,11 @@ public class NetworkCommandTests
         var gsa = Substitute.For<IGsaService>();
 
         var exitCode = await NetworkCommand.ReportGsaAsync(
-            NullLogger.Instance, gsa, result: null, wait: true, enabled: true, CancellationToken.None);
+            NullLogger.Instance, gsa, Account(), result: null, wait: true, enabled: true, CancellationToken.None);
 
         exitCode.Should().Be(1);
         await gsa.DidNotReceive().WaitForStatusAsync(
-            Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            Arg.Any<AzureAccountInfo>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -236,11 +274,11 @@ public class NetworkCommandTests
         var result = new GsaStatusResponse { Status = "Enabled", Pending = false };
 
         var exitCode = await NetworkCommand.ReportGsaAsync(
-            NullLogger.Instance, gsa, result, wait: true, enabled: true, CancellationToken.None);
+            NullLogger.Instance, gsa, Account(), result, wait: true, enabled: true, CancellationToken.None);
 
         exitCode.Should().Be(0);
         await gsa.DidNotReceive().WaitForStatusAsync(
-            Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            Arg.Any<AzureAccountInfo>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -250,11 +288,11 @@ public class NetworkCommandTests
         var result = new GsaStatusResponse { Status = "Disabled", Pending = true };
 
         var exitCode = await NetworkCommand.ReportGsaAsync(
-            NullLogger.Instance, gsa, result, wait: false, enabled: true, CancellationToken.None);
+            NullLogger.Instance, gsa, Account(), result, wait: false, enabled: true, CancellationToken.None);
 
         exitCode.Should().Be(0, because: "an accepted change that has not surfaced yet is not a failure");
         await gsa.DidNotReceive().WaitForStatusAsync(
-            Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            Arg.Any<AzureAccountInfo>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
     }
 
     [Theory]
@@ -264,29 +302,29 @@ public class NetworkCommandTests
         bool enabled, string expectedStatus)
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.WaitForStatusAsync(expectedStatus, Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+        gsa.WaitForStatusAsync(Arg.Any<AzureAccountInfo>(), expectedStatus, Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<GsaStatusResponse?>(
                 new GsaStatusResponse { Status = expectedStatus, Pending = false }));
         var result = new GsaStatusResponse { Status = "NotConfigured", Pending = true };
 
         var exitCode = await NetworkCommand.ReportGsaAsync(
-            NullLogger.Instance, gsa, result, wait: true, enabled, CancellationToken.None);
+            NullLogger.Instance, gsa, Account(), result, wait: true, enabled, CancellationToken.None);
 
         exitCode.Should().Be(0);
         await gsa.Received(1).WaitForStatusAsync(
-            expectedStatus, Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            Arg.Any<AzureAccountInfo>(), expectedStatus, Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task ReportGsaAsync_WhenWaitCannotReadStatus_ReturnsFailure()
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.WaitForStatusAsync("Enabled", Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+        gsa.WaitForStatusAsync(Arg.Any<AzureAccountInfo>(), "Enabled", Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<GsaStatusResponse?>(null));
         var result = new GsaStatusResponse { Status = "Disabled", Pending = true };
 
         var exitCode = await NetworkCommand.ReportGsaAsync(
-            NullLogger.Instance, gsa, result, wait: true, enabled: true, CancellationToken.None);
+            NullLogger.Instance, gsa, Account(), result, wait: true, enabled: true, CancellationToken.None);
 
         exitCode.Should().Be(1);
     }
@@ -295,13 +333,13 @@ public class NetworkCommandTests
     public async Task ReportGsaAsync_WhenStillPendingAfterWaiting_ReturnsSuccess()
     {
         var gsa = Substitute.For<IGsaService>();
-        gsa.WaitForStatusAsync("Enabled", Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+        gsa.WaitForStatusAsync(Arg.Any<AzureAccountInfo>(), "Enabled", Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<GsaStatusResponse?>(
                 new GsaStatusResponse { Status = "Disabled", Pending = true }));
         var result = new GsaStatusResponse { Status = "Disabled", Pending = true };
 
         var exitCode = await NetworkCommand.ReportGsaAsync(
-            NullLogger.Instance, gsa, result, wait: true, enabled: true, CancellationToken.None);
+            NullLogger.Instance, gsa, Account(), result, wait: true, enabled: true, CancellationToken.None);
 
         exitCode.Should().Be(0, because: "the platform accepted the change; the environment is catching up");
     }
@@ -318,7 +356,7 @@ public class NetworkCommandTests
         };
 
         var exitCode = await NetworkCommand.ReportGsaAsync(
-            NullLogger.Instance, gsa, result, wait: false, enabled: false, CancellationToken.None);
+            NullLogger.Instance, gsa, Account(), result, wait: false, enabled: false, CancellationToken.None);
 
         exitCode.Should().Be(0);
     }
