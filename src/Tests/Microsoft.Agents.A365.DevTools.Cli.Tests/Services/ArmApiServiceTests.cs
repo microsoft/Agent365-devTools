@@ -304,13 +304,38 @@ public class ArmApiServiceTests
     // ──────────────────────── GetEnterprisePolicySystemIdAsync ────────────────────────
 
     private const string PolicyArmId =
-        "/subscriptions/sub-123/resourceGroups/rg-test/providers/Microsoft.PowerPlatform/enterprisePolicies/policy-1";
+        "/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.PowerPlatform/enterprisePolicies/policy-1";
 
     private const string PolicySystemId =
         "/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000";
 
     private static HttpResponseMessage PolicyResponse(string body) =>
         new(HttpStatusCode.OK) { Content = new StringContent(body) };
+
+    [Theory]
+    // Userinfo trick: `management.azure.com` becomes the username and the real host is the attacker's.
+    [InlineData("@evil.example/x")]
+    [InlineData("evil.example/x")]
+    [InlineData("//evil.example/x")]
+    [InlineData("https://evil.example/x")]
+    [InlineData("/subscriptions/not-a-guid/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/acct")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p?x=1")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p#frag")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p/../../x")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenArmIdIsNotAnEnterprisePolicyPath_RejectsWithoutCalling(
+        string policyArmId)
+    {
+        using var handler = new TestHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(policyArmId, TenantId);
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(
+            0,
+            because: "the ARM bearer token is a default header, so a redirected host would receive it");
+    }
 
     [Fact]
     public async Task GetEnterprisePolicySystemIdAsync_When200_ReturnsSystemId()

@@ -35,14 +35,16 @@ account you are signed into cannot be matched, the command fails rather than fal
 ### `enable` and `disable`
 
 ```bash
-a365 network gsa enable [--wait]
-a365 network gsa disable [--wait]
+a365 network gsa enable [--wait] [--yes]
+a365 network gsa disable [--wait] [--yes]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--wait` | Keep polling until the change appears on the environment, instead of returning while it is still being applied. |
+| `--yes`, `-y` | Skip the confirmation prompt. |
 
+Both verbs prompt before changing the tenant-wide setting; pass `--yes` in automation.
 Requesting the value the environment already holds is a no-op and succeeds.
 
 ### `status`

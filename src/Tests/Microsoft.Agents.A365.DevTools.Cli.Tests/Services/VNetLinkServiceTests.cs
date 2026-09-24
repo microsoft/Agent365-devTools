@@ -49,7 +49,19 @@ public class VNetLinkServiceTests
         HttpMessageHandler handler,
         ArmApiService? arm = null,
         IAuthenticationService? auth = null) =>
-        new(NullLogger<VNetLinkService>.Instance, auth ?? FakeAuth(), arm ?? FakeArm(), "prod", handler);
+        new(
+            NullLogger<VNetLinkService>.Instance,
+            auth ?? FakeAuth(),
+            arm ?? FakeArm(),
+            "prod",
+            handler,
+            NoLoginHint);
+
+    /// <summary>
+    /// Stands in for the real resolver so the tests never shell out to `az account show`.
+    /// The production default caches in a static field shared with AzCliHelperTests.
+    /// </summary>
+    private static Task<string?> NoLoginHint() => Task.FromResult<string?>(null);
 
     private static HttpResponseMessage StatusResponse(
         HttpStatusCode code,
@@ -74,6 +86,8 @@ public class VNetLinkServiceTests
     [InlineData("Running", true)]
     [InlineData("running", true)]
     [InlineData("RUNNING", true)]
+    [InlineData("NotStarted", true)]
+    [InlineData("notstarted", true)]
     [InlineData("Linked", false)]
     [InlineData("NotLinked", false)]
     [InlineData("Failed", false)]
@@ -244,7 +258,7 @@ public class VNetLinkServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "NotLinked"));
         var svc = CreateService(handler);
 
-        var result = await svc.UnlinkAsync();
+        var result = await svc.UnlinkAsync(TenantId);
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("NotLinked");
@@ -267,7 +281,7 @@ public class VNetLinkServiceTests
         });
         var svc = CreateService(handler);
 
-        var result = await svc.UnlinkAsync();
+        var result = await svc.UnlinkAsync(TenantId);
 
         result.Should().BeNull();
     }
@@ -282,7 +296,7 @@ public class VNetLinkServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked", policyArmId: PolicyArmId));
         var svc = CreateService(handler);
 
-        var result = await svc.GetStatusAsync();
+        var result = await svc.GetStatusAsync(TenantId);
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("Linked");
@@ -303,7 +317,7 @@ public class VNetLinkServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Running", "a b/c"));
         var svc = CreateService(handler);
 
-        await svc.GetStatusAsync("a b/c");
+        await svc.GetStatusAsync(TenantId, "a b/c");
 
         captured!.RequestUri!.Query.Should().Be("?operationId=a%20b%2Fc");
     }
@@ -315,7 +329,7 @@ public class VNetLinkServiceTests
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(string.Empty) });
         var svc = CreateService(handler);
 
-        var result = await svc.GetStatusAsync();
+        var result = await svc.GetStatusAsync(TenantId);
 
         result.Should().NotBeNull();
         result!.Status.Should().BeNull();
@@ -331,7 +345,7 @@ public class VNetLinkServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Failed", OperationId, reason: "Region mismatch."));
         var svc = CreateService(handler);
 
-        var result = await svc.GetStatusAsync(OperationId);
+        var result = await svc.GetStatusAsync(TenantId, OperationId);
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("Failed");
@@ -349,7 +363,7 @@ public class VNetLinkServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked", OperationId));
         var svc = CreateService(handler);
 
-        var result = await svc.WaitForCompletionAsync(OperationId, TimeSpan.FromMinutes(5));
+        var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.FromMinutes(5));
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("Linked");
@@ -364,7 +378,7 @@ public class VNetLinkServiceTests
         var svc = CreateService(handler);
 
         // A zero budget cannot fit another poll interval, so the first read is also the last.
-        var result = await svc.WaitForCompletionAsync(OperationId, TimeSpan.Zero);
+        var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.Zero);
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("Running");
@@ -382,7 +396,7 @@ public class VNetLinkServiceTests
         });
         var svc = CreateService(handler);
 
-        var result = await svc.WaitForCompletionAsync(OperationId, TimeSpan.FromMinutes(5));
+        var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.FromMinutes(5));
 
         result.Should().BeNull();
         handler.RequestCount.Should().Be(1, because: "an unreadable status is terminal for the wait");
@@ -397,9 +411,71 @@ public class VNetLinkServiceTests
         using var handler = new TestHttpMessageHandler();
         var svc = CreateService(handler);
 
-        var act = async () => await svc.WaitForCompletionAsync(operationId!, TimeSpan.FromMinutes(5));
+        var act = async () => await svc.WaitForCompletionAsync(TenantId, operationId!, TimeSpan.FromMinutes(5));
 
         await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    // ────────────────────────── Token acquisition ──────────────────────────────
+
+    [Fact]
+    public async Task LinkAsync_AcquiresTheAgent365TokenForTheRequestedTenant()
+    {
+        var auth = FakeAuth();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked"));
+        var svc = CreateService(handler, auth: auth);
+
+        await svc.LinkAsync(PolicyArmId, swap: false, "contoso-tenant");
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(),
+            "contoso-tenant",
+            Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>(),
+            Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task UnlinkAsync_AcquiresTheAgent365TokenForTheRequestedTenant()
+    {
+        var auth = FakeAuth();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "NotLinked"));
+        var svc = CreateService(handler, auth: auth);
+
+        await svc.UnlinkAsync("contoso-tenant");
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(),
+            "contoso-tenant",
+            Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>(),
+            Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_AcquiresTheAgent365TokenForTheRequestedTenant()
+    {
+        var auth = FakeAuth();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked"));
+        var svc = CreateService(handler, auth: auth);
+
+        await svc.GetStatusAsync("contoso-tenant");
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(),
+            "contoso-tenant",
+            Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>(),
+            Arg.Any<string?>());
     }
 
     // ───────────────────────────── Constructor guards ──────────────────────────

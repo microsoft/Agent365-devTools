@@ -189,7 +189,8 @@ class Program
             var vnetLinkService = serviceProvider.GetRequiredService<IVNetLinkService>();
             var azureCliService = serviceProvider.GetRequiredService<IAzureCliService>();
             var gsaService = serviceProvider.GetRequiredService<IGsaService>();
-            rootCommand.AddCommand(NetworkCommand.CreateCommand(networkLogger, vnetLinkService, azureCliService, gsaService));
+            rootCommand.AddCommand(NetworkCommand.CreateCommand(
+                networkLogger, vnetLinkService, azureCliService, gsaService, confirmationProvider));
 
             // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
             // and UseParseErrorReporting() (full help dump on any parse error), replacing both
