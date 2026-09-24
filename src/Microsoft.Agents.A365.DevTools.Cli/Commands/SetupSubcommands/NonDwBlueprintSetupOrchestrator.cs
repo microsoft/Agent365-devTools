@@ -366,8 +366,8 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Step 3: Blueprint creation (shared with DW)
                 await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
 
-                // Step 4: Build permission specs — stamps Graph, manifest MCP audiences, Observability,
-                // Power Platform, custom permissions, and Messaging Bot (only when isM365). Mirrors DW.
+                // Step 4: Build permission specs — stamps Graph, manifest MCP audiences, Power Platform,
+                // custom permissions, Messaging Bot (only when isM365), and Observability unless skipped.
                 if (ctx.SkipObservabilityPermissions)
                     ctx.Logger.LogInformation("Observability API permissions not requested: registered agents export telemetry with an app-only token.");
                 var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
@@ -579,6 +579,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // If a registration ID is already stored, verify it still exists before skipping creation.
         string? registrationId = null;
         bool registrationAlreadyExisted = false;
+        bool verificationFailed = false;
 
         if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
         {
@@ -605,6 +606,16 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // stale value on disk that would cause the same stale-ID check to repeat.
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
             }
+            else if (registrationRequired)
+            {
+                // An unverifiable registration cannot be the agent's only authorization: keep the stored
+                // ID (no duplicate registration) but fail so the operator retries.
+                using (ctx.Logger.Indent())
+                    RecordRegistrationFailure(
+                        $"Could not verify agent registration {ctx.Config.AgentRegistrationId} (auth or transient error). " +
+                        "Retry with: a365 setup all --agent-registration-only");
+                verificationFailed = true;
+            }
             else
             {
                 // Verification inconclusive (auth or transient error) — preserve the stored ID
@@ -616,7 +627,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             }
         }
 
-        if (string.IsNullOrWhiteSpace(registrationId))
+        if (!verificationFailed && string.IsNullOrWhiteSpace(registrationId))
         {
             var (newId, fromConflict) = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
                 ctx.Config.TenantId!,
@@ -645,7 +656,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Logger.LogInformation("");
             }
         }
-        else
+        else if (!verificationFailed)
         {
             RecordRegistrationFailure("Agent registration failed via Graph copilot/agentRegistrations API.");
         }

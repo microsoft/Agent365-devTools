@@ -398,8 +398,10 @@ internal static class AllSubcommand
             }
 
             // Registered blueprint agents export telemetry app-only over S2S without OtelWrite in every auth
-            // mode, so blueprint setup never requests it; AI Teammate setup is unchanged.
-            var skipObservabilityPermissions = nonDwConfig is not null;
+            // mode, so blueprint setup never requests it; AI Teammate setup (including an AI Teammate config
+            // kept for a dry run) is unchanged.
+            var skipObservabilityPermissions = nonDwConfig is not null
+                && (aiTeammateFlag == false || nonDwConfig.IsBlueprintAgent);
 
             if (nonDwConfig is not null)
             {

@@ -622,37 +622,98 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// Step 6: When AgentRegistrationExistsAsync returns null (auth or transient error),
-    /// the stored registration ID must be preserved and re-registration must not be attempted.
+    /// Step 6: When AgentRegistrationExistsAsync returns null (auth or transient error) and registration is
+    /// optional (Observability permissions requested, not --agent-registration-only), the stored registration
+    /// ID must be preserved and re-registration must not be attempted.
     /// </summary>
     [Fact]
     public async Task Step6_PreservesStoredRegistrationId_WhenVerificationIsInconclusive()
     {
-        var config = new Agent365Config
+        // Empty project directory: the project settings step finds no project and writes nothing.
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwRegistrationTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
         {
-            AiTeammate = false,
-            TenantId = "tenant-id",
-            AgentBlueprintId = "blueprint-id",
-            AgentIdentityDisplayName = "sellakapri211 Identity",
-            ClientAppId = "client-app-id",
-            AgenticAppId = "agentic-app-id",
-            AgentRegistrationId = "stored-reg-id",
-        };
-        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "sellakapri211 Identity",
+                ClientAppId = "client-app-id",
+                AgenticAppId = "agentic-app-id",
+                AgentRegistrationId = "stored-reg-id",
+                DeploymentProjectPath = projectDir,
+            };
+            var (ctx, graph, _) = BuildIdempotencyTestContext(config, agentInstanceOnly: false);
 
-        graph.AgentRegistrationExistsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns((bool?)null);
+            graph.AgentRegistrationExistsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((bool?)null);
 
-        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
 
-        ctx.Results.AgentInstanceId.Should().Be("stored-reg-id",
-            because: "when verification is inconclusive the stored ID must be preserved to avoid unintended re-registration");
-        ctx.Results.AgentRegistrationAlreadyExisted.Should().BeTrue(
-            because: "an inconclusive verification is treated as 'assume still exists' to prevent data loss");
-        await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
-            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            ctx.Results.AgentInstanceId.Should().Be("stored-reg-id",
+                because: "when verification is inconclusive the stored ID must be preserved to avoid unintended re-registration");
+            ctx.Results.AgentRegistrationAlreadyExisted.Should().BeTrue(
+                because: "an inconclusive verification is treated as 'assume still exists' to prevent data loss");
+            await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Step 6: when registration is required (--agent-registration-only, or Observability permissions not
+    /// requested so registration is the agent's only authorization), an inconclusive verification must fail
+    /// setup instead of passing — while still keeping the stored ID and not creating a duplicate registration.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Step6_RegistrationRequired_FailsWithoutReRegistering_WhenVerificationIsInconclusive(bool agentInstanceOnly, bool skipObservabilityPermissions)
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwRegistrationTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                AgenticAppId = "agentic-app-id",
+                AgentRegistrationId = "stored-reg-id",
+                DeploymentProjectPath = projectDir,
+            };
+            var (ctx, graph, _) = BuildIdempotencyTestContext(config, agentInstanceOnly, skipObservabilityPermissions);
+            graph.AgentRegistrationExistsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((bool?)null);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(
+                ctx, specs: [], skipIdentityAndPermissions: agentInstanceOnly);
+
+            ctx.Results.Errors.Should().ContainSingle(e => e.Contains("Could not verify agent registration"),
+                because: "an unverifiable registration cannot be relied on as the agent's only authorization, so setup must exit 1");
+            ctx.Results.AgentInstanceRegistered.Should().BeFalse(
+                because: "the summary must not report a registration that could not be confirmed");
+            ctx.Config.AgentRegistrationId.Should().Be("stored-reg-id",
+                because: "an auth or transient failure is not proof the registration is gone, so the stored ID is kept for the retry");
+            await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
     }
 
     private static Agent365Config RegistrationReadyConfig(string deploymentProjectPath = "") => new()

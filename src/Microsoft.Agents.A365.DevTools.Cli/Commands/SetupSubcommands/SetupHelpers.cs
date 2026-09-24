@@ -1085,8 +1085,8 @@ internal static class SetupHelpers
     /// resources. Called when the current user lacks the Global Administrator role so that the URLs
     /// can be saved to <c>a365.generated.config.json</c> and shared with a tenant administrator.
     /// <para>
-    /// Graph, Agent 365 Tools (MCP), and Power Platform API URLs are always generated; Observability
-    /// API unless <paramref name="includeObservability"/> is false. Messaging Bot API is included only
+    /// Graph, Agent 365 Tools (MCP), and Power Platform API URLs are always generated; the Observability
+    /// API URL is generated unless <paramref name="includeObservability"/> is false. Messaging Bot API is included only
     /// when <paramref name="isM365"/> is true — non-M365 tenants typically lack the Messaging Bot
     /// resource SP and the consent endpoint returns AADSTS650053 otherwise.
     /// </para>
@@ -1102,6 +1102,10 @@ internal static class SetupHelpers
         bool includeObservability = true)
     {
         var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, config.AgentApplicationScopes, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames, includeObservability);
+
+        // Drop an Observability entry saved by an earlier run so the admin is not asked for permissions this run skipped.
+        if (!includeObservability)
+            config.ResourceConsents.RemoveAll(rc => rc.ResourceAppId.Equals(ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase));
 
         // Map resource names to App IDs for upsert into ResourceConsents. The fixed-name
         // entries cover Graph + Bot + Obs + PP + the WorkIQ shared MCP audience. V2

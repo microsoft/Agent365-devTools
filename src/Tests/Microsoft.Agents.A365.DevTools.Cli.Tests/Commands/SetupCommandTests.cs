@@ -773,4 +773,33 @@ public class SetupCommandTests
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
+
+    /// <summary>
+    /// A dry run keeps an AI Teammate config even without --aiteammate; the plan must still treat it as an
+    /// AI Teammate and not claim Observability API permissions are skipped.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_AiTeammateConfig_DryRunWithoutFlag_DoesNotSkipObservabilityApi()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            AgentIdentityDisplayName = "agent",
+            AgentBlueprintDisplayName = "TestBlueprint",
+            DeploymentProjectPath = ".",
+            AiTeammate = true,
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("all --dry-run", new TestConsole());
+
+        result.Should().Be(0, because: "a dry run with an AI Teammate config is valid");
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Observability API not requested")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
 }

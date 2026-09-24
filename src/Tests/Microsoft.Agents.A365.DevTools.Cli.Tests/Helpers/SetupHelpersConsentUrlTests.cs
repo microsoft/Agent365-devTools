@@ -307,6 +307,34 @@ public class SetupHelpersConsentUrlTests
             because: "no Messaging Bot consent URL is generated for non-M365 agents, so no resourceConsents entry should be persisted");
     }
 
+    [Fact]
+    public void PopulateAdminConsentUrls_WithoutObservability_RemovesObservabilityEntryFromEarlierRun()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TenantId,
+            AgentBlueprintId = BlueprintClientId,
+        };
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+            ConsentUrl = "https://login.microsoftonline.com/old-observability-consent",
+        });
+
+        var names = SetupHelpers.PopulateAdminConsentUrls(
+            config, McpConstants.WorkIQToolsProdAppId, new[] { "McpServers.Mail.All" },
+            isM365: false, includeObservability: false);
+
+        config.ResourceConsents.Should().NotContain(
+            rc => rc.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "an Observability consent URL saved by an earlier run must not keep asking the admin for permissions this run no longer requests");
+        names.Should().NotContain("Observability API");
+        config.ResourceConsents.Should().Contain(
+            rc => rc.ResourceAppId == PowerPlatformConstants.PowerPlatformApiResourceAppId,
+            because: "removing the stale Observability entry must not affect the resources that are still requested");
+    }
+
     // ── V2 per-server audience routing (issue #429) ──────────────────────────
     //
     // V2 manifest entries declare a per-server audience (a unique Entra appId) and the
