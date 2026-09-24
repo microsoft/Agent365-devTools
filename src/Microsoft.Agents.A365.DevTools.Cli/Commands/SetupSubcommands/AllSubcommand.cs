@@ -70,9 +70,6 @@ internal static class AllSubcommand
         return checks;
     }
 
-    private const string SkipObservabilityAuthModeError =
-        "--skip-observability-permissions cannot be combined with authMode '{AuthMode}': the Observability API app role is the only application permission that mode grants. Use --authmode obo.";
-
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
@@ -168,12 +165,6 @@ internal static class AllSubcommand
                         "is a post-deploy artifact, so it can be set later with\n" +
                         "'a365 setup blueprint --endpoint-only --messaging-endpoint <url>'.");
 
-        var skipObservabilityPermissionsOption = new Option<bool>(
-            "--skip-observability-permissions",
-            description: "Skip Observability API permissions (Agent365.Observability.OtelWrite) for blueprint agents.\n" +
-                        "Use when the agent exports telemetry through the app-only S2S endpoint, which authorizes\n" +
-                        "registered agents without them. Not supported with --aiteammate or --authmode s2s|both.");
-
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -186,7 +177,6 @@ internal static class AllSubcommand
         command.AddOption(authModeOption);
         command.AddOption(skipSpProvisioningOption);
         command.AddOption(messagingEndpointOption);
-        command.AddOption(skipObservabilityPermissionsOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -213,7 +203,6 @@ internal static class AllSubcommand
             // hard error, not silently treated as omitted (which would prompt/defer instead).
             var messagingEndpointSpecified = context.ParseResult.CommandResult.FindResultFor(messagingEndpointOption) != null;
             var messagingEndpointFlag = context.ParseResult.GetValueForOption(messagingEndpointOption)?.Trim();
-            var skipObservabilityPermissions = context.ParseResult.GetValueForOption(skipObservabilityPermissionsOption);
             var ct = context.GetCancellationToken();
 
             if (messagingEndpointSpecified && string.IsNullOrWhiteSpace(messagingEndpointFlag))
@@ -252,14 +241,6 @@ internal static class AllSubcommand
                     context.ExitCode = 1;
                     return;
                 }
-            }
-
-            // Reject a contradicting --authmode flag before bootstrap signs in; a persisted authMode is checked after loading.
-            if (skipObservabilityPermissions && authMode is ("s2s" or "both"))
-            {
-                logger.LogError(SkipObservabilityAuthModeError, authMode);
-                context.ExitCode = 1;
-                return;
             }
 
             // Generate correlation ID at workflow entry point
@@ -416,20 +397,10 @@ internal static class AllSubcommand
                 return;
             }
 
-            // AI Teammate setup always grants Observability API permissions, and OtelWrite is the only
-            // app role s2s/both grant, so fail fast rather than ignore or contradict the flag.
-            if (skipObservabilityPermissions && nonDwConfig is null)
-            {
-                logger.LogError("--skip-observability-permissions applies only to blueprint agents. AI Teammate setup always configures Observability API permissions.");
-                context.ExitCode = 1;
-                return;
-            }
-            if (skipObservabilityPermissions && effectiveAuthModeForValidation is ("s2s" or "both"))
-            {
-                logger.LogError(SkipObservabilityAuthModeError, effectiveAuthModeForValidation);
-                context.ExitCode = 1;
-                return;
-            }
+            // Registered blueprint agents export telemetry app-only over S2S, so only the app-role modes
+            // (s2s/both) still request OtelWrite; AI Teammate setup is unchanged.
+            var skipObservabilityPermissions = nonDwConfig is not null
+                && effectiveAuthModeForValidation is not ("s2s" or "both");
 
             if (nonDwConfig is not null)
             {

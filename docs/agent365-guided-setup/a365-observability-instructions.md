@@ -775,7 +775,7 @@ This skill is safe to rerun. On subsequent runs:
 
 ### OtelWrite App Role Assignment
 
-> **Permissionless alternative (blueprint agents):** the S2S endpoint also authorizes registered agent instances that have no `OtelWrite` role. Run `a365 setup all --skip-observability-permissions` to skip the Observability API permissions and the admin consent they require. Because registration is then the agent's only authorization, setup exits with code 1 if registration fails; retry with `a365 setup all --agent-registration-only`. The flag does not revoke `OtelWrite` granted by earlier runs.
+> **Blueprint agents (default):** `a365 setup all` does not request Observability API permissions for blueprint agents in the default auth mode — the S2S endpoint authorizes registered agent instances without the `OtelWrite` role, so no admin consent is needed. Setup exits with code 1 if registration fails; retry with `a365 setup all --agent-registration-only`. Use `--authmode both` if the agent still exports through the delegated (OBO) route. Permissions granted by earlier runs are not revoked.
 
 `a365 setup all` **attempts** to grant `Agent365.Observability.OtelWrite` to the Agent Identity SP, but this requires **Global Administrator** privileges. If the logged-in user is not a Global Admin, the assignment silently fails with 403 and trace exports will return HTTP 403 from the observability service.
 

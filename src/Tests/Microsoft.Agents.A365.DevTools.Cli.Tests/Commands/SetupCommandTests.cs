@@ -685,18 +685,44 @@ public class SetupCommandTests
             Arg.Any<Func<object, Exception?, string>>());
     }
 
-    // ── --skip-observability-permissions ───────────────────────────────────────
+    // ── Observability API permissions ──────────────────────────────────────────
 
     /// <summary>
-    /// The flag cannot take effect for AI Teammate agents (they always get Observability permissions) or with
-    /// authMode s2s/both (OtelWrite is the only app role they grant), so it must be rejected before the plan runs.
+    /// Registered blueprint agents export telemetry with an app-only token, so the default (OBO) plan must not
+    /// request Observability API permissions — the admin consent they need is what this default removes.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_BlueprintAgent_DefaultPlan_OmitsObservabilityApi()
+    {
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("all --aiteammate false --dry-run", new TestConsole());
+
+        result.Should().Be(0, because: "a default blueprint-agent dry run is valid");
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions") && o.ToString()!.Contains("Observability")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Observability API not requested")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>
+    /// s2s and both exist to grant app roles and OtelWrite is the only one, so those modes — from the flag or from
+    /// a365.config.json — must keep requesting Observability API permissions.
     /// </summary>
     [Theory]
-    [InlineData("--aiteammate true", null)]
-    [InlineData("--aiteammate false --authmode s2s", null)]
-    [InlineData("--aiteammate false --authmode both", null)]
-    [InlineData("--aiteammate false", "s2s")]
-    public async Task SetupAll_SkipObservabilityPermissions_UnsupportedCombination_ExitsWithCode1(string args, string? configAuthMode)
+    [InlineData("--authmode s2s", null)]
+    [InlineData("--authmode both", null)]
+    [InlineData("", "both")]
+    public async Task SetupAll_BlueprintAgent_AppRoleAuthModes_KeepObservabilityApi(string args, string? configAuthMode)
     {
         var config = new Agent365Config
         {
@@ -711,60 +737,39 @@ public class SetupCommandTests
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
         var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
 
-        var result = await parser.InvokeAsync($"all {args} --skip-observability-permissions --dry-run", new TestConsole());
+        var result = await parser.InvokeAsync($"all --aiteammate false {args} --dry-run", new TestConsole());
 
-        result.Should().Be(1,
-            because: "silently ignoring or contradicting the flag would still request the permissions the user asked to skip");
+        result.Should().Be(0, because: "s2s and both are valid blueprint-agent auth modes");
         _mockLogger.Received().Log(
-            LogLevel.Error,
+            LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.StartsWith("--skip-observability-permissions")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions") && o.ToString()!.Contains("Observability API")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
         _mockLogger.DidNotReceive().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Dry run")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Observability API not requested")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
 
     /// <summary>
-    /// A contradicting --authmode flag must be rejected before bootstrap resolution runs az or writes config files.
+    /// AI Teammate setup is unchanged: its plan still requests Observability API permissions.
     /// </summary>
     [Fact]
-    public async Task SetupAll_SkipObservabilityPermissions_WithAuthModeFlag_FailsBeforeBootstrapSignIn()
-    {
-        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
-
-        var result = await parser.InvokeAsync("all --agent-name DemoAgent --authmode both --skip-observability-permissions", new TestConsole());
-
-        result.Should().Be(1, because: "the flag combination is contradictory regardless of tenant state");
-        await _mockExecutor.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default!, default, default, default, default);
-    }
-
-    /// <summary>
-    /// For a blueprint agent in the default OBO mode the flag is accepted and the plan omits Observability API.
-    /// </summary>
-    [Fact]
-    public async Task SetupAll_SkipObservabilityPermissions_BlueprintAgent_DryRunOmitsObservabilityApi()
+    public async Task SetupAll_AiTeammate_Plan_KeepsObservabilityApi()
     {
         _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(BlueprintConfig()));
         var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
 
-        var result = await parser.InvokeAsync("all --aiteammate false --skip-observability-permissions --dry-run", new TestConsole());
+        var result = await parser.InvokeAsync("all --aiteammate true --dry-run", new TestConsole());
 
-        result.Should().Be(0, because: "blueprint agents in OBO mode support skipping Observability API permissions");
-        _mockLogger.DidNotReceive().Log(
-            LogLevel.Information,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions") && o.ToString()!.Contains("Observability")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        result.Should().Be(0, because: "an AI Teammate dry run is valid");
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("skip Observability API")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions") && o.ToString()!.Contains("Observability API")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }

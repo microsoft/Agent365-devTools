@@ -287,8 +287,8 @@ public class SetupResults
     public bool PermissionGrantsSkipped { get; set; }
 
     /// <summary>
-    /// True when --skip-observability-permissions was passed. Registration failure is then an error,
-    /// and the admin consent walkthrough omits Observability API.
+    /// True when Observability API permissions were not requested (blueprint agents in OBO mode).
+    /// Registration failure is then an error, and the admin consent walkthrough omits Observability API.
     /// </summary>
     public bool ObservabilityPermissionsSkipped { get; set; }
 

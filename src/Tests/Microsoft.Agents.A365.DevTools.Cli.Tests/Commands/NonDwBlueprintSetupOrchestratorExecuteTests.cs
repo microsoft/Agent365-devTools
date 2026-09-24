@@ -690,7 +690,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// Step 6: with --skip-observability-permissions, registration is the agent's only Observability
+    /// Step 6: when Observability permissions are not requested, registration is the agent's only Observability
     /// authorization, so its failure is an error; without the flag it stays a warning.
     /// </summary>
     [Theory]

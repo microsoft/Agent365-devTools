@@ -22,10 +22,9 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
-Registered blueprint agents that export telemetry through the app-only S2S endpoint do not need these permissions: skip this step and pass `--skip-observability-permissions` to `a365 setup all` (#501).
+Blueprint agents that export telemetry through the app-only S2S endpoint do not need these permissions: `a365 setup all` no longer requests them in the default auth mode, and agent registration authorizes the agent instead. Agents that still export through the delegated (OBO) route can request them with `--authmode both` (#501).
 
 ### Added
-- `a365 setup all --skip-observability-permissions` omits Observability API permissions for blueprint agents that export telemetry through the app-only S2S endpoint, so those permissions no longer need admin consent (#501).
 - Setup and bootstrap now use Microsoft's first-party Agent 365 CLI application when it is present in your tenant, validating it without changing Microsoft's app registration, and fall back to a tenant-owned "Agent 365 CLI" app when it is not (#489).
 - Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.
 - Authentication context (tenant and user) is now logged at the `Information` level whenever the resolved sign-in identity changes, giving operators a clear audit trail in the log file of who the CLI is acting as, without exposing credentials.
@@ -108,6 +107,7 @@ Registered blueprint agents that export telemetry through the app-only S2S endpo
 
 ### Changed
 
+- `a365 setup all` no longer requests Observability API permissions for blueprint agents in the default auth mode, so registered agents export telemetry through the app-only S2S endpoint without admin consent (#501).
 - Hardened token storage: the CLI no longer writes access tokens to a plaintext file — they live only in the OS-protected MSAL cache (DPAPI/Keychain/owner-only file). Any legacy plaintext cache is removed automatically; sign-in prompts are unchanged.
 - `develop-mcp register-external-mcp-server` now sets `exit code 1` on failure paths (validation errors, tenant detection failure, Graph unavailable, Entra app creation failure, MCP-Platform AddMcpServer failure). Previously these paths logged an error and exited `0`, which made the command's success/failure status undetectable from scripts and CI. Successful dry-run and user-initiated cancellation at the y/N prompt continue to exit `0`.
 - Admin consent canary path (when the caller lacks `DelegatedPermissionGrant.Read.All`) no longer prompts for Enter immediately. The CLI now polls every 5 seconds, prints a friendly progress message at 30 seconds, and responds promptly to Enter or Ctrl+C. The previous jargon-heavy message about `oauth2PermissionGrants` was rewritten in plain English; technical details are demoted to `Debug`.

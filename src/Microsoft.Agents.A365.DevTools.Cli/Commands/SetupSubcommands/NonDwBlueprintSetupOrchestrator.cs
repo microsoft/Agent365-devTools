@@ -20,8 +20,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 ///   1. Requirements validation
 ///   2. Blueprint creation (shared with DW)
 ///   3. Batch permissions on the blueprint (shared with DW pipeline; non-DW spec set:
-///      Observability API, Power Platform API, custom). MAC reads from the blueprint,
-///      so stamping here gives the same set visibility there.
+///      Power Platform API, custom, and Observability API only for authMode s2s/both). MAC reads
+///      from the blueprint, so stamping here gives the same set visibility there.
 ///   4. Agent Identity creation via POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity
 ///   5. Agent Identity permission grants (same spec set as step 3) — OBO or S2S
 ///   6. Agent registration via Graph API (copilot/agentRegistrations)
@@ -117,9 +117,9 @@ internal static class NonDwBlueprintSetupOrchestrator
             logger.LogInformation(sub + "create managed identity");
         }
 
-        // 3. Inheritable Permissions — non-DW spec set (Observability API, Power Platform API, custom)
-        //    stamped on the blueprint via SetInheritablePermissionsAsync so MAC and other dependent
-        //    systems can see them. The same set is applied to the agent identity SP in step 5.
+        // 3. Inheritable Permissions — non-DW spec set (Power Platform API, custom, plus Observability API
+        //    only for authMode s2s/both) stamped on the blueprint via SetInheritablePermissionsAsync so MAC
+        //    and other dependent systems can see them. The same set is applied to the agent identity SP in step 5.
         var selectedAuthMode = authMode ?? config.AuthMode;
         var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
             ? "obo"
@@ -127,7 +127,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for {Resources} (Global Administrator required; consent URL printed if absent)",
             skipObservabilityPermissions ? "Power Platform API and custom permissions" : "Observability API, Power Platform API, and custom permissions");
         if (skipObservabilityPermissions)
-            logger.LogInformation(sub + "skip Observability API (--skip-observability-permissions)");
+            logger.LogInformation(sub + "Observability API not requested (registered agents export telemetry with an app-only token)");
 
         // 4. Blueprint Permission Grants — per authMode. The consent URL targets the blueprint
         //    app, and S2S app-role assignments are persisted as grants flowing from the blueprint;
@@ -369,7 +369,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Step 4: Build permission specs — stamps Graph, manifest MCP audiences, Observability,
                 // Power Platform, custom permissions, and Messaging Bot (only when isM365). Mirrors DW.
                 if (ctx.SkipObservabilityPermissions)
-                    ctx.Logger.LogInformation("Observability API permissions skipped (--skip-observability-permissions flag used)");
+                    ctx.Logger.LogInformation("Observability API permissions not requested: registered agents export telemetry with an app-only token.");
                 var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
                 specs = buildResult.specs;
 

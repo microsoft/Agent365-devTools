@@ -355,7 +355,7 @@ public class AllSubcommandTests : IDisposable
     }
 
     // -----------------------------------------------------------------------
-    // --skip-observability-permissions wiring
+    // Observability API permission wiring
     // -----------------------------------------------------------------------
 
     private SetupContext BuildPermissionsContext(bool skipObservabilityPermissions)
@@ -410,7 +410,7 @@ public class AllSubcommandTests : IDisposable
         var (specs, _, _, _, _) = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
 
         specs.Any(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId).Should().Be(!skipObservabilityPermissions,
-            because: "the spec list drives inheritable permissions, app role grants, and admin consent, so --skip-observability-permissions must remove Observability API from it");
+            because: "the spec list drives inheritable permissions, app role grants, and admin consent, so skipping Observability permissions must remove Observability API from it");
         specs.Any(s => s.AppRoleScopes is { Length: > 0 }).Should().Be(!skipObservabilityPermissions,
             because: "OtelWrite is the only app role setup requests, so skipping it must leave no app role grant that needs a Global Administrator");
         specs.Should().Contain(s => s.ResourceAppId == PowerPlatformConstants.PowerPlatformApiResourceAppId,

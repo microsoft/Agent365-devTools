@@ -1425,7 +1425,7 @@ internal static class SetupHelpers
     /// after the batch permissions step.
     /// <para>
     /// Messaging Bot API URLs are included only when <paramref name="isM365"/> is true, and
-    /// Observability API URLs are omitted with <c>--skip-observability-permissions</c>; the other
+    /// Observability API URLs only when the context requests Observability permissions; the other
     /// resources (Graph, MCP, Power Platform) are always included so a tenant admin
     /// can complete the hand-off with a single URL. No-op if admin consent was already granted or
     /// the blueprint ID is absent.
