@@ -97,10 +97,13 @@
 
 .PARAMETER SkipGrant
     Declare the selected application permissions and delegated scopes, but do not grant consent.
-    An administrator can finish from the Entra portal without adding permissions manually.
+    After the declarations are applied, an administrator can finish from the Entra portal
+    without adding permissions manually. Existing duplicate Graph declarations are reconciled.
 
 .PARAMETER OutputPath
     Writes a JSON summary to this path. The client secret is NOT written to it.
+    Declared permissions reflect existing declarations or a successful PATCH. Planned additions
+    and permissionDeclarationStatus are reported separately; WhatIf does not write the file.
 
 .PARAMETER ClientId
     Application (client) ID to authenticate as, or the client app id for -Interactive.
@@ -243,6 +246,8 @@ function Merge-GraphRequiredResourceAccess {
 
     $graphAccess = [System.Collections.Generic.List[object]]::new()
     $otherResources = [System.Collections.Generic.List[object]]::new()
+    $existingKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $duplicatesRemoved = 0
 
     foreach ($entry in @($ExistingAccess)) {
         if (-not (Test-HasProperty $entry 'resourceAppId')) { continue }
@@ -255,7 +260,14 @@ function Merge-GraphRequiredResourceAccess {
         }
 
         if ([string]$entry.resourceAppId -eq $ResourceAppId) {
-            foreach ($access in $resourceAccess) { $graphAccess.Add($access) }
+            foreach ($access in $resourceAccess) {
+                if ($existingKeys.Add(('{0}|{1}' -f $access.type, $access.id))) {
+                    $graphAccess.Add($access)
+                }
+                else {
+                    $duplicatesRemoved++
+                }
+            }
         }
         else {
             $otherResources.Add(@{
@@ -263,11 +275,6 @@ function Merge-GraphRequiredResourceAccess {
                 resourceAccess = $resourceAccess
             })
         }
-    }
-
-    $existingKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($access in $graphAccess) {
-        [void]$existingKeys.Add(('{0}|{1}' -f $access.type, $access.id))
     }
 
     $rolesAdded = [System.Collections.Generic.List[object]]::new()
@@ -296,11 +303,23 @@ function Merge-GraphRequiredResourceAccess {
     }
 
     return [pscustomobject]@{
-        Changed = ($rolesAdded.Count -gt 0 -or $scopesAdded.Count -gt 0)
+        Changed = ($duplicatesRemoved -gt 0 -or $rolesAdded.Count -gt 0 -or $scopesAdded.Count -gt 0)
+        DuplicatesRemoved = $duplicatesRemoved
         RolesAdded = @($rolesAdded)
         ScopesAdded = @($scopesAdded)
         RequiredResourceAccess = @($requiredResourceAccess)
     }
+}
+
+function Test-PermissionDeclarationApproval {
+    param(
+        [Parameter(Mandatory)][System.Management.Automation.PSCmdlet] $Command,
+        [Parameter(Mandatory)][string] $Target,
+        [Parameter(Mandatory)][string] $Action
+    )
+
+    # Use the caller's approval state without introducing another confirmation prompt.
+    return $Command.ShouldProcess($Target, $Action)
 }
 
 function Get-GraphErrorInfo {
@@ -1198,22 +1217,53 @@ $permissionMerge = Merge-GraphRequiredResourceAccess -ExistingAccess $existingAc
     -ResourceAppId $script:MicrosoftGraphAppId -ApplicationRoles $resolved `
     -DelegatedScopes $delegatedToRequest
 
+$effectiveAccess = $existingAccess
+$rolesAddedToRequest = @()
+$scopesAddedToRequest = @()
+$permissionDeclarationStatus = 'Unchanged'
+
 if ($permissionMerge.Changed) {
     $payload = @{ requiredResourceAccess = $permissionMerge.RequiredResourceAccess }
-    $changeDescription = "+$($permissionMerge.RolesAdded.Count) application permission(s), +$($permissionMerge.ScopesAdded.Count) delegated scope(s)"
-    if ($PSCmdlet.ShouldProcess($DisplayName, "PATCH requiredResourceAccess ($changeDescription)")) {
+    $changeDescription = "+$($permissionMerge.RolesAdded.Count) application permission(s), +$($permissionMerge.ScopesAdded.Count) delegated scope(s), remove $($permissionMerge.DuplicatesRemoved) duplicate declaration(s)"
+    if (Test-PermissionDeclarationApproval -Command $PSCmdlet -Target $DisplayName `
+            -Action "PATCH requiredResourceAccess ($changeDescription)") {
         Invoke-Graph -Method PATCH -Uri "/applications/$applicationObjectId" -Body $payload | Out-Null
-        if ($permissionMerge.RolesAdded.Count -gt 0) {
-            Write-Host "  Declared application permission(s): $(($permissionMerge.RolesAdded | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Green
+        $effectiveAccess = $permissionMerge.RequiredResourceAccess
+        $rolesAddedToRequest = $permissionMerge.RolesAdded
+        $scopesAddedToRequest = $permissionMerge.ScopesAdded
+        $permissionDeclarationStatus = 'Applied'
+        if ($rolesAddedToRequest.Count -gt 0) {
+            Write-Host "  Declared application permission(s): $(($rolesAddedToRequest | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Green
         }
-        if ($permissionMerge.ScopesAdded.Count -gt 0) {
-            Write-Host "  Requested delegated scope(s): $(($permissionMerge.ScopesAdded | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Green
+        if ($scopesAddedToRequest.Count -gt 0) {
+            Write-Host "  Requested delegated scope(s): $(($scopesAddedToRequest | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Green
         }
+        if ($permissionMerge.DuplicatesRemoved -gt 0) {
+            Write-Host "  Removed $($permissionMerge.DuplicatesRemoved) duplicate Graph permission declaration(s)." -ForegroundColor Green
+        }
+    }
+    else {
+        $permissionDeclarationStatus = if ($WhatIfPreference) { 'WhatIf' } else { 'Declined' }
+        Write-Host "  Permission declaration update not applied ($permissionDeclarationStatus); existing declarations are unchanged." -ForegroundColor Yellow
     }
 }
 else {
     Write-Host '  Application permissions and delegated scopes already declared on the application.' -ForegroundColor Gray
 }
+
+# Only the read or a successful PATCH establishes which selected permissions are declared.
+$effectiveKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($entry in $effectiveAccess) {
+    if ((Test-HasProperty $entry 'resourceAppId') -and $entry.resourceAppId -eq $script:MicrosoftGraphAppId -and
+        (Test-HasProperty $entry 'resourceAccess')) {
+        foreach ($access in @($entry.resourceAccess)) {
+            [void]$effectiveKeys.Add(('{0}|{1}' -f $access.type, $access.id))
+        }
+    }
+}
+$declaredRoles = @($resolved | Where-Object { $effectiveKeys.Contains(('Role|{0}' -f $_.Id)) })
+$declaredScopes = @($delegatedToRequest | Where-Object { $effectiveKeys.Contains(('Scope|{0}' -f $_.Id)) })
+$allSelectedPermissionsDeclared = $declaredRoles.Count -eq $resolved.Count -and $declaredScopes.Count -eq $delegatedToRequest.Count
 
 # ---------------------------------------------------------------------------
 # Step 4 - create or reuse the service principal
@@ -1356,7 +1406,8 @@ $alreadyHeld = @()
 $failedGrant = @()
 
 if ($SkipGrant) {
-    Write-Host '  Skipped by -SkipGrant. The selected permissions are declared for portal consent.' -ForegroundColor Yellow
+    Write-Host '  Consent changes skipped by -SkipGrant.' -ForegroundColor Yellow
+    Write-Host "  Currently declared: $($declaredRoles.Count)/$($resolved.Count) selected application permission(s), $($declaredScopes.Count)/$($delegatedToRequest.Count) selected delegated scope(s)." -ForegroundColor Gray
 }
 else {
     $assigned = Invoke-Graph -Method GET `
@@ -1437,6 +1488,7 @@ Write-Host "  Object ID          : $applicationObjectId"    -ForegroundColor Gra
 Write-Host "  Service principal  : $servicePrincipalId"     -ForegroundColor Gray
 Write-Host "  Granted now        : $($grantedNow.Count)"    -ForegroundColor Green
 Write-Host "  Already held       : $($alreadyHeld.Count)"   -ForegroundColor Gray
+Write-Host "  Permission declarations : $permissionDeclarationStatus" -ForegroundColor Gray
 if ($failedGrant.Count -gt 0) {
     Write-Host "  Failed             : $($failedGrant.Count)" -ForegroundColor Red
 }
@@ -1493,14 +1545,22 @@ if ($SkipGrant -or $delegatedToRequest.Count -gt 0 -or $failedGrant.Count -gt 0)
             Write-Host "    app role  $($failure.Name) on Microsoft Graph" -ForegroundColor Yellow
             Write-Host "              $($failure.Error)" -ForegroundColor DarkGray
         }
-        Write-Host '  The permissions are declared on the app but grant no claims until consent succeeds.' -ForegroundColor Yellow
+    }
+    if (-not $allSelectedPermissionsDeclared) {
+        Write-Host "  Some selected permissions are not declared (declaration status: $permissionDeclarationStatus)." -ForegroundColor Yellow
+        Write-Host '  Re-run and approve the declaration update before consenting to the full selected set.' -ForegroundColor Yellow
+        Write-Host '  Portal consent currently covers only permissions already declared on the app:' -ForegroundColor Yellow
     }
     elseif ($SkipGrant) {
-        Write-Host '  Permissions were declared but not consented. An administrator can grant everything' -ForegroundColor Yellow
+        Write-Host '  The selected permissions are declared; this run did not change their consent.' -ForegroundColor Yellow
+        Write-Host '  If consent is still needed, an administrator can grant it' -ForegroundColor Yellow
         Write-Host '  from the portal without adding permissions manually:' -ForegroundColor Yellow
     }
+    elseif ($failedGrant.Count -gt 0) {
+        Write-Host '  The selected permissions are declared on the app but grant no claims until consent succeeds.' -ForegroundColor Yellow
+    }
     else {
-        Write-Host '  If the requested delegated scopes are not already consented, grant them here:' -ForegroundColor Yellow
+        Write-Host '  If the declared delegated scopes are not already consented, grant them here:' -ForegroundColor Yellow
     }
     Write-Host "    Portal : Enterprise applications > $DisplayName > Security > Permissions > Grant admin consent" -ForegroundColor Cyan
     Write-Host "             $portalPermissionsUrl" -ForegroundColor Cyan
@@ -1515,10 +1575,20 @@ if ($Scenario -in 'AgentIdentity', 'All') {
     if ($csaRoles.Count -gt 0) {
         Write-Host ''
         Write-Host '  Custom security attributes:' -ForegroundColor Cyan
-        $csaGrantFailed = @($failedGrant | Where-Object { $_.Name -like 'CustomSecAttribute*' }).Count -gt 0
-        $csaState = if ($SkipGrant -or $csaGrantFailed) { 'declared for admin consent' } else { 'granted' }
-        Write-Host ('    Application roles {0}: {1}' -f $csaState, (($csaRoles | ForEach-Object { $_.Name }) -join ', ')) -ForegroundColor Gray
-        if (-not $SkipGrant -and -not $csaGrantFailed) {
+        $knownGrantedNames = @($grantedNow) + @($alreadyHeld) + @($verifiedNames)
+        $csaGranted = @($csaRoles | Where-Object { $knownGrantedNames -contains $_.Name })
+        $csaDeclared = @($declaredRoles | Where-Object { $_.Name -like 'CustomSecAttribute*' -and $knownGrantedNames -notcontains $_.Name })
+        $csaUndeclared = @($csaRoles | Where-Object { $knownGrantedNames -notcontains $_.Name -and -not $effectiveKeys.Contains(('Role|{0}' -f $_.Id)) })
+        if ($csaGranted.Count -gt 0) {
+            Write-Host "    Application roles granted: $(($csaGranted | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Gray
+        }
+        if ($csaDeclared.Count -gt 0) {
+            Write-Host "    Application roles declared; consent not confirmed by this run: $(($csaDeclared | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Gray
+        }
+        if ($csaUndeclared.Count -gt 0) {
+            Write-Host "    Application roles not declared: $(($csaUndeclared | ForEach-Object { $_.Name }) -join ', ')" -ForegroundColor Yellow
+        }
+        if ($csaGranted.Count -eq $csaRoles.Count) {
             Write-Host '    That is all an UNATTENDED (app-only) run needs.' -ForegroundColor Gray
         }
         Write-Host '    An INTERACTIVE run needs more: the signed-in user must also hold the' -ForegroundColor Yellow
@@ -1551,15 +1621,18 @@ $summary = [ordered]@{
     servicePrincipalId    = $servicePrincipalId
     scenario              = $Scenario
     grantSkipped          = [bool]$SkipGrant
-    appRolesDeclared      = @($resolved | ForEach-Object { $_.Name })
-    appRolesAddedToRequest = @($permissionMerge.RolesAdded | ForEach-Object { $_.Name })
+    permissionDeclarationStatus = $permissionDeclarationStatus
+    appRolesDeclared      = @($declaredRoles | ForEach-Object { $_.Name })
+    appRolesAddedToRequest = @($rolesAddedToRequest | ForEach-Object { $_.Name })
+    appRolesPlannedToAdd   = @($permissionMerge.RolesAdded | ForEach-Object { $_.Name })
     appRolesGranted       = @($grantedNow)
     appRolesAlreadyHeld   = @($alreadyHeld)
     appRolesVerified      = @($verifiedNames)
     appRolesUnresolved    = @($missing)
-    delegatedScopesDeclared = @($delegatedToRequest | ForEach-Object { $_.Name })
+    delegatedScopesDeclared = @($declaredScopes | ForEach-Object { $_.Name })
     delegatedScopesRequested = @($delegatedToRequest | ForEach-Object { $_.Name })
-    delegatedScopesAddedToRequest = @($permissionMerge.ScopesAdded | ForEach-Object { $_.Name })
+    delegatedScopesAddedToRequest = @($scopesAddedToRequest | ForEach-Object { $_.Name })
+    delegatedScopesPlannedToAdd = @($permissionMerge.ScopesAdded | ForEach-Object { $_.Name })
     consentFailures       = @($failedGrant)
     adminConsentUrl       = "https://login.microsoftonline.com/$($ctx.TenantId)/adminconsent?client_id=$applicationAppId"
     portalPermissionsUrl  = $portalPermissionsUrl
@@ -1571,7 +1644,12 @@ if ($OutputPath) {
     # Deliberately excludes the secret.
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $OutputPath -Encoding utf8
     Write-Host ''
-    Write-Host "  Summary written to $OutputPath (the client secret is NOT included)." -ForegroundColor Green
+    if ($WhatIfPreference) {
+        Write-Host '  Summary not written (-WhatIf).' -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "  Summary written to $OutputPath (the client secret is NOT included)." -ForegroundColor Green
+    }
 }
 
 Write-Host ''

@@ -107,7 +107,9 @@ Unattended runs authenticate as an Entra application. `New-A365AutomationApp.ps1
     -NewClientSecret
 ```
 
-> **Important: App roles are granted by default.** `New-A365AutomationApp.ps1` grants the app roles as part of the run — there is no `-GrantAdminConsent` switch. Use `-SkipGrant` to create the application and its credentials WITHOUT granting them. If the caller lacks the directory role needed to consent, the script reports what is outstanding and prints a consent link.
+> **Important: App roles are granted by default.** `New-A365AutomationApp.ps1` grants the app roles as part of the run - there is no `-GrantAdminConsent` switch. `-SkipGrant` still declares the selected application permissions and delegated scopes, but leaves consent to an administrator using the Entra portal. The declarations must already exist or their update must be approved and succeed; a dry run or declined update does not prepare missing permissions for portal consent.
+
+Permission declarations are additive: existing unique Graph permissions and other APIs' permissions are preserved. Duplicate Graph entries with the same permission ID and type are consolidated, even when no new permissions are needed. This does not revoke existing consent grants.
 
 Scenarios are additive — run the script once per scenario, or use `All`:
 
@@ -224,6 +226,22 @@ ACTION REQUIRED - an administrator must finish granting these permissions.
 ```
 
 The same information appears in the JSON report as `adminConsentUrl`, `portalPermissionsUrl` and `consentFailures`, and the orchestrator repeats it once at the end of a multi-phase run under `summary.consentActionRequired`.
+
+### 4.2 Permission declaration reports and dry runs
+
+The automation-app summary distinguishes permissions present on the application from changes proposed for the current run:
+
+| Fields | Meaning |
+| --- | --- |
+| `permissionDeclarationStatus` | `Unchanged` when no update is needed, `Applied` after a successful declaration update, `WhatIf` when a needed update is only previewed, or `Declined` when confirmation is refused. |
+| `appRolesDeclared`, `delegatedScopesDeclared` | Selected permissions already declared on the app or included in a successful update; declaration does not imply admin consent. |
+| `appRolesAddedToRequest`, `delegatedScopesAddedToRequest` | Permissions added by a successful declaration update in this run; empty for dry runs, declined confirmation, or no change. |
+| `appRolesPlannedToAdd`, `delegatedScopesPlannedToAdd` | Missing permissions proposed for this run, whether or not the update is approved. |
+| `delegatedScopesRequested` | Requested delegated scopes, regardless of whether they have been declared or consented. |
+
+Planned lists describe the original proposal, not outstanding work after a successful update. A duplicate-only cleanup is `Applied` when it succeeds, but its added-permission lists remain empty. With `-WhatIf` or declined confirmation, existing declarations remain visible and proposed additions are not reported as applied.
+
+Portal consent can cover only permissions actually declared on the app. If selected permissions are still missing because an update was previewed or declined, rerun without `-WhatIf` and approve the update before sending the administrator the consent link. Authentication and read-only Graph lookups can still occur during a dry run; when the app or service principal does not exist, later steps remain skipped rather than reporting declarations for an object that was not created.
 
 ## 5. Authentication
 
