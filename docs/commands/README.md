@@ -27,10 +27,7 @@ There is reference documentation for each command.
 | [develop-mcp list-servers](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-list-servers) | List MCP servers in a specific Dataverse environment. |
 | [develop-mcp publish](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-publish) | Publish an MCP server to a Dataverse environment. |
 | [develop-mcp unpublish](https://learn.microsoft.com/microsoft-agent-365/developer/reference/cli/develop-mcp#develop-mcp-unpublish) | Unpublish an MCP server from a Dataverse environment. |
-| [network](network.md) | Configure tenant networking for Agent 365. |
-| [network vnet link](network.md#link) | Link a NetworkInjection enterprise policy to your Agent 365 environment. |
-| [network vnet unlink](network.md#unlink) | Remove the virtual network link from your Agent 365 environment. |
-| [network vnet status](network.md#status) | Show whether a virtual network policy is linked to your Agent 365 environment. |
+| [network](network-gsa.md) | Configure tenant networking for Agent 365. |
 | [network gsa enable](network-gsa.md#enable-and-disable) | Turn Global Secure Access on for your Agent 365 environment. |
 | [network gsa disable](network-gsa.md#enable-and-disable) | Turn Global Secure Access off for your Agent 365 environment. |
 | [network gsa status](network-gsa.md#status) | Show whether Global Secure Access is on for your Agent 365 environment. |

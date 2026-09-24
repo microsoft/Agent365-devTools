@@ -17,7 +17,7 @@ platform to apply the change against the environment it resolves for your tenant
 - An `az login` to the tenant you intend to configure.
 - Public cloud only. Sovereign clouds are not supported.
 
-Nothing is read from Azure — unlike `a365 network vnet` — but the `az login` still matters: it is
+Nothing is read from Azure, but the `az login` still matters: it is what selects the tenant. The
 what selects the tenant. The commands authenticate against the tenant and account of your current
 `az account show`, so `az login --tenant <id>` is how you choose which tenant to configure when you
 have more than one. Without an explicit tenant the Windows broker silently returns whichever
