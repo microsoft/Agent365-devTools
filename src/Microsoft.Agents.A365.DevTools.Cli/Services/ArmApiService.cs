@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -24,6 +25,26 @@ public class ArmApiService : IDisposable
     internal const string ArmResource = "https://management.core.windows.net/";
     private const string ResourceGroupApiVersion = "2021-04-01";
     private const string AppServiceApiVersion = "2022-03-01";
+
+    // Stable first: the module's own ARM templates deploy enterprise policies at 2020-10-30.
+    private static readonly string[] EnterprisePolicyApiVersions = ["2020-10-30", "2020-10-30-preview"];
+
+    // ArmBaseUrl has no trailing slash and the ARM bearer token is set as a default request
+    // header, so a policy id that does not begin with "/subscriptions/" can retarget the whole
+    // request: "@evil.example/x" concatenates to "https://management.azure.com@evil.example/x",
+    // where "management.azure.com" is userinfo and the host is the attacker's. Pinning the shape
+    // is what keeps the token pointed at ARM.
+    //
+    // IgnoreCase because ARM ids are case-insensitive and are commonly seen as "resourcegroups"
+    // or "microsoft.powerplatform"; the shape stays pinned either way. Segments exclude
+    // whitespace as well as delimiters, which is what actually rejects a trailing newline --
+    // \z alone does not, because [^/?#]+ would absorb the newline before the anchor is reached.
+    // The dot-segment lookaheads keep the path from normalizing into a different resource --
+    // harmless while the host is fixed, but the validated string should be the string that gets
+    // requested.
+    private static readonly Regex EnterprisePolicyArmIdPattern = new(
+        @"^/subscriptions/[0-9a-f-]{36}/resourceGroups/(?!\.{1,2}(?:/|\z))[^/?#\s]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/(?!\.{1,2}\z)[^/?#\s]+\z",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private readonly ILogger<ArmApiService> _logger;
     private readonly HttpClient _httpClient;
@@ -243,4 +264,112 @@ public class ArmApiService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads a Microsoft.PowerPlatform/enterprisePolicies resource and returns its
+    /// <c>properties.systemId</c> — the only identifier the Business App Platform accepts when
+    /// linking a policy to an environment. Shaped
+    /// <c>/regions/{region}/providers/Microsoft.PowerPlatform/enterprisePolicies/{guid}</c>,
+    /// which is not derivable from the ARM resource id.
+    ///
+    /// This read happens in the CLI, using the admin's own Azure session, so the Agent 365
+    /// service never needs delegated ARM access.
+    ///
+    /// Returns null when the policy cannot be read or has no systemId; the message is logged.
+    /// </summary>
+    public virtual async Task<string?> GetEnterprisePolicySystemIdAsync(
+        string policyArmId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(policyArmId))
+            throw new ArgumentException("Policy ARM id is required.", nameof(policyArmId));
+
+        if (!EnterprisePolicyArmIdPattern.IsMatch(policyArmId))
+        {
+            _logger.LogError(
+                "'{PolicyArmId}' is not an enterprise policy ARM id. Expected " +
+                "/subscriptions/{{subscriptionId}}/resourceGroups/{{group}}/providers/" +
+                "Microsoft.PowerPlatform/enterprisePolicies/{{name}}, as returned by " +
+                "New-SubnetInjectionEnterprisePolicy.",
+                policyArmId);
+            return null;
+        }
+
+        if (!await EnsureArmHeadersAsync(tenantId, ct))
+            return null;
+
+        // The stable and the preview version both ship on this RP and differ by tenant rollout, so
+        // a rejected api-version is a routine outcome rather than a failure worth surfacing.
+        foreach (var apiVersion in EnterprisePolicyApiVersions)
+        {
+            var url = $"{ArmBaseUrl}{policyArmId}?api-version={apiVersion}";
+            _logger.LogDebug("ARM GET enterprise policy (api-version {ApiVersion})", apiVersion);
+
+            try
+            {
+                using var response = await _retryHelper.ExecuteWithRetryAsync(
+                    ct => _httpClient.GetAsync(url, ct), cancellationToken: ct);
+
+                if (response.StatusCode == HttpStatusCode.BadRequest)
+                {
+                    _logger.LogDebug("ARM rejected api-version {ApiVersion}; trying the next one", apiVersion);
+                    continue;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError(
+                        "Could not read enterprise policy {PolicyArmId}. Azure returned {StatusCode}. " +
+                        "Check that the policy exists and that you have read access to it.",
+                        policyArmId,
+                        response.StatusCode);
+                    return null;
+                }
+
+                var body = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(body);
+
+                if (!doc.RootElement.TryGetProperty("properties", out var properties) ||
+                    !properties.TryGetProperty("systemId", out var systemId))
+                {
+                    _logger.LogError(
+                        "Enterprise policy {PolicyArmId} has no systemId. The policy may still be provisioning.",
+                        policyArmId);
+                    return null;
+                }
+
+                var value = systemId.GetString();
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    _logger.LogError(
+                        "Enterprise policy {PolicyArmId} has an empty systemId. The policy may still be provisioning.",
+                        policyArmId);
+                    return null;
+                }
+
+                _logger.LogDebug("Resolved enterprise policy systemId");
+                return value;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // RetryHelper rethrows cancellation deliberately. Swallowing it here would report
+                // Ctrl+C as "policy not found" and let the caller carry on as if the read had
+                // simply come back empty.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (NetworkHelper.IsConnectionResetByProxy(ex))
+                    _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+                else
+                    _logger.LogError(ex, "Failed to read enterprise policy {PolicyArmId}", policyArmId);
+                return null;
+            }
+        }
+
+        _logger.LogError(
+            "Azure rejected every supported enterprise policy api-version reading {PolicyArmId}.",
+            policyArmId);
+        return null;
+    }
 }
