@@ -22,7 +22,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
-Blueprint agents that export telemetry through the app-only S2S endpoint do not need these permissions: `a365 setup all` no longer requests them for blueprint agents, and agent registration authorizes the agent instead. Grant them with Option A only for agents that still export through the delegated (OBO) route (#501).
+Blueprint agents that export telemetry through the app-only S2S endpoint no longer need these permissions; grant them with Option A only for agents that still export through the delegated (OBO) route (#501).
 
 ### Added
 - Setup and bootstrap now use Microsoft's first-party Agent 365 CLI application when it is present in your tenant, validating it without changing Microsoft's app registration, and fall back to a tenant-owned "Agent 365 CLI" app when it is not (#489).
@@ -61,7 +61,7 @@ Blueprint agents that export telemetry through the app-only S2S endpoint do not 
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
-- `a365 setup all --agent-registration-only` now exits with code 1 when agent registration fails (#501).
+- `a365 setup all` now exits with code 1 when agent registration fails or cannot be verified for blueprint agents or with `--agent-registration-only` (#501).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
 - `setup all --authmode s2s` no longer prints spurious "Action Required" PowerShell steps when the agent identity already inherits its app roles from the blueprint, and now retries the grant automatically before falling back to manual steps (#460).

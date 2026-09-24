@@ -752,7 +752,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
     /// <summary>
     /// Step 6: when Observability permissions are not requested, registration is the agent's only Observability
-    /// authorization, so its failure is an error; without the flag it stays a warning.
+    /// authorization, so its failure is an error; when they are requested (AI Teammate) it stays a warning.
     /// </summary>
     [Theory]
     [InlineData(true)]
@@ -774,7 +774,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             ctx.Results.Errors.Any(e => e.Contains("Agent registration failed")).Should().Be(skipObservabilityPermissions,
                 because: "without OtelWrite an unregistered agent cannot export telemetry, so setup must fail (exit 1)");
             ctx.Results.Warnings.Any(w => w.Contains("Agent registration failed")).Should().Be(!skipObservabilityPermissions,
-                because: "without the flag the agent keeps OtelWrite, and a failed registration remains a non-fatal warning");
+                because: "when Observability permissions are requested the agent keeps OtelWrite, and a failed registration remains a non-fatal warning");
         }
         finally
         {
