@@ -35,6 +35,15 @@ public class GsaService : IGsaService
     private readonly string _environment;
     private readonly HttpMessageHandler? _handler;
 
+    /// <summary>
+    /// The az account, resolved once and reused. <see cref="WaitForStatusAsync"/> re-enters
+    /// <see cref="SendAsync"/> for every poll, and each resolution shells out to
+    /// <c>az account show</c>, which returns null on any CLI hiccup -- so without this a
+    /// transient failure part-way through a wait aborts the wait with "could not determine
+    /// your Azure tenant" even though the tenant was known all along.
+    /// </summary>
+    private AzureAccountInfo? _account;
+
     public GsaService(
         ILogger<GsaService> logger,
         IAuthenticationService authService,
@@ -77,11 +86,31 @@ public class GsaService : IGsaService
 
         // Wall clock, not summed sleeps: each status call costs real time, and a caller who asked
         // for five minutes should not wait eight because the service was slow.
+        //
+        // The stopwatch alone only bounds the gap between completed polls. A poll that starts just
+        // inside the ceiling can still run to the HttpClient's own timeout, overshooting by
+        // minutes, so the ceiling is also armed on the token every request is made with.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+
         var stopwatch = Stopwatch.StartNew();
+        GsaStatusResponse? last = null;
 
         while (true)
         {
-            var last = await GetStatusAsync(cancellationToken);
+            try
+            {
+                last = await GetStatusAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The ceiling elapsed mid-request. That is a timeout, not a failure: report the
+                // last known state, exactly as the pre-sleep check below does.
+                _logger.LogInformation(
+                    "Stopped waiting after {Elapsed:0}s. The change is still being applied.",
+                    stopwatch.Elapsed.TotalSeconds);
+                return last;
+            }
 
             if (last == null || string.Equals(last.Status, expectedStatus, StringComparison.OrdinalIgnoreCase))
                 return last;
@@ -90,6 +119,9 @@ public class GsaService : IGsaService
                 return last;
 
             _logger.LogInformation("Still applying... ({Elapsed:0}s elapsed)", stopwatch.Elapsed.TotalSeconds);
+
+            // The pre-sleep check above guarantees this delay finishes inside the ceiling, so it
+            // waits on the caller's token only -- the timeout can't fire here.
             await Task.Delay(PollInterval, cancellationToken);
         }
     }
@@ -113,7 +145,7 @@ public class GsaService : IGsaService
             // "common", and WAM silently returns the Windows account even when a login hint names
             // a different one — so a tenant-wide setting would be changed on the wrong tenant.
             // Passing the tenant also arms the mismatch self-heal in AuthenticationService.
-            var account = await _azureCliService.GetCurrentAccountAsync();
+            var account = _account ??= await _azureCliService.GetCurrentAccountAsync();
             if (account is null || string.IsNullOrWhiteSpace(account.TenantId))
             {
                 _logger.LogError("Could not determine your Azure tenant. Run 'az login' and try again.");

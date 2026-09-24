@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
@@ -22,8 +23,12 @@ public class GsaServiceTests
     private static IAuthenticationService FakeAuth(string token = "fake-a365-token")
     {
         var mock = Substitute.For<IAuthenticationService>();
+
+        // The 8th parameter is the CancellationToken. Omitting a matcher for it pins the setup to
+        // ct == default, so any call carrying a real token -- a caller's, or the wait ceiling's --
+        // silently misses and returns null, which the service reports as a failed token acquisition.
         mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(token));
         return mock;
     }
@@ -420,5 +425,102 @@ public class GsaServiceTests
         result.Pending.Should().BeTrue();
         result.Reason.Should().BeNull();
         handler.RequestCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task WaitForStatusAsync_WhenCeilingElapsesDuringAPoll_StopsWaitingOnTheInFlightCall()
+    {
+        // The pre-sleep stopwatch check only bounds the gap between completed polls. Without the
+        // ceiling armed on the request's own token, a poll that starts inside the budget runs to
+        // the HttpClient's timeout -- minutes past what the caller asked for.
+        using var handler = new SlowHttpMessageHandler(TimeSpan.FromSeconds(30));
+        var svc = CreateService(handler);
+
+        var stopwatch = Stopwatch.StartNew();
+        var result = await svc.WaitForStatusAsync("Enabled", TimeSpan.FromMilliseconds(200));
+        stopwatch.Stop();
+
+        result.Should().BeNull(because: "the ceiling elapsed before any status was read");
+        stopwatch.Elapsed.Should().BeLessThan(
+            TimeSpan.FromSeconds(10),
+            because: "the wait must abandon the in-flight request rather than block on it");
+    }
+
+    [Fact]
+    public async Task WaitForStatusAsync_WhenCallerCancels_PropagatesRatherThanReportingATimeout()
+    {
+        // The timeout and a Ctrl+C both surface as OperationCanceledException. Only the timeout is
+        // swallowed into "still applying"; a caller cancel has to reach the caller.
+        using var handler = new SlowHttpMessageHandler(TimeSpan.FromSeconds(30));
+        var svc = CreateService(handler);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        var act = async () => await svc.WaitForStatusAsync("Enabled", TimeSpan.FromMinutes(5), cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // ───────────────────── az account resolution ────────────────────────────────
+
+    [Fact]
+    public async Task WaitForStatusAsync_ResolvesTheAzAccountOnceAcrossEveryPoll()
+    {
+        // Each resolution shells out to `az account show` and returns null on any CLI hiccup, so
+        // re-resolving per poll turns a transient failure mid-wait into "could not determine your
+        // Azure tenant" even though the tenant was known from the first call.
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Disabled", pending: true));
+        var azureCli = FakeAzureCli();
+        var svc = CreateService(handler, azureCli: azureCli);
+
+        await svc.GetStatusAsync();
+        await svc.WaitForStatusAsync("Enabled", TimeSpan.FromSeconds(1));
+
+        await azureCli.Received(1).GetCurrentAccountAsync();
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_WhenTheAccountIsUnavailable_RetriesOnTheNextCall()
+    {
+        // The cache must not pin a failure: an admin who runs `az login` after the first attempt
+        // should not have to restart the process.
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Enabled"));
+        var azureCli = Substitute.For<IAzureCliService>();
+        azureCli.GetCurrentAccountAsync().Returns(
+            Task.FromResult<AzureAccountInfo?>(null),
+            Task.FromResult<AzureAccountInfo?>(new AzureAccountInfo
+            {
+                TenantId = "11111111-1111-1111-1111-111111111111",
+                User = new AzureUser { Name = "admin@contoso.onmicrosoft.com" },
+            }));
+        var svc = CreateService(handler, azureCli: azureCli);
+
+        var first = await svc.GetStatusAsync();
+        var second = await svc.GetStatusAsync();
+
+        first.Should().BeNull(because: "no az account means no tenant to authenticate against");
+        second.Should().NotBeNull();
+        second!.Status.Should().Be("Enabled");
+        second.Pending.Should().BeFalse();
+        second.Reason.Should().BeNull();
+        await azureCli.Received(2).GetCurrentAccountAsync();
+    }
+
+    /// <summary>
+    /// Holds each request open until the request's own token is cancelled, so a test can tell
+    /// "abandoned the call" from "waited for the response".
+    /// </summary>
+    private sealed class SlowHttpMessageHandler(TimeSpan delay) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(delay, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { status = "Enabled", pending = false })),
+            };
+        }
     }
 }
