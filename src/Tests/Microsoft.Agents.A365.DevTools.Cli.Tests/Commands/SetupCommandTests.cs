@@ -715,14 +715,14 @@ public class SetupCommandTests
     }
 
     /// <summary>
-    /// s2s and both exist to grant app roles and OtelWrite is the only one, so those modes — from the flag or from
-    /// a365.config.json — must keep requesting Observability API permissions.
+    /// The S2S endpoint authorizes registered agents without OtelWrite whatever the auth mode (validated live), so
+    /// s2s and both — from the flag or from a365.config.json — must not request Observability API permissions either.
     /// </summary>
     [Theory]
     [InlineData("--authmode s2s", null)]
     [InlineData("--authmode both", null)]
     [InlineData("", "both")]
-    public async Task SetupAll_BlueprintAgent_AppRoleAuthModes_KeepObservabilityApi(string args, string? configAuthMode)
+    public async Task SetupAll_BlueprintAgent_AppRoleAuthModes_OmitObservabilityApi(string args, string? configAuthMode)
     {
         var config = new Agent365Config
         {
@@ -740,13 +740,13 @@ public class SetupCommandTests
         var result = await parser.InvokeAsync($"all --aiteammate false {args} --dry-run", new TestConsole());
 
         result.Should().Be(0, because: "s2s and both are valid blueprint-agent auth modes");
-        _mockLogger.Received().Log(
+        _mockLogger.DidNotReceive().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions") && o.ToString()!.Contains("Observability API")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Inheritable Permissions") && o.ToString()!.Contains("Observability")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
-        _mockLogger.DidNotReceive().Log(
+        _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("Observability API not requested")),

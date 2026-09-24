@@ -397,10 +397,9 @@ internal static class AllSubcommand
                 return;
             }
 
-            // Registered blueprint agents export telemetry app-only over S2S, so only the app-role modes
-            // (s2s/both) still request OtelWrite; AI Teammate setup is unchanged.
-            var skipObservabilityPermissions = nonDwConfig is not null
-                && effectiveAuthModeForValidation is not ("s2s" or "both");
+            // Registered blueprint agents export telemetry app-only over S2S without OtelWrite in every auth
+            // mode, so blueprint setup never requests it; AI Teammate setup is unchanged.
+            var skipObservabilityPermissions = nonDwConfig is not null;
 
             if (nonDwConfig is not null)
             {

@@ -94,9 +94,9 @@ a365 setup all --authmode both
 
 ### Observability permissions
 
-For blueprint agents in the default `obo` auth mode, `setup all` does not request `Agent365.Observability.OtelWrite`. Registered agents export telemetry with an app-only token through the S2S endpoint, which authorizes them by their agent registration, so no Observability admin consent is needed. Registration is then the agent's only authorization, so a registration failure is reported as an error (exit code 1).
+For blueprint agents, `setup all` does not request `Agent365.Observability.OtelWrite` in any auth mode. Registered agents export telemetry with an app-only token through the S2S endpoint, which authorizes them by their agent registration, so no Observability admin consent is needed. Registration is then the agent's only authorization, so a registration failure is reported as an error (exit code 1).
 
-`--authmode s2s|both` still request `OtelWrite` (the app role, plus the delegated scope with `both`); use `both` for agents whose SDK still exports through the delegated (OBO) route. AI Teammate setup is unchanged. Re-running setup does not revoke permissions granted earlier.
+Agents whose SDK still exports through the delegated (OBO) route need `OtelWrite`; grant it manually (see the CHANGELOG upgrade note). AI Teammate setup is unchanged. Re-running setup does not revoke permissions granted earlier.
 
 ---
 
