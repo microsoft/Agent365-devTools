@@ -342,6 +342,13 @@ public class ArmApiService : IDisposable
                 _logger.LogDebug("Resolved enterprise policy systemId");
                 return value;
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // RetryHelper rethrows cancellation deliberately. Swallowing it here would report
+                // Ctrl+C as "policy not found" and let the caller carry on as if the read had
+                // simply come back empty.
+                throw;
+            }
             catch (Exception ex)
             {
                 if (NetworkHelper.IsConnectionResetByProxy(ex))

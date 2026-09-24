@@ -23,7 +23,10 @@ subnets, delegate them to `Microsoft.PowerPlatform/enterprisePolicies`, and crea
 
 - **Global Administrator** or **Power Platform Administrator** in the tenant. The platform rejects
   anyone else.
-- An active `az login` session in the same tenant. Used only to read the enterprise policy.
+- An active `az login` session. It supplies two defaults: the tenant to operate on, and the
+  signed-in account to authenticate as. `--tenant-id` overrides the first; the account still comes
+  from `az login`. Tokens are not borrowed from Azure CLI -- both the ARM policy read and the
+  Agent 365 call acquire their own tokens through the CLI's sign-in.
 - A NetworkInjection enterprise policy already created by `New-SubnetInjectionEnterprisePolicy`,
   with subnets delegated to `Microsoft.PowerPlatform/enterprisePolicies`.
 - Public cloud only. Sovereign clouds are not supported.

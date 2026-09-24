@@ -29,8 +29,12 @@ public class ArmApiServiceTests
     private static IAuthenticationService FakeAuth()
     {
         var mock = Substitute.For<IAuthenticationService>();
+
+        // The 8th parameter is the CancellationToken. Without a matcher the setup is pinned to
+        // ct == default, so any call carrying a real token misses it and the service reports a
+        // failed token acquisition instead of doing the work under test.
         mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult("fake-arm-token"));
         return mock;
     }
@@ -428,6 +432,35 @@ public class ArmApiServiceTests
         var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
 
         result.Should().BeNull(because: "a policy without a systemId is not yet usable for linking");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenCallerCancels_PropagatesRatherThanReportingNoPolicy()
+    {
+        // RetryHelper rethrows cancellation on purpose. Folding it into the broad catch would
+        // report Ctrl+C as "could not read the policy" and let link carry on as if the policy
+        // simply did not exist.
+        using var handler = new SlowHttpMessageHandler(TimeSpan.FromSeconds(30));
+        var svc = CreateService(handler);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        var act = async () => await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Holds each request open until the request's own token is cancelled, so a test can observe
+    /// what the service does with a cancellation raised mid-call.
+    /// </summary>
+    private sealed class SlowHttpMessageHandler(TimeSpan delay) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(delay, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
+        }
     }
 
     [Fact]
