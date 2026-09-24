@@ -37,7 +37,9 @@ Microsoft's role is supplying the `a365` CLI that orchestrates steps 1–2. Step
 
 By default the evaluation uses **Claude Haiku 4.5**, invoked through whichever coding agent CLI you have installed (GitHub Copilot CLI or Claude Code CLI). You can override the engine with `--eval-engine github-copilot` or `--eval-engine claude-code`.
 
-To run a **different model** without waiting for a CLI update, set an environment variable before the run: `A365_EVAL_COPILOT_MODEL` for GitHub Copilot (needs an exact model ID, e.g. `claude-haiku-4.5`) or `A365_EVAL_CLAUDE_MODEL` for Claude Code (accepts an alias, e.g. `haiku`).
+You can also score with **your own Azure OpenAI deployment** via `--eval-engine azure-openai`. Set `A365_EVAL_AZURE_OPENAI_ENDPOINT` and `A365_EVAL_AZURE_OPENAI_DEPLOYMENT`, and sign in to Entra ID (e.g. `az login`). This engine authenticates with **Microsoft Entra ID only** (`DefaultAzureCredential`) — **API-key authentication is not supported**. Unlike the coding-agent engines it needs no local CLI: the `a365` CLI calls your Azure OpenAI deployment directly, under your own Azure subscription, billing, and access policies.
+
+To run a **different model** without waiting for a CLI update, set an environment variable before the run: `A365_EVAL_COPILOT_MODEL` for GitHub Copilot (needs an exact model ID, e.g. `claude-haiku-4.5`) or `A365_EVAL_CLAUDE_MODEL` for Claude Code (accepts an alias, e.g. `haiku`). For Azure OpenAI, the model is whatever you name in `A365_EVAL_AZURE_OPENAI_DEPLOYMENT` (`gpt-5.4` recommended — it is the model this engine was tested against).
 
 The CLI that runs the model is **yours**, installed from npm by you, authenticated with your credentials. Microsoft does not host or resell the model API call — it is made directly by your CLI to the AI provider under your own terms of service and billing. The `a365` CLI specifies the model flag but does not mediate the API call.
 

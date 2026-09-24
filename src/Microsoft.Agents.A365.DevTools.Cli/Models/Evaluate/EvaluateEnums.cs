@@ -56,5 +56,6 @@ public enum EvalEngine
     Auto,
     GitHubCopilot,
     ClaudeCode,
+    AzureOpenAI,
     None
 }
