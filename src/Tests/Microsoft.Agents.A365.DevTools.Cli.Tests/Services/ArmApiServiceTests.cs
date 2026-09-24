@@ -327,6 +327,15 @@ public class ArmApiServiceTests
     [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p?x=1")]
     [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p#frag")]
     [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p/../../x")]
+    // Dot segments normalize the request path into a different resource before it is sent.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/../providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/./providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/..")]
+    // .NET's $ matches before a trailing newline, and [^/?#]+ would have absorbed the newline
+    // anyway, so segments exclude whitespace and the anchor is \z.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p\n")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p ")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/r g/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
     public async Task GetEnterprisePolicySystemIdAsync_WhenArmIdIsNotAnEnterprisePolicyPath_RejectsWithoutCalling(
         string policyArmId)
     {
@@ -339,6 +348,25 @@ public class ArmApiServiceTests
         handler.RequestCount.Should().Be(
             0,
             because: "the ARM bearer token is a default header, so a redirected host would receive it");
+    }
+
+    [Theory]
+    // ARM ids are case-insensitive, and the portal, the CLI and ARM itself all emit different
+    // casings of the same id. Rejecting any of them would fail a perfectly valid --policy-arm-id.
+    [InlineData("/subscriptions/8D1E5B21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourcegroups/rg/providers/microsoft.powerplatform/enterprisepolicies/p")]
+    [InlineData("/SUBSCRIPTIONS/8D1E5B21-0000-0000-0000-000000000000/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.POWERPLATFORM/ENTERPRISEPOLICIES/P")]
+    public async Task GetEnterprisePolicySystemIdAsync_AcceptsAnyCasingOfTheArmId(string policyArmId)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(policyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId);
+        handler.RequestCount.Should().Be(1);
     }
 
     [Fact]

@@ -34,9 +34,17 @@ public class ArmApiService : IDisposable
     // request: "@evil.example/x" concatenates to "https://management.azure.com@evil.example/x",
     // where "management.azure.com" is userinfo and the host is the attacker's. Pinning the shape
     // is what keeps the token pointed at ARM.
+    //
+    // IgnoreCase because ARM ids are case-insensitive and are commonly seen as "resourcegroups"
+    // or "microsoft.powerplatform"; the shape stays pinned either way. Segments exclude
+    // whitespace as well as delimiters, which is what actually rejects a trailing newline --
+    // \z alone does not, because [^/?#]+ would absorb the newline before the anchor is reached.
+    // The dot-segment lookaheads keep the path from normalizing into a different resource --
+    // harmless while the host is fixed, but the validated string should be the string that gets
+    // requested.
     private static readonly Regex EnterprisePolicyArmIdPattern = new(
-        @"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/?#]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/[^/?#]+$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        @"^/subscriptions/[0-9a-f-]{36}/resourceGroups/(?!\.{1,2}(?:/|\z))[^/?#\s]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/(?!\.{1,2}\z)[^/?#\s]+\z",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private readonly ILogger<ArmApiService> _logger;
     private readonly HttpClient _httpClient;
