@@ -188,7 +188,7 @@ class Program
             var networkLogger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("network");
             var vnetLinkService = serviceProvider.GetRequiredService<IVNetLinkService>();
             var azureCliService = serviceProvider.GetRequiredService<IAzureCliService>();
-            rootCommand.AddCommand(NetworkCommand.CreateCommand(networkLogger, vnetLinkService, azureCliService));
+            rootCommand.AddCommand(NetworkCommand.CreateCommand(networkLogger, vnetLinkService, azureCliService, confirmationProvider));
 
             // Build pipeline manually so we can skip UseTypoCorrections() ("Did you mean?" noise)
             // and UseParseErrorReporting() (full help dump on any parse error), replacing both

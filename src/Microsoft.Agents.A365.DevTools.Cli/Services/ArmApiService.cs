@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -27,6 +28,15 @@ public class ArmApiService : IDisposable
 
     // Stable first: the module's own ARM templates deploy enterprise policies at 2020-10-30.
     private static readonly string[] EnterprisePolicyApiVersions = ["2020-10-30", "2020-10-30-preview"];
+
+    // ArmBaseUrl has no trailing slash and the ARM bearer token is set as a default request
+    // header, so a policy id that does not begin with "/subscriptions/" can retarget the whole
+    // request: "@evil.example/x" concatenates to "https://management.azure.com@evil.example/x",
+    // where "management.azure.com" is userinfo and the host is the attacker's. Pinning the shape
+    // is what keeps the token pointed at ARM.
+    private static readonly Regex EnterprisePolicyArmIdPattern = new(
+        @"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/?#]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/[^/?#]+$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly ILogger<ArmApiService> _logger;
     private readonly HttpClient _httpClient;
@@ -265,6 +275,17 @@ public class ArmApiService : IDisposable
     {
         if (string.IsNullOrWhiteSpace(policyArmId))
             throw new ArgumentException("Policy ARM id is required.", nameof(policyArmId));
+
+        if (!EnterprisePolicyArmIdPattern.IsMatch(policyArmId))
+        {
+            _logger.LogError(
+                "'{PolicyArmId}' is not an enterprise policy ARM id. Expected " +
+                "/subscriptions/{{subscriptionId}}/resourceGroups/{{group}}/providers/" +
+                "Microsoft.PowerPlatform/enterprisePolicies/{{name}}, as returned by " +
+                "New-SubnetInjectionEnterprisePolicy.",
+                policyArmId);
+            return null;
+        }
 
         if (!await EnsureArmHeadersAsync(tenantId, ct))
             return null;

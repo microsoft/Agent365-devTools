@@ -39,30 +39,32 @@ subnets, delegate them to `Microsoft.PowerPlatform/enterprisePolicies`, and crea
 ### `link`
 
 ```bash
-a365 network vnet link --policy-arm-id <arm-id> [--swap] [--tenant-id <guid>] [--wait]
+a365 network vnet link --policy-arm-id <arm-id> [--swap] [--tenant-id <guid>] [--wait] [--yes]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--policy-arm-id`, `-p` | **Required.** ARM resource id of the policy, as returned by `New-SubnetInjectionEnterprisePolicy`. |
 | `--swap` | Replace an existing link to a *different* policy. Without it, a different existing link is reported as a conflict instead of being silently replaced. |
-| `--tenant-id` | Tenant to authenticate against for the Azure policy read. Defaults to the tenant of your current `az login`. |
+| `--tenant-id` | Tenant to authenticate against. Defaults to the tenant of your current `az login`. |
 | `--wait` | Poll until the operation settles instead of returning an operation id. |
+| `--yes`, `-y` | Skip the confirmation prompt shown for `--swap`. |
 
 Linking the policy that is already linked is a no-op and succeeds without `--swap`.
 
 ### `unlink`
 
 ```bash
-a365 network vnet unlink [--wait]
+a365 network vnet unlink [--tenant-id <guid>] [--wait] [--yes]
 ```
 
-Unlink needs no policy id — the platform remembers which policy it linked.
+Unlink needs no policy id — the platform remembers which policy it linked. It prompts before
+removing the link; pass `--yes` in automation.
 
 ### `status`
 
 ```bash
-a365 network vnet status [--operation-id <id>]
+a365 network vnet status [--operation-id <id>] [--tenant-id <guid>]
 ```
 
 Without `--operation-id`, reports the environment's current link. With one, reports that specific
@@ -100,6 +102,7 @@ a365 network vnet status
 | Symptom | Cause |
 | --- | --- |
 | `Could not determine your Azure tenant` | No `az login` session. Run `az login`, or pass `--tenant-id`. |
+| `--tenant-id was supplied but is empty` | `--tenant-id` was passed with a blank value. Pass a tenant id, or omit the option entirely. |
 | `403` from the platform | Caller is not a Global or Power Platform Administrator, or the CLI app lacks consent for the `AgentTools.VNet.*` scopes. |
 | Conflict reported on `link` | A *different* policy is already linked. Re-run with `--swap`, or `unlink` first. |
 | Policy read fails | The policy ARM id is wrong, or your `az login` identity cannot read it. |

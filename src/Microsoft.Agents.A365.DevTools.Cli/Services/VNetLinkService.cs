@@ -38,19 +38,22 @@ public class VNetLinkService : IVNetLinkService
     private readonly ArmApiService _armApiService;
     private readonly string _environment;
     private readonly HttpMessageHandler? _handler;
+    private readonly Func<Task<string?>> _loginHintResolver;
 
     public VNetLinkService(
         ILogger<VNetLinkService> logger,
         IAuthenticationService authService,
         ArmApiService armApiService,
         string environment = "prod",
-        HttpMessageHandler? handler = null)
+        HttpMessageHandler? handler = null,
+        Func<Task<string?>>? loginHintResolver = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
         _armApiService = armApiService ?? throw new ArgumentNullException(nameof(armApiService));
         _environment = environment ?? "prod";
         _handler = handler;
+        _loginHintResolver = loginHintResolver ?? AzCliHelper.ResolveLoginHintAsync;
     }
 
     /// <inheritdoc />
@@ -79,18 +82,21 @@ public class VNetLinkService : IVNetLinkService
         };
 
         _logger.LogInformation("Linking the policy to your Agent 365 environment...");
-        return await SendAsync(HttpMethod.Post, LinkPath, request, "link virtual network", cancellationToken);
+        return await SendAsync(HttpMethod.Post, LinkPath, request, "link virtual network", tenantId, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<VNetStatusResponse?> UnlinkAsync(CancellationToken cancellationToken = default)
+    public async Task<VNetStatusResponse?> UnlinkAsync(
+        string tenantId,
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Removing the virtual network link from your Agent 365 environment...");
-        return await SendAsync(HttpMethod.Post, UnlinkPath, payload: null, "unlink virtual network", cancellationToken);
+        return await SendAsync(HttpMethod.Post, UnlinkPath, payload: null, "unlink virtual network", tenantId, cancellationToken);
     }
 
     /// <inheritdoc />
     public async Task<VNetStatusResponse?> GetStatusAsync(
+        string tenantId,
         string? operationId = null,
         CancellationToken cancellationToken = default)
     {
@@ -98,11 +104,12 @@ public class VNetLinkService : IVNetLinkService
             ? StatusPath
             : $"{StatusPath}?operationId={Uri.EscapeDataString(operationId)}";
 
-        return await SendAsync(HttpMethod.Get, path, payload: null, "read virtual network status", cancellationToken);
+        return await SendAsync(HttpMethod.Get, path, payload: null, "read virtual network status", tenantId, cancellationToken);
     }
 
     /// <inheritdoc />
     public async Task<VNetStatusResponse?> WaitForCompletionAsync(
+        string tenantId,
         string operationId,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
@@ -117,7 +124,7 @@ public class VNetLinkService : IVNetLinkService
 
         while (true)
         {
-            last = await GetStatusAsync(operationId, cancellationToken);
+            last = await GetStatusAsync(tenantId, operationId, cancellationToken);
 
             if (last == null || !IsRunning(last.Status))
                 return last;
@@ -132,15 +139,20 @@ public class VNetLinkService : IVNetLinkService
 
     /// <summary>
     /// True when the reported status means the operation has not settled yet.
+    ///
+    /// The platform reports a queued operation as NotStarted, which is as unsettled as Running:
+    /// treating it as terminal would make --wait return before the work had begun.
     /// </summary>
     public static bool IsRunning(string? status) =>
-        string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase);
+        string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(status, "NotStarted", StringComparison.OrdinalIgnoreCase);
 
     private async Task<VNetStatusResponse?> SendAsync(
         HttpMethod method,
         string path,
         object? payload,
         string operationName,
+        string tenantId,
         CancellationToken cancellationToken)
     {
         var correlationId = HttpClientFactory.GenerateCorrelationId();
@@ -150,8 +162,12 @@ public class VNetLinkService : IVNetLinkService
         try
         {
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var loginHint = await _loginHintResolver();
+
+            // The tenant matters as much here as on the ARM read: without it MSAL falls back to
+            // the common authority with only a login hint, so on a machine with several cached
+            // accounts the platform call can land in a different tenant than the policy read.
+            var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, userId: loginHint, ct: cancellationToken);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire an Agent 365 access token.");

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -27,27 +28,85 @@ public static class NetworkCommand
     public static Command CreateCommand(
         ILogger logger,
         IVNetLinkService vnetLinkService,
-        IAzureCliService azureCliService)
+        IAzureCliService azureCliService,
+        IConfirmationProvider confirmationProvider)
     {
-        var networkCommand = new Command("network", "Configure tenant networking for Agent 365");
+        var networkCommand = new Command(CommandNames.Network, "Configure tenant networking for Agent 365");
 
         var vnetCommand = new Command(
             "vnet",
             "Link an Azure virtual network enterprise policy to your Agent 365 environment. " +
             "Requires the Global Administrator or Power Platform Administrator role.");
 
-        vnetCommand.AddCommand(CreateLinkSubcommand(logger, vnetLinkService, azureCliService));
-        vnetCommand.AddCommand(CreateUnlinkSubcommand(logger, vnetLinkService));
-        vnetCommand.AddCommand(CreateStatusSubcommand(logger, vnetLinkService));
+        vnetCommand.AddCommand(CreateLinkSubcommand(logger, vnetLinkService, azureCliService, confirmationProvider));
+        vnetCommand.AddCommand(CreateUnlinkSubcommand(logger, vnetLinkService, azureCliService, confirmationProvider));
+        vnetCommand.AddCommand(CreateStatusSubcommand(logger, vnetLinkService, azureCliService));
 
         networkCommand.AddCommand(vnetCommand);
         return networkCommand;
     }
 
+    /// <summary>
+    /// Resolves the tenant to authenticate against, or logs why it could not and returns null.
+    /// </summary>
+    /// <remarks>
+    /// An explicitly blank <c>--tenant-id</c> is treated as a mistake rather than as a request for
+    /// the default. Falling back silently would run a tenant-wide change against whichever tenant
+    /// <c>az</c> happens to be signed in to, which is not what someone who typed the option meant.
+    /// </remarks>
+    internal static async Task<string?> ResolveTenantIdAsync(
+        ILogger logger,
+        IAzureCliService azureCliService,
+        string? tenantIdOption)
+    {
+        if (tenantIdOption is not null)
+        {
+            if (string.IsNullOrWhiteSpace(tenantIdOption))
+            {
+                logger.LogError(
+                    "--tenant-id was supplied but is empty. Pass a tenant id, or omit the option " +
+                    "to use the tenant of your current az login.");
+                return null;
+            }
+
+            return tenantIdOption;
+        }
+
+        var account = await azureCliService.GetCurrentAccountAsync();
+        var tenantId = account?.TenantId;
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            logger.LogError("Could not determine your Azure tenant. Run 'az login', or pass --tenant-id.");
+            return null;
+        }
+
+        return tenantId;
+    }
+
+    /// <summary>
+    /// Asks the operator to confirm a change to tenant-wide networking, naming the tenant and the
+    /// action so the prompt is answerable without scrolling back.
+    /// </summary>
+    internal static async Task<bool> ConfirmChangeAsync(
+        IConfirmationProvider confirmationProvider,
+        bool yes,
+        string action,
+        string tenantId)
+    {
+        if (yes)
+        {
+            return true;
+        }
+
+        return await confirmationProvider.ConfirmAsync(
+            $"{action} for tenant {tenantId}. This changes networking for every Agent 365 agent in the tenant. Continue?");
+    }
+
     private static Command CreateLinkSubcommand(
         ILogger logger,
         IVNetLinkService vnetLinkService,
-        IAzureCliService azureCliService)
+        IAzureCliService azureCliService,
+        IConfirmationProvider confirmationProvider)
     {
         var command = new Command(
             "link",
@@ -79,40 +138,55 @@ public static class NetworkCommand
 
         var verboseOption = new Option<bool>(["--verbose", "-v"], "Enable verbose logging");
 
+        var yesOption = new Option<bool>(
+            ["--yes", "-y"],
+            "Skip the confirmation prompt shown when --swap would replace an existing link.");
+
         command.AddOption(policyArmIdOption);
         command.AddOption(swapOption);
         command.AddOption(tenantIdOption);
         command.AddOption(waitOption);
+        command.AddOption(yesOption);
         command.AddOption(verboseOption);
 
         command.SetHandler(async (InvocationContext context) =>
         {
             var policyArmId = context.ParseResult.GetValueForOption(policyArmIdOption)!;
             var swap = context.ParseResult.GetValueForOption(swapOption);
-            var tenantId = context.ParseResult.GetValueForOption(tenantIdOption);
+            var tenantIdOptionValue = context.ParseResult.GetValueForOption(tenantIdOption);
             var wait = context.ParseResult.GetValueForOption(waitOption);
+            var yes = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
-            if (string.IsNullOrWhiteSpace(tenantId))
+            var tenantId = await ResolveTenantIdAsync(logger, azureCliService, tenantIdOptionValue);
+            if (tenantId == null)
             {
-                var account = await azureCliService.GetCurrentAccountAsync();
-                tenantId = account?.TenantId;
-                if (string.IsNullOrWhiteSpace(tenantId))
-                {
-                    logger.LogError("Could not determine your Azure tenant. Run 'az login', or pass --tenant-id.");
-                    context.ExitCode = 1;
-                    return;
-                }
+                context.ExitCode = 1;
+                return;
+            }
+
+            // Only --swap needs confirming: without it an existing different link is reported as a
+            // conflict rather than replaced, so the command is already non-destructive.
+            if (swap && !await ConfirmChangeAsync(
+                confirmationProvider, yes, "Replace the existing virtual network link", tenantId))
+            {
+                logger.LogInformation("Cancelled.");
+                context.ExitCode = 1;
+                return;
             }
 
             var result = await vnetLinkService.LinkAsync(policyArmId, swap, tenantId, ct);
-            context.ExitCode = await ReportAsync(logger, vnetLinkService, result, wait, "Link", ct);
+            context.ExitCode = await ReportAsync(logger, vnetLinkService, result, wait, "Link", tenantId, ct);
         });
 
         return command;
     }
 
-    private static Command CreateUnlinkSubcommand(ILogger logger, IVNetLinkService vnetLinkService)
+    private static Command CreateUnlinkSubcommand(
+        ILogger logger,
+        IVNetLinkService vnetLinkService,
+        IAzureCliService azureCliService,
+        IConfirmationProvider confirmationProvider)
     {
         var command = new Command(
             "unlink",
@@ -122,24 +196,54 @@ public static class NetworkCommand
             "--wait",
             "Keep polling until the unlink settles, instead of returning an operation id.");
 
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            "Tenant to authenticate against. Defaults to the tenant of your current az login.");
+
+        var yesOption = new Option<bool>(
+            ["--yes", "-y"],
+            "Skip the confirmation prompt.");
+
         var verboseOption = new Option<bool>(["--verbose", "-v"], "Enable verbose logging");
 
         command.AddOption(waitOption);
+        command.AddOption(tenantIdOption);
+        command.AddOption(yesOption);
         command.AddOption(verboseOption);
 
         command.SetHandler(async (InvocationContext context) =>
         {
             var wait = context.ParseResult.GetValueForOption(waitOption);
+            var tenantIdOptionValue = context.ParseResult.GetValueForOption(tenantIdOption);
+            var yes = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
-            var result = await vnetLinkService.UnlinkAsync(ct);
-            context.ExitCode = await ReportAsync(logger, vnetLinkService, result, wait, "Unlink", ct);
+            var tenantId = await ResolveTenantIdAsync(logger, azureCliService, tenantIdOptionValue);
+            if (tenantId == null)
+            {
+                context.ExitCode = 1;
+                return;
+            }
+
+            if (!await ConfirmChangeAsync(
+                confirmationProvider, yes, "Remove the virtual network link", tenantId))
+            {
+                logger.LogInformation("Cancelled.");
+                context.ExitCode = 1;
+                return;
+            }
+
+            var result = await vnetLinkService.UnlinkAsync(tenantId, ct);
+            context.ExitCode = await ReportAsync(logger, vnetLinkService, result, wait, "Unlink", tenantId, ct);
         });
 
         return command;
     }
 
-    private static Command CreateStatusSubcommand(ILogger logger, IVNetLinkService vnetLinkService)
+    private static Command CreateStatusSubcommand(
+        ILogger logger,
+        IVNetLinkService vnetLinkService,
+        IAzureCliService azureCliService)
     {
         var command = new Command(
             "status",
@@ -149,17 +253,30 @@ public static class NetworkCommand
             "--operation-id",
             "Operation handle returned by a link or unlink that was still running.");
 
+        var tenantIdOption = new Option<string?>(
+            "--tenant-id",
+            "Tenant to authenticate against. Defaults to the tenant of your current az login.");
+
         var verboseOption = new Option<bool>(["--verbose", "-v"], "Enable verbose logging");
 
         command.AddOption(operationIdOption);
+        command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
 
         command.SetHandler(async (InvocationContext context) =>
         {
             var operationId = context.ParseResult.GetValueForOption(operationIdOption);
+            var tenantIdOptionValue = context.ParseResult.GetValueForOption(tenantIdOption);
             var ct = context.GetCancellationToken();
 
-            var status = await vnetLinkService.GetStatusAsync(operationId, ct);
+            var tenantId = await ResolveTenantIdAsync(logger, azureCliService, tenantIdOptionValue);
+            if (tenantId == null)
+            {
+                context.ExitCode = 1;
+                return;
+            }
+
+            var status = await vnetLinkService.GetStatusAsync(tenantId, operationId, ct);
             if (status == null)
             {
                 context.ExitCode = 1;
@@ -183,6 +300,7 @@ public static class NetworkCommand
         VNetStatusResponse? result,
         bool wait,
         string operationLabel,
+        string tenantId,
         CancellationToken cancellationToken)
     {
         if (result == null)
@@ -193,7 +311,7 @@ public static class NetworkCommand
         if (wait && VNetLinkService.IsRunning(result.Status) && !string.IsNullOrWhiteSpace(result.OperationId))
         {
             logger.LogInformation("{Operation} is running. Waiting for it to settle...", operationLabel);
-            result = await vnetLinkService.WaitForCompletionAsync(result.OperationId, DefaultWaitTimeout, cancellationToken);
+            result = await vnetLinkService.WaitForCompletionAsync(tenantId, result.OperationId, DefaultWaitTimeout, cancellationToken);
 
             if (result == null)
             {
