@@ -23,6 +23,11 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
 
 ### Added
+- `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server, and prompts you to select which ones to grant it to (#500).
+- When more than one Entra application shares the MCP server's name, `a365 develop-mcp grant-agents-access` now lists them all and asks which one to use instead of failing (#500).
+- `a365 develop-mcp grant-agents-access --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere (#500).
+- `--device-code` option on `a365 develop-mcp grant-agents-access` — signs in with a device code instead of the browser or Windows sign-in dialog, for embedded and remote terminals (#500).
+- `--dry-run` option on `a365 develop-mcp grant-agents-access` — lists the agent instances that are missing the permission without granting it (#500).
 - Setup and bootstrap now use Microsoft's first-party Agent 365 CLI application when it is present in your tenant, validating it without changing Microsoft's app registration, and fall back to a tenant-owned "Agent 365 CLI" app when it is not (#489).
 - Log separator written at the start of each CLI invocation now redacts values for secret-bearing options (e.g. `--idp-client-secret`) so they are not written to the log file in plain text.
 - Authentication context (tenant and user) is now logged at the `Information` level whenever the resolved sign-in identity changes, giving operators a clear audit trail in the log file of who the CLI is acting as, without exposing credentials.
@@ -59,6 +64,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- `a365 develop-mcp grant-agents-access --device-code` no longer prompts repeatedly within a single command, and no longer fails in embedded or remote terminals where the sign-in prompt could not be displayed (#500).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
 - `setup all --authmode s2s` no longer prints spurious "Action Required" PowerShell steps when the agent identity already inherits its app roles from the blueprint, and now retries the grant automatically before falling back to manual steps (#460).

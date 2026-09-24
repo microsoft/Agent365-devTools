@@ -29,7 +29,7 @@ public interface IAuthenticationService
         string? userId = null,
         CancellationToken ct = default);
 
-    Task<string?> ResolveLoginHintFromCacheAsync();
+    Task<string?> ResolveLoginHintFromCacheAsync(string? clientId = null);
 
     Task ClearTokenCacheAsync();
 }
@@ -582,9 +582,14 @@ public class AuthenticationService : IAuthenticationService
     /// first cached account's username. Used to pre-select the correct account for WAM/MSAL when
     /// the Azure CLI is not available. Returns null if no account is cached or the lookup fails.
     /// </summary>
-    public Task<string?> ResolveLoginHintFromCacheAsync()
+    /// <param name="clientId">
+    /// Client app whose cached accounts to read. MSAL partitions the cache per client, so callers
+    /// that authenticate as a different app must pass it or the lookup finds nothing.
+    /// Defaults to <see cref="AuthenticationConstants.PowershellClientId"/>.
+    /// </param>
+    public Task<string?> ResolveLoginHintFromCacheAsync(string? clientId = null)
         => MsalBrowserCredential.TryGetCachedAccountUsernameAsync(
-            AuthenticationConstants.PowershellClientId, _logger);
+            string.IsNullOrWhiteSpace(clientId) ? AuthenticationConstants.PowershellClientId : clientId, _logger);
 
     private static string? TryExtractUpnFromJwt(string? jwt)
     {

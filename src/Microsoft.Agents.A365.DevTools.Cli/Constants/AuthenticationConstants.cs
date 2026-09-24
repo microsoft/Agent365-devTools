@@ -17,6 +17,13 @@ public static class AuthenticationConstants
     public const string PowershellClientId = "1950a258-227b-4e31-a9cf-717495945fc2";
 
     /// <summary>
+    /// Microsoft Graph Command Line Tools public client ID - the app Connect-MgGraph authenticates as.
+    /// Preauthorized for Microsoft Graph delegated scopes, unlike <see cref="PowershellClientId"/>,
+    /// which Graph rejects with AADSTS65002 for scopes it is not preauthorized against.
+    /// </summary>
+    public const string GraphPowershellClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e";
+
+    /// <summary>
     /// Common tenant ID for multi-tenant authentication
     /// </summary>
     public const string CommonTenantId = "common";

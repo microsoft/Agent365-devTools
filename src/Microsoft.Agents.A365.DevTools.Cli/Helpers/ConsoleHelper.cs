@@ -33,6 +33,18 @@ internal static class ConsoleHelper
     internal static System.Threading.AsyncLocal<Func<string?>?> ReadLineOverrideForTests { get; } = new();
 
     /// <summary>
+    /// Test hook: overrides <see cref="Console.IsInputRedirected"/> so prompt paths that only run
+    /// with an attached terminal can be exercised under a test runner, which always redirects stdin.
+    /// </summary>
+    internal static System.Threading.AsyncLocal<bool?> IsInputRedirectedOverrideForTests { get; } = new();
+
+    /// <summary>
+    /// Whether standard input is redirected, honouring the test override.
+    /// </summary>
+    public static bool IsInputRedirected =>
+        IsInputRedirectedOverrideForTests.Value ?? Console.IsInputRedirected;
+
+    /// <summary>
     /// Reads a line from standard input. If the supplied <paramref name="ct"/> fires while
     /// the read is blocked, the process exits with code 130 (SIGINT convention).
     /// </summary>

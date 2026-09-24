@@ -22,7 +22,8 @@ public static class DevelopMcpCommand
         ILogger logger,
         IAgent365ToolingService toolingService,
         IEvaluationPipelineService? evaluationPipelineService = null,
-        GraphApiService? graphApiService = null)
+        GraphApiService? graphApiService = null,
+        McpServerPermissionService? mcpServerPermissionService = null)
     {
         var developMcpCommand = new Command("develop-mcp", "Manage MCP servers in Dataverse environments");
 
@@ -39,6 +40,11 @@ public static class DevelopMcpCommand
         developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService, graphApiService));
         developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
+
+        if (mcpServerPermissionService is not null)
+        {
+            developMcpCommand.AddCommand(McpServerPermissionsSubcommands.CreateGrantAgentsAccessSubcommand(logger, mcpServerPermissionService));
+        }
 
         if (evaluationPipelineService is not null)
         {
