@@ -58,7 +58,7 @@ internal class RegisterCommandExecutor
         _retryHelper = retryHelper ?? new RetryHelper(logger, maxRetries: 5, baseDelaySeconds: 3);
     }
 
-    private sealed record ResolvedInput
+    internal sealed record ResolvedInput
     {
         public required string ServerName { get; init; }
         public required string ServerUrl { get; init; }
@@ -193,7 +193,7 @@ internal class RegisterCommandExecutor
         return true;
     }
 
-    private async Task<ResolvedInput?> ResolveInputsAsync(RawRegisterArgs args)
+    internal async Task<ResolvedInput?> ResolveInputsAsync(RawRegisterArgs args)
     {
         var serverName = args.ServerName;
         var serverUrl = args.ServerUrl;
@@ -315,13 +315,17 @@ internal class RegisterCommandExecutor
                 return null;
             }
 
-            if (!string.IsNullOrWhiteSpace(connectivity))
+            // Non-null rather than non-blank: `--connectivity "  "` is a mistake, and treating it as
+            // absent would silently register the server as private, which is the opposite of what
+            // someone typing the option intends. It would also let a blank CLI value quietly
+            // override a valid input-file value through the ??= merge above.
+            if (connectivity is not null)
             {
                 connectivity = connectivity.Trim();
                 if (!connectivity.Equals("public", StringComparison.OrdinalIgnoreCase)
                     && !connectivity.Equals("private", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogError("--connectivity must be 'public' or 'private'. Got: {Value}", connectivity);
+                    _logger.LogError("--connectivity must be 'public' or 'private'. Got: '{Value}'", connectivity);
                     return null;
                 }
 
