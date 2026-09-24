@@ -18,7 +18,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands.SetupSubcommands;
 /// input-driven rule that applies to <strong>both</strong> DW and non-DW agents:
 /// </para>
 /// <list type="bullet">
-///   <item><description>Observability API and Power Platform API are always included.</description></item>
+///   <item><description>Power Platform API is always included; Observability API is included unless <c>includeObservability</c> is false.</description></item>
 ///   <item><description>Microsoft Graph is always included with <c>AgentApplicationScopes</c>.</description></item>
 ///   <item><description>Messaging Bot API is included when <c>isM365 == true</c>.</description></item>
 ///   <item><description>Agent 365 Tools (MCP audiences from <c>ToolingManifest.json</c>) are included when a manifest is present.</description></item>

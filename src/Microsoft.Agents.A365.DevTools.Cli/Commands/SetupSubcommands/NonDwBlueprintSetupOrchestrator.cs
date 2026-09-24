@@ -20,8 +20,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 ///   1. Requirements validation
 ///   2. Blueprint creation (shared with DW)
 ///   3. Batch permissions on the blueprint (shared with DW pipeline; non-DW spec set:
-///      Observability API, Power Platform API, custom). MAC reads from the blueprint,
-///      so stamping here gives the same set visibility there.
+///      Power Platform API and custom; Observability API is not requested). MAC reads
+///      from the blueprint, so stamping here gives the same set visibility there.
 ///   4. Agent Identity creation via POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity
 ///   5. Agent Identity permission grants (same spec set as step 3) — OBO or S2S
 ///   6. Agent registration via Graph API (copilot/agentRegistrations)
@@ -33,7 +33,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null, bool skipObservabilityPermissions = false)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
         // --messaging-endpoint flag (if supplied) wins over the init-only config value for the plan.
@@ -117,14 +117,17 @@ internal static class NonDwBlueprintSetupOrchestrator
             logger.LogInformation(sub + "create managed identity");
         }
 
-        // 3. Inheritable Permissions — non-DW spec set (Observability API, Power Platform API, custom)
-        //    stamped on the blueprint via SetInheritablePermissionsAsync so MAC and other dependent
-        //    systems can see them. The same set is applied to the agent identity SP in step 5.
+        // 3. Inheritable Permissions — non-DW spec set (Power Platform API and custom; Observability API is
+        //    not requested) stamped on the blueprint via SetInheritablePermissionsAsync so MAC and other
+        //    dependent systems can see them. The same set is applied to the agent identity SP in step 5.
         var selectedAuthMode = authMode ?? config.AuthMode;
         var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
             ? "obo"
             : selectedAuthMode.Trim().ToLowerInvariant();
-        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for Observability API, Power Platform API, and custom permissions (Global Administrator required; consent URL printed if absent)");
+        logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for {Resources} (Global Administrator required; consent URL printed if absent)",
+            skipObservabilityPermissions ? "Power Platform API and custom permissions" : "Observability API, Power Platform API, and custom permissions");
+        if (skipObservabilityPermissions)
+            logger.LogInformation(sub + "Observability API not requested (registered agents export telemetry with an app-only token)");
 
         // 4. Blueprint Permission Grants — per authMode. The consent URL targets the blueprint
         //    app, and S2S app-role assignments are persisted as grants flowing from the blueprint;
@@ -266,6 +269,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
         ctx.Results.IsNonDwBlueprintFlow = true;
+        ctx.Results.ObservabilityPermissionsSkipped = ctx.SkipObservabilityPermissions;
         ctx.Results.TenantId = ctx.Config.TenantId;
         // Bootstrap already printed the "Running..." banner before auth steps; skip here to avoid duplication.
         if (!ctx.IsBootstrap)
@@ -362,8 +366,10 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // Step 3: Blueprint creation (shared with DW)
                 await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
 
-                // Step 4: Build permission specs — stamps Graph, manifest MCP audiences, Observability,
-                // Power Platform, custom permissions, and Messaging Bot (only when isM365). Mirrors DW.
+                // Step 4: Build permission specs — stamps Graph, manifest MCP audiences, Power Platform,
+                // custom permissions, Messaging Bot (only when isM365), and Observability unless skipped.
+                if (ctx.SkipObservabilityPermissions)
+                    ctx.Logger.LogInformation("Observability API permissions not requested: registered agents export telemetry with an app-only token.");
                 var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
                 specs = buildResult.specs;
 
@@ -435,7 +441,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// When <paramref name="skipIdentityAndPermissions"/> is true (--agent-registration-only),
     /// identity creation and permission grants are skipped — only registration and project settings run.
     /// </summary>
-    private static async Task ExecuteAgentIdentityAndRegistrationAsync(
+    internal static async Task ExecuteAgentIdentityAndRegistrationAsync(
         SetupContext ctx,
         List<ResourcePermissionSpec> specs,
         bool skipIdentityAndPermissions = false)
@@ -549,15 +555,23 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("Registering agent...");
 
+        // Registration is the sole purpose of --agent-registration-only and, with OtelWrite skipped,
+        // the agent's only Observability authorization, so its failure must fail setup.
+        var registrationRequired = skipIdentityAndPermissions || ctx.SkipObservabilityPermissions;
+        void RecordRegistrationFailure(string message)
+        {
+            ctx.Results.AgentRegistrationFailed = true;
+            (registrationRequired ? ctx.Results.Errors : ctx.Results.Warnings).Add(message);
+            ctx.Logger.Log(registrationRequired ? LogLevel.Error : LogLevel.Warning, message);
+        }
+
         if (string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
         {
             var registrationSkippedMessage =
                 "Agent registration failed: agent identity ID is not available. " +
                 "Ensure the agent identity was created successfully, then retry with: a365 setup all --agent-registration-only";
-            ctx.Results.Warnings.Add(registrationSkippedMessage);
             using (ctx.Logger.Indent())
-                ctx.Logger.LogWarning(registrationSkippedMessage);
-            ctx.Results.AgentRegistrationFailed = true;
+                RecordRegistrationFailure(registrationSkippedMessage);
         }
         else
         {
@@ -565,6 +579,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         // If a registration ID is already stored, verify it still exists before skipping creation.
         string? registrationId = null;
         bool registrationAlreadyExisted = false;
+        bool verificationFailed = false;
 
         if (!string.IsNullOrWhiteSpace(ctx.Config.AgentRegistrationId))
         {
@@ -591,6 +606,16 @@ internal static class NonDwBlueprintSetupOrchestrator
                 // stale value on disk that would cause the same stale-ID check to repeat.
                 await ctx.ConfigService.SaveStateAsync(ctx.Config);
             }
+            else if (registrationRequired)
+            {
+                // An unverifiable registration cannot be the agent's only authorization: keep the stored
+                // ID (no duplicate registration) but fail so the operator retries.
+                using (ctx.Logger.Indent())
+                    RecordRegistrationFailure(
+                        $"Could not verify agent registration {ctx.Config.AgentRegistrationId} (auth or transient error). " +
+                        "Retry with: a365 setup all --agent-registration-only");
+                verificationFailed = true;
+            }
             else
             {
                 // Verification inconclusive (auth or transient error) — preserve the stored ID
@@ -602,7 +627,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             }
         }
 
-        if (string.IsNullOrWhiteSpace(registrationId))
+        if (!verificationFailed && string.IsNullOrWhiteSpace(registrationId))
         {
             var (newId, fromConflict) = await ctx.GraphApiService.RegisterAgentInstanceAsyncV2(
                 ctx.Config.TenantId!,
@@ -631,11 +656,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 ctx.Logger.LogInformation("");
             }
         }
-        else
+        else if (!verificationFailed)
         {
-            ctx.Results.AgentRegistrationFailed = true;
-            ctx.Results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
-            ctx.Logger.LogWarning("Agent registration failed via Graph copilot/agentRegistrations API.");
+            RecordRegistrationFailure("Agent registration failed via Graph copilot/agentRegistrations API.");
         }
 
         } // end else (AgenticAppId present)

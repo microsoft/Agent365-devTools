@@ -775,11 +775,13 @@ This skill is safe to rerun. On subsequent runs:
 
 ### OtelWrite App Role Assignment
 
-`a365 setup all` **attempts** to grant `Agent365.Observability.OtelWrite` to the Agent Identity SP, but this requires **Global Administrator** privileges. If the logged-in user is not a Global Admin, the assignment silently fails with 403 and trace exports will return HTTP 403 from the observability service.
+> **Blueprint agents:** `a365 setup all` does not request Observability API permissions for blueprint agents in any auth mode — the S2S endpoint authorizes registered agent instances without the `OtelWrite` role, so no admin consent is needed. Setup exits with code 1 if registration fails; retry with `a365 setup all --agent-registration-only`. Grant `OtelWrite` manually (steps below) only if the agent still exports through the delegated (OBO) route. Permissions granted by earlier runs are not revoked.
+
+For **AI Teammate** agents, `a365 setup all` still **attempts** to grant `Agent365.Observability.OtelWrite` to the Agent Identity SP, which requires **Global Administrator** privileges. If the logged-in user is not a Global Admin, the assignment fails with 403 and trace exports can return HTTP 403 from the observability service.
 
 **The CLI prints a PowerShell admin consent script** in its output when the assignment fails. When running `a365 setup all`, **always scan the output for this script block** and display it to the user in a fenced code block so they can copy it and hand it to a Global Admin.
 
-If the script was not captured, grant the permission manually via Entra portal (requires Global Admin):
+If the script was not captured — or for a blueprint agent whose SDK still exports through the delegated (OBO) route — grant the permission manually via Entra portal (requires Global Admin):
 1. [Entra portal](https://entra.microsoft.com) > App registrations > select Blueprint app > API permissions
 2. Add a permission > APIs my organization uses > search `9b975845-388f-4429-889e-eab1ef63949c`
 3. Add both **Delegated** and **Application** `Agent365.Observability.OtelWrite` > Grant admin consent
