@@ -210,7 +210,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         bool useWam = true,
         string? authority = null,
         string? loginHint = null,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        bool useDeviceCode = false)
     {
         if (string.IsNullOrWhiteSpace(clientId))
         {
@@ -239,7 +240,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         _authenticationMode = SelectAuthenticationMode(
             clientId,
             useWam,
-            OperatingSystem.IsWindows());
+            OperatingSystem.IsWindows(),
+            useDeviceCode);
         
         if (OperatingSystem.IsWindows() &&
             _authenticationMode == InteractiveAuthenticationMode.Wam)
@@ -335,8 +337,14 @@ public sealed class MsalBrowserCredential : TokenCredential
     internal static InteractiveAuthenticationMode SelectAuthenticationMode(
         string clientId,
         bool useWam,
-        bool isWindows)
+        bool isWindows,
+        bool useDeviceCode = false)
     {
+        // An explicit device code request wins: the caller knows no interactive dialog or browser
+        // can be presented, which WAM and the system browser would both assume.
+        if (useDeviceCode)
+            return InteractiveAuthenticationMode.DeviceCode;
+
         if (useWam && isWindows)
             return InteractiveAuthenticationMode.Wam;
 

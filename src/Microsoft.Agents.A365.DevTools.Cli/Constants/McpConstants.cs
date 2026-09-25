@@ -72,6 +72,20 @@ public static class McpConstants
     public const string V2ScopeValue = "Tools.ListInvoke.All";
 
     /// <summary>
+    /// Suffix appended to an MCP server name to form the display name of its BYO Entra application.
+    /// </summary>
+    public const string ByoAppNameSuffix = " - BYO";
+
+    /// <summary>
+    /// Builds the Entra application display name for a BYO MCP server (for example, "Foo" gives "Foo - BYO").
+    /// </summary>
+    public static string BuildByoAppDisplayName(string serverName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
+        return $"{serverName.Trim()}{ByoAppNameSuffix}";
+    }
+
+    /// <summary>
     /// Returns true when the scope matches the V1 pattern McpServers.*.All (shared ATG AppId model)
     /// </summary>
     public static bool IsV1Scope(string? scope) =>

@@ -33,7 +33,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 ///   contamination on shared machines
 ///
 /// TOKEN CACHING:
-/// - In-memory cache per CLI process: Tokens cached by (tenant + clientId + scopes)
+/// - In-memory cache per CLI process: Tokens partitioned by authority, tenant, client, scopes, and login hint.
 /// - MSAL persistent cache: DPAPI on Windows, Keychain on macOS, in-memory on Linux
 ///
 /// USAGE:
@@ -45,8 +45,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     private readonly CommandExecutor _executor;
     private readonly ILogger<MicrosoftGraphTokenProvider> _logger;
 
-    // Cache tokens per (tenant + clientId + scopes) for the lifetime of this CLI process.
-    // This reduces repeated auth prompts during multi-step setup flows.
+    // Partition cached tokens and acquisition locks by authority as well as identity.
     private readonly ConcurrentDictionary<string, CachedToken> _tokenCache = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
@@ -109,7 +108,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             ValidateClientAppId(clientAppId);
         }
 
-        var cacheKey = MakeCacheKey(tenantId, validatedScopes, clientAppId, loginHint);
+        var cacheKey = MakeCacheKey(resolvedAuthorityHost, tenantId, validatedScopes, clientAppId, loginHint);
         var tokenExpirationMinutes = AuthenticationConstants.TokenExpirationBufferMinutes;
 
         // When forceRefresh is requested, evict the cached entry so the acquire path always runs.
@@ -157,10 +156,19 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
                 : await AcquireGraphTokenViaMsalAsync(
                     tenantId, validatedScopes, clientAppId, resolvedAuthorityHost, ct, loginHint,
-                    forceRefresh);
+                    forceRefresh, useDeviceCode);
 
             // Fall back to PowerShell Connect-MgGraph if MSAL is unavailable (e.g. no clientAppId)
-            // or fails for any reason.
+            // or fails for any reason. Explicit device code is excluded: Connect-MgGraph -UseDeviceCode
+            // cannot render its prompt as a child process with redirected stdio, so the fallback
+            // would return no context and hide the real MSAL failure.
+            if (string.IsNullOrWhiteSpace(token) && useDeviceCode)
+            {
+                _logger.LogError(
+                    "Device code sign-in did not return a token. Re-run without --device-code to use the browser or Windows sign-in dialog.");
+                return null;
+            }
+
             if (string.IsNullOrWhiteSpace(token))
             {
                 if (!string.Equals(resolvedAuthorityHost, ConfigConstants.DefaultAuthorityHost, StringComparison.OrdinalIgnoreCase)
@@ -251,7 +259,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                     ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
                     : await AcquireGraphTokenViaMsalAsync(
                         tenantId, validatedScopes, clientAppId, resolvedAuthorityHost, ct, loginHint,
-                        forceRefresh: true);
+                        forceRefresh: true, useDeviceCode: useDeviceCode);
 
                 if (!string.IsNullOrWhiteSpace(retryToken))
                     token = retryToken;
@@ -402,6 +410,16 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     }
 
     /// <summary>
+    /// Selects the client app used for in-process MSAL acquisition. Device code has no usable
+    /// PowerShell fallback, so it resolves to the Graph command-line app that Connect-MgGraph
+    /// would have authenticated as; otherwise a missing client app keeps the subprocess path.
+    /// </summary>
+    internal static string? ResolveMsalClientAppId(string? clientAppId, bool useDeviceCode)
+        => string.IsNullOrWhiteSpace(clientAppId) && useDeviceCode
+            ? AuthenticationConstants.GraphPowershellClientId
+            : clientAppId;
+
+    /// <summary>
     /// Acquires a Microsoft Graph access token via MSAL.NET (primary authentication path).
     /// On Windows uses WAM (no browser, CAP-compliant); on Linux/macOS uses device code.
     /// Uses MsalBrowserCredential whose token cache is keyed by user identity, preventing
@@ -415,9 +433,15 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         string authorityHost,
         CancellationToken ct,
         string? loginHint = null,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        bool useDeviceCode = false)
     {
-        if (string.IsNullOrWhiteSpace(clientAppId))
+        // Device code must run in-process: Connect-MgGraph cannot render its prompt from a
+        // child process with redirected I/O, so fall back to the Graph command-line client
+        // app rather than the unusable subprocess path.
+        var effectiveClientAppId = ResolveMsalClientAppId(clientAppId, useDeviceCode);
+
+        if (string.IsNullOrWhiteSpace(effectiveClientAppId))
         {
             _logger.LogDebug("MSAL token acquisition skipped: no client app ID configured. Falling back to PowerShell Connect-MgGraph.");
             return null;
@@ -428,12 +452,14 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             _logger.LogDebug("Acquiring Graph token via MSAL for scopes: {Scopes}", string.Join(", ", scopes));
 
             var msalCredential = new MsalBrowserCredential(
-                clientAppId,
+                effectiveClientAppId,
                 tenantId,
                 logger: _logger,
                 authority: $"{authorityHost}/{tenantId}",
+                useWam: !useDeviceCode,
                 loginHint: loginHint,
-                forceRefresh: forceRefresh);
+                forceRefresh: forceRefresh,
+                useDeviceCode: useDeviceCode);
             var tokenResult = await msalCredential.GetTokenAsync(new TokenRequestContext(scopes), ct);
 
             if (string.IsNullOrWhiteSpace(tokenResult.Token))
@@ -655,7 +681,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                token.Count(c => c == '.') == 2;
     }
 
-    private static string MakeCacheKey(string tenantId, IEnumerable<string> scopes, string? clientAppId, string? loginHint = null)
+    private static string MakeCacheKey(
+        string authorityHost, string tenantId, IEnumerable<string> scopes, string? clientAppId, string? loginHint)
     {
         var scopeKey = string.Join(" ", scopes
             .Where(s => !string.IsNullOrWhiteSpace(s))
@@ -663,7 +690,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
 
-        return $"{tenantId}::{clientAppId ?? ""}::{scopeKey}::{loginHint ?? ""}";
+        return $"{authorityHost.ToLowerInvariant()}::{tenantId}::{clientAppId ?? ""}::{scopeKey}::{loginHint ?? ""}";
     }
 
     private bool TryGetJwtExpiryUtc(string jwt, out DateTimeOffset expiresOnUtc)

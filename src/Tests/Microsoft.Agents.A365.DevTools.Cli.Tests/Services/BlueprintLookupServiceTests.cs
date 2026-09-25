@@ -340,6 +340,66 @@ public class BlueprintLookupServiceTests
             because: "authorization failures must remain distinguishable from a successful empty lookup");
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("""{"id":null}""")]
+    [InlineData("""{"id":42}""")]
+    [InlineData("""{"id":{}}""")]
+    public async Task GetApplicationByDisplayNameAsync_WhenAnotherRowIsMalformed_PreservesPreferredBlueprint(
+        string malformedRow)
+    {
+        using var doc = JsonDocument.Parse($$"""
+            {"value":[{{malformedRow}},
+              {"id":"{{TestObjectId}}","appId":"{{TestAppId}}","displayName":"{{TestDisplayName}}"}]}
+            """);
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId, Arg.Any<string>(), false, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = doc });
+
+        var result = await _service.GetApplicationByDisplayNameAsync(
+            TestTenantId, TestDisplayName, preferredObjectId: TestObjectId);
+
+        result.Found.Should().BeTrue(
+            because: "a malformed unrelated row must not prevent selecting the stored blueprint");
+        result.ObjectId.Should().Be(TestObjectId,
+            because: "discovery must preserve the blueprint identified by generated state");
+        result.AppId.Should().Be(TestAppId);
+        result.ErrorMessage.Should().BeNullOrEmpty();
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("""{"value":null}""")]
+    [InlineData("""{"value":{}}""")]
+    [InlineData("""{"value":[null]}""")]
+    [InlineData("""{"value":[{}]}""")]
+    [InlineData("""{"value":[{"id":null,"appId":"app","displayName":"name"}]}""")]
+    [InlineData("""{"value":[{"id":"id","appId":null,"displayName":"name"}]}""")]
+    [InlineData("""{"value":[{"id":"id","appId":"app","displayName":42}]}""")]
+    [InlineData("""{"value":[{"id":" ","appId":"app","displayName":"name"}]}""")]
+    [InlineData("""{"value":[{"id":"id","appId":"","displayName":"name"}]}""")]
+    public async Task GetApplicationByDisplayNameAsync_WhenResponseIsMalformed_ReturnsInconclusiveError(
+        string responseBody)
+    {
+        using var doc = JsonDocument.Parse(responseBody);
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId, Arg.Any<string>(), false, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = doc });
+
+        var result = await _service.GetApplicationByDisplayNameAsync(TestTenantId, TestDisplayName);
+
+        result.Found.Should().BeFalse(
+            because: "malformed discovery data cannot establish an existing blueprint");
+        result.ErrorMessage.Should().NotBeNullOrWhiteSpace(
+            because: "an inconclusive lookup must not be treated as absence and create a duplicate blueprint");
+        result.RequiresPersistence.Should().BeFalse();
+    }
+
     [Fact]
     public async Task GetApplicationByDisplayNameAsync_WhenCanceled_PropagatesCancellation()
     {

@@ -149,7 +149,14 @@ public class BlueprintLookupService
             }
 
             var root = doc.RootElement;
-            if (!root.TryGetProperty("value", out var valueElement) || valueElement.GetArrayLength() == 0)
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("value", out var valueElement) ||
+                valueElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new JsonException("Graph application lookup returned an invalid application collection.");
+            }
+
+            if (valueElement.GetArrayLength() == 0)
             {
                 _logger.LogDebug("No blueprints found with displayName: {DisplayName}", displayName);
                 return new BlueprintLookupResult
@@ -164,8 +171,17 @@ public class BlueprintLookupService
             {
                 foreach (var candidate in valueElement.EnumerateArray())
                 {
+                    if (candidate.ValueKind != JsonValueKind.Object ||
+                        !candidate.TryGetProperty("id", out var candidateId) ||
+                        candidateId.ValueKind != JsonValueKind.String ||
+                        string.IsNullOrWhiteSpace(candidateId.GetString()))
+                    {
+                        _logger.LogWarning("Graph application lookup returned a row without a valid object ID; skipping it while locating the stored blueprint.");
+                        continue;
+                    }
+
                     if (string.Equals(
-                            candidate.GetProperty("id").GetString(),
+                            candidateId.GetString(),
                             preferredObjectId,
                             StringComparison.OrdinalIgnoreCase))
                     {
@@ -194,9 +210,24 @@ public class BlueprintLookupService
                 };
             }
 
-            var objectId = selectedMatch.Value.GetProperty("id").GetString();
-            var appId = selectedMatch.Value.GetProperty("appId").GetString();
-            var foundDisplayName = selectedMatch.Value.GetProperty("displayName").GetString();
+            var selected = selectedMatch.Value;
+            if (selected.ValueKind != JsonValueKind.Object ||
+                !selected.TryGetProperty("id", out var idElement) ||
+                idElement.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(idElement.GetString()) ||
+                !selected.TryGetProperty("appId", out var appIdElement) ||
+                appIdElement.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(appIdElement.GetString()) ||
+                !selected.TryGetProperty("displayName", out var displayNameElement) ||
+                displayNameElement.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(displayNameElement.GetString()))
+            {
+                throw new JsonException("Graph application lookup returned an invalid blueprint.");
+            }
+
+            var objectId = idElement.GetString();
+            var appId = appIdElement.GetString();
+            var foundDisplayName = displayNameElement.GetString();
 
             _logger.LogDebug("Found blueprint: {DisplayName} (ObjectId: {ObjectId}, AppId: {AppId})", 
                 foundDisplayName, objectId, appId);

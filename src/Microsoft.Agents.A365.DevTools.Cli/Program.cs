@@ -163,6 +163,7 @@ class Program
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var armApiService = serviceProvider.GetRequiredService<ArmApiService>();
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
+            var mcpServerPermissionService = serviceProvider.GetRequiredService<McpServerPermissionService>();
             var blueprintLookupService = serviceProvider.GetRequiredService<BlueprintLookupService>();
             var federatedCredentialService = serviceProvider.GetRequiredService<FederatedCredentialService>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
@@ -174,7 +175,7 @@ class Program
 
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
-            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService, graphApiService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService, graphApiService, mcpServerPermissionService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
@@ -380,6 +381,7 @@ class Program
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<ArmApiService>();
         services.AddSingleton<AgentBlueprintService>();
+        services.AddSingleton<McpServerPermissionService>();
         services.AddSingleton<BlueprintLookupService>();
         services.AddSingleton<FederatedCredentialService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission

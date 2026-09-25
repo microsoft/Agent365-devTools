@@ -147,6 +147,9 @@ For security and flexibility, the CLI supports environment variable overrides:
 
 | Variable | Purpose |
 |----------|---------|
+| `A365_ENVIRONMENT` | Select the environment used to resolve cloud-specific settings |
+| `A365_GRAPH_BASE_URL_{ENV}` | Override the configured Microsoft Graph HTTPS origin |
+| `A365_AUTHORITY_HOST_{ENV}` | Override the configured OAuth authority HTTPS origin |
 | `A365_MCP_APP_ID` | Override Agent 365 Tools App ID for authentication |
 | `A365_MCP_APP_ID_{ENV}` | Per-environment MCP Platform App ID |
 | `A365_DISCOVER_ENDPOINT_{ENV}` | Canonical per-environment Agent 365 endpoint; discover uses the configured URL, while create and delete use its validated HTTPS origin with fixed routes |
@@ -165,19 +168,22 @@ For security and flexibility, the CLI supports environment variable overrides:
 
 ### Sovereign / Government Cloud Configuration
 
-Set `environment` explicitly for every government cloud because it selects cloud-specific Agent 365 endpoints, authentication audiences, and Observability resources. The Graph endpoint alone cannot distinguish GCC High from DoD.
+Set `environment` explicitly for every government cloud: it selects the environment-scoped overrides and Observability resource. It does **not** automatically change the Graph, authority, or Agent 365 Tools endpoints from their commercial defaults. The Graph endpoint alone cannot distinguish GCC High from DoD.
 
-By default the CLI targets the commercial Microsoft Graph endpoint. For GCC High, DoD, or other sovereign tenants, also set `graphBaseUrl` in `a365.config.json`:
+For GCC Moderate, the tested configuration uses the default Graph and authority hosts and an explicit Agent 365 Tools discovery override:
 
-| Cloud | `graphBaseUrl` value |
-|-------|----------------------|
-| Commercial (default) | *(omit the field)* |
-| GCC High / DoD | `https://graph.microsoft.us` |
-| China (21Vianet) | `https://microsoftgraph.chinacloudapi.cn` |
+```bash
+export A365_ENVIRONMENT=gcc
+export A365_DISCOVER_ENDPOINT_GCC=https://gcc.agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers
+```
 
-This field is optional. When omitted, `https://graph.microsoft.com` is used.
+The discovery override supplies the full discovery URL and the HTTPS origin used for related Agent 365 routes. Explicit create/delete overrides take precedence. Setting only `A365_ENVIRONMENT=gcc` leaves discovery pointing at the commercial service.
 
-The value is read from `Agent365Config.GraphBaseUrl` and forwarded to `GraphApiService` via its `GraphBaseUrl` property after config is loaded. This controls both the HTTP endpoint used for all Graph API calls and the token resource identifier passed to `AuthenticationService.GetAccessTokenAsync`.
+For other clouds, configure `graphBaseUrl` and `authorityHost` in `a365.config.json`, or supply `A365_GRAPH_BASE_URL_{ENV}` and `A365_AUTHORITY_HOST_{ENV}`. Environment-scoped variables take precedence over config; otherwise the defaults are `https://graph.microsoft.com` and `https://login.microsoftonline.com`. Unsuffixed variables for these two settings are not read. Environment suffixes are uppercase with non-alphanumeric characters replaced by underscores, so `gcc-high` uses `GCC_HIGH`.
+
+Graph and authority values must be HTTPS origins without paths, query strings, fragments, or user information. They control Graph request URLs, scope/resource qualification, and OAuth authority selection. The Graph token provider partitions its in-memory cache and acquisition locks by normalized authority, tenant, client, scopes, and login hint. PowerShell fallback is restricted to commercial Graph and authority endpoints.
+
+Configurable endpoints and resource mappings are not a certification of service availability in every cloud. Live validation for this change covers GCC Moderate ordinary blueprint agents, not GCC High, DoD, or AI Teammate/Frontier.
 
 ---
 
