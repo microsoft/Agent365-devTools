@@ -139,6 +139,48 @@ public sealed class A365CreateInstanceRunnerTests : IDisposable
             Arg.Any<Func<object, Exception?, string>>());
     }
 
+    [Theory]
+    [InlineData("all")]
+    [InlineData("identity")]
+    [InlineData("licenses")]
+    public async Task RunAsync_WhenGovernmentEnvironmentIsAmbiguous_LogsGuidanceWithoutChangingState(string step)
+    {
+        var configPath = Path.Combine(_testDirectory, "a365.config.json");
+        var generatedConfigPath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        await File.WriteAllTextAsync(configPath, """
+            {
+              "tenantId": "11111111-1111-1111-1111-111111111111",
+              "environment": "AzureUSGovernment"
+            }
+            """);
+        const string generatedConfig = """
+            {
+              "agentBlueprintId": "22222222-2222-2222-2222-222222222222",
+              "agentBlueprintClientSecret": "test-secret"
+            }
+            """;
+        await File.WriteAllTextAsync(generatedConfigPath, generatedConfig);
+        var logger = Substitute.For<ILogger<A365CreateInstanceRunner>>();
+        var executor = Substitute.For<CommandExecutor>(NullLogger<CommandExecutor>.Instance);
+        var graph = Substitute.For<GraphApiService>(NullLogger<GraphApiService>.Instance, executor);
+        var runner = new A365CreateInstanceRunner(logger, executor, graph);
+
+        var succeeded = await runner.RunAsync(configPath, generatedConfigPath, step: step);
+
+        succeeded.Should().BeFalse(
+            because: "an ambiguous government environment must return a configuration failure rather than throw");
+        (await File.ReadAllTextAsync(generatedConfigPath)).Should().Be(generatedConfig,
+            because: "cloud validation must finish before generated state is saved");
+        graph.ReceivedCalls().Should().BeEmpty(
+            because: "an ambiguous cloud must not configure Graph or start resource operations");
+        logger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(state => state.ToString()!.Contains("Set the environment to gcc, gcc-high, or dod.")),
+            Arg.Any<ArgumentException>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_testDirectory))

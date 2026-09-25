@@ -152,8 +152,10 @@ public sealed class A365CreateInstanceRunner
         // token acquisition target the correct national cloud (commercial by default).
         var configuredGraphBaseUrl = GetConfig("graphBaseUrl");
         var configuredAuthorityHost = GetConfig("authorityHost");
+        string observabilityResourceAppId;
         try
         {
+            observabilityResourceAppId = ConfigConstants.GetObservabilityApiAppId(environment);
             _graphService.GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(
                 environment,
                 string.IsNullOrWhiteSpace(configuredGraphBaseUrl) ? null : configuredGraphBaseUrl);
@@ -163,7 +165,7 @@ public sealed class A365CreateInstanceRunner
         }
         catch (ArgumentException ex)
         {
-            _logger.LogError(ex, "Invalid cloud endpoint configuration in {Path}: {Message}", configPath, ex.Message);
+            _logger.LogError(ex, "Invalid cloud configuration in {Path}: {Message}", configPath, ex.Message);
             return false;
         }
 
@@ -171,7 +173,6 @@ public sealed class A365CreateInstanceRunner
         if (!string.IsNullOrWhiteSpace(configuredClientAppId))
             _graphService.CustomClientAppId = configuredClientAppId;
         var mcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(environment);
-        var observabilityResourceAppId = ConfigConstants.GetObservabilityApiAppId(environment);
 
         var usageLocation = GetConfig("agentUserUsageLocation");
 
