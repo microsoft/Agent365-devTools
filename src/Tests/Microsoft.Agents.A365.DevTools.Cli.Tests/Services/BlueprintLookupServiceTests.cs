@@ -313,6 +313,70 @@ public class BlueprintLookupServiceTests
             because: "a cached blueprint object ID must win when duplicate display names exist");
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(TestObjectId, false)]
+    [InlineData("44444444-4444-4444-4444-444444444444", true)]
+    public async Task GetApplicationByDisplayNameAsync_WithSingleMatch_WarnsOnlyWhenStoredIdDiffers(
+        string? preferredObjectId, bool expectsWarning)
+    {
+        using var doc = JsonDocument.Parse($$"""
+            {"value":[{"id":"{{TestObjectId}}","appId":"{{TestAppId}}","displayName":"{{TestDisplayName}}"}]}
+            """);
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId, Arg.Any<string>(), false, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = doc });
+
+        var result = await _service.GetApplicationByDisplayNameAsync(
+            TestTenantId, TestDisplayName, preferredObjectId: preferredObjectId);
+
+        result.Found.Should().BeTrue(
+            because: "display-name-first recovery must continue with a sole valid match even when stored state is stale");
+        result.ObjectId.Should().Be(TestObjectId,
+            because: "the sole display-name match remains the selected blueprint");
+        result.RequiresPersistence.Should().BeTrue(
+            because: "setup must persist the selected blueprint identifiers during stale-state recovery");
+        result.ErrorMessage.Should().BeNullOrEmpty();
+
+        var warnings = _logger.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(ILogger.Log) &&
+                call.GetArguments()[0] is LogLevel.Warning)
+            .Select(call => call.GetArguments()[2]?.ToString())
+            .ToList();
+        warnings.Should().HaveCount(expectsWarning ? 1 : 0,
+            because: "only a stored-ID mismatch requires a warning before continuing with a valid single result");
+        if (expectsWarning)
+        {
+            warnings[0].Should().Contain(preferredObjectId!)
+                .And.Contain(TestObjectId)
+                .And.Contain("Continuing")
+                .And.Contain("update the stored blueprint identifiers",
+                    because: "the warning must disclose both identities and the impending state change");
+        }
+    }
+
+    [Fact]
+    public async Task GetApplicationByDisplayNameAsync_WithMultipleUnmatchedResults_DoesNotRecover()
+    {
+        using var doc = JsonDocument.Parse($$"""
+            {"value":[
+              {"id":"{{TestObjectId}}","appId":"{{TestAppId}}","displayName":"{{TestDisplayName}}"},
+              {"id":"55555555-5555-5555-5555-555555555555","appId":"{{TestAppId}}","displayName":"{{TestDisplayName}}"}]}
+            """);
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId, Arg.Any<string>(), false, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = doc });
+
+        var result = await _service.GetApplicationByDisplayNameAsync(
+            TestTenantId, TestDisplayName, preferredObjectId: "44444444-4444-4444-4444-444444444444");
+
+        result.Found.Should().BeFalse(
+            because: "warning-and-continue recovery applies only to a sole valid result, never ambiguous applications");
+        result.ErrorMessage.Should().Contain("none matched",
+            because: "unmatched ambiguous results must remain an explicit discovery failure");
+        result.RequiresPersistence.Should().BeFalse();
+    }
+
     [Fact]
     public async Task GetApplicationByDisplayNameAsync_WhenGraphRequestFails_ReturnsInconclusiveError()
     {

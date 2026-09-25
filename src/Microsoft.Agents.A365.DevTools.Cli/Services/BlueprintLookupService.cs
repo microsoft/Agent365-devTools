@@ -229,6 +229,14 @@ public class BlueprintLookupService
             var appId = appIdElement.GetString();
             var foundDisplayName = displayNameElement.GetString();
 
+            if (!string.IsNullOrWhiteSpace(preferredObjectId) &&
+                !string.Equals(objectId, preferredObjectId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Stored blueprint object ID {StoredObjectId} did not match the sole application found for display name '{DisplayName}'. Continuing with object ID {SelectedObjectId}; setup will update the stored blueprint identifiers.",
+                    preferredObjectId, foundDisplayName, objectId);
+            }
+
             _logger.LogDebug("Found blueprint: {DisplayName} (ObjectId: {ObjectId}, AppId: {AppId})", 
                 foundDisplayName, objectId, appId);
 

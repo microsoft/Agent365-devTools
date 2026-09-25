@@ -141,6 +141,8 @@ public class Agent365Config
 - `get; set` properties = Mutable = Dynamic state
 - `ConfigService` handles merge (load) and split (save) logic
 
+Blueprint setup discovers applications by the configured display name. The stored object ID disambiguates multiple matches; if only one valid application matches but its ID differs, setup warns with both IDs and continues, updating the stored identifiers. Multiple unmatched results or malformed lookup responses remain failures rather than selecting an arbitrary application.
+
 ### Environment Variable Overrides
 
 For security and flexibility, the CLI supports environment variable overrides:
