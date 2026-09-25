@@ -20,6 +20,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     private readonly AuthenticationService _authService;
     private readonly ILogger<Agent365ToolingService> _logger;
     private readonly string _environment;
+    private readonly string _authorityHost;
 
     /// <inheritdoc />
     public string Environment => _environment;
@@ -28,12 +29,14 @@ public class Agent365ToolingService : IAgent365ToolingService
         IConfigService configService,
         AuthenticationService authService,
         ILogger<Agent365ToolingService> logger,
-        string environment = "prod")
+        string environment = "prod",
+        string? authorityHost = null)
     {
         _configService = configService ?? throw new ArgumentNullException(nameof(configService));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _environment = environment ?? "prod";
+        _authorityHost = ConfigConstants.GetAuthorityHost(_environment, authorityHost);
     }
 
     /// <summary>
@@ -343,7 +346,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -422,7 +426,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -496,7 +501,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -583,7 +589,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -628,7 +635,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var endpointUrl = BuildLogRegisterUrl(_environment);
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogDebug("Skipping telemetry: failed to acquire token");
@@ -666,7 +674,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var endpointUrl = BuildLogEvaluateUrl(_environment);
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogDebug("Skipping telemetry: failed to acquire token");
@@ -721,7 +730,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -801,7 +811,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -873,7 +884,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -905,4 +917,3 @@ public class Agent365ToolingService : IAgent365ToolingService
         }
     }
 }
-

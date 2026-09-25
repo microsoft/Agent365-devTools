@@ -105,6 +105,7 @@ internal static class RequirementsSubcommand
                         return;
                     }
 
+                    graphApiService.ConfigureCloudEndpoints(configForChecks);
                     var configPassed = await RunRequirementChecksAsync(configChecks, configForChecks, logger, ct: ct);
                     allPassed = allPassed && configPassed;
                 }
@@ -157,6 +158,9 @@ internal static class RequirementsSubcommand
         }
 
         logger.LogDebug("No a365.config.json found. Resolving client app from Entra...");
+        var environment = await SetupHelpers.ResolveBootstrapEnvironmentAsync(executor, logger, ct);
+        graphApiService.ConfigureCloudEndpoints(new Agent365Config { Environment = environment });
+
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(tenantId, graphApiService, logger, ct);
         if (string.IsNullOrWhiteSpace(clientAppId))
         {
@@ -169,6 +173,9 @@ internal static class RequirementsSubcommand
         {
             TenantId = tenantId,
             ClientAppId = clientAppId,
+            Environment = environment,
+            GraphBaseUrl = graphApiService.GraphBaseUrl,
+            AuthorityHost = graphApiService.AuthorityHost,
         };
     }
 

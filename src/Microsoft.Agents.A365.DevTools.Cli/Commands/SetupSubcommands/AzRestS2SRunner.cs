@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
@@ -52,7 +53,8 @@ internal static partial class AzRestS2SRunner
         string blueprintSpObjectId,
         IReadOnlyList<ResourcePermissionSpec> specs,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        string graphBaseUrl = GraphApiConstants.BaseUrl)
     {
         if (!GuidPattern().IsMatch(blueprintSpObjectId))
         {
@@ -85,13 +87,17 @@ internal static partial class AzRestS2SRunner
             }
         }
 
+        // Resolve the Graph base URL once so every az rest call targets the configured
+        // (sovereign / commercial) cloud endpoint rather than a hardcoded commercial host.
+        var baseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
+
         logger.LogInformation("Assigning S2S app roles...");
 
         var allOk = true;
 
         // Fetch the existing assignment list once at the top — every per-role idempotency
         // check then compares against this in-memory set, avoiding N+1 Graph round-trips.
-        var existingAssignments = await GetExistingAssignmentsAsync(executor, blueprintSpObjectId, logger, ct);
+        var existingAssignments = await GetExistingAssignmentsAsync(executor, blueprintSpObjectId, baseUrl, logger, ct);
         if (existingAssignments is null)
         {
             // The GET itself failed; that's a hard stop because we can't reason about
@@ -104,7 +110,7 @@ internal static partial class AzRestS2SRunner
             ct.ThrowIfCancellationRequested();
             try
             {
-                var ok = await AssignOneAsync(executor, blueprintSpObjectId, spec, existingAssignments, logger, ct);
+                var ok = await AssignOneAsync(executor, blueprintSpObjectId, spec, existingAssignments, baseUrl, logger, ct);
                 if (!ok) allOk = false;
             }
             catch (OperationCanceledException)
@@ -132,12 +138,13 @@ internal static partial class AzRestS2SRunner
         string blueprintSpObjectId,
         ResourcePermissionSpec spec,
         HashSet<(string ResourceId, string AppRoleId)> existingAssignments,
+        string graphBaseUrl,
         ILogger logger,
         CancellationToken ct)
     {
         var spResult = await executor.ExecuteAsync(
             "az",
-            $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{spec.ResourceAppId}'&$select=id,appRoles\"",
+            $"rest --method GET --url \"{graphBaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{spec.ResourceAppId}'&$select=id,appRoles\"",
             captureOutput: true,
             suppressErrorLogging: true,
             cancellationToken: ct);
@@ -182,7 +189,7 @@ internal static partial class AzRestS2SRunner
             var created = await ExecuteAzRestWithBodyAsync(
                 executor,
                 method: "POST",
-                url: $"https://graph.microsoft.com/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
+                url: $"{graphBaseUrl}/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments",
                 bodyJson: createBody,
                 logger: logger,
                 ct: ct);
@@ -212,12 +219,13 @@ internal static partial class AzRestS2SRunner
     private static async Task<HashSet<(string, string)>?> GetExistingAssignmentsAsync(
         CommandExecutor executor,
         string blueprintSpObjectId,
+        string graphBaseUrl,
         ILogger logger,
         CancellationToken ct)
     {
         var result = await executor.ExecuteAsync(
             "az",
-            $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments\"",
+            $"rest --method GET --url \"{graphBaseUrl}/v1.0/servicePrincipals/{blueprintSpObjectId}/appRoleAssignments\"",
             captureOutput: true,
             suppressErrorLogging: true,
             cancellationToken: ct);

@@ -15,7 +15,11 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 **Option A — Entra portal** (no config files required):
 
 1. [Entra portal](https://entra.microsoft.com) > **App registrations** > select your **Blueprint** app > **API permissions**
-2. **Add a permission** > **APIs my organization uses** > search `9b975845-388f-4429-889e-eab1ef63949c`
+2. **Add a permission** > **APIs my organization uses** > search for the Observability app ID for your cloud:
+   - Commercial: `9b975845-388f-4429-889e-eab1ef63949c`
+   - GCC Moderate: `2c672ad5-b104-44ed-8069-bb68dd138546`
+   - GCC High: `009c6bd0-82e4-4466-95b3-4c996521f3d7`
+   - DoD: `a9e04047-c6a7-430b-a7ae-faf8f8eed1b7`
 3. **Delegated permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 4. Repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 5. **Grant admin consent for \<tenant\>** > confirm
@@ -64,6 +68,23 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- `a365 create-instance` now reports an ambiguous government-cloud environment as a configuration error with guidance to select a specific cloud (#478).
+- Setup now warns before replacing a stale stored blueprint ID with the sole application matching the configured display name (#478).
+- Messaging endpoint create and delete overrides now reject non-HTTPS URLs and URLs containing user information, query strings, or fragments (#478).
+- Graph authentication now keeps cached tokens separate for each authority host when switching clouds (#478).
+- Blueprint discovery now tolerates malformed unrelated results when locating a stored blueprint and stops safely when the selected result is invalid (#478).
+- Setup now requests the required Graph scopes and stops safely when existing blueprint discovery is inconclusive, preventing duplicate blueprints after CLI permission changes.
+- GCC Moderate, GCC High, and DoD setup now grant permissions to each cloud's Observability service instead of the commercial service.
+- Cloud-specific Agent 365 discover endpoint overrides now also select the messaging endpoint create and delete hosts unless explicit overrides are set.
+- Repeated `publish --aiteammate` runs now preserve customized manifest names instead of restoring an overlong blueprint name.
+- Repeated `setup blueprint --agent-name` runs now reuse the stored valid client secret instead of creating duplicate credentials.
+- `a365 query-entra blueprint-scopes` and `inheritance` now report permission-grant read failures, and `a365 create-instance` now stops safely instead of continuing when existing grants cannot be read.
+- `setup requirements` now validates and repairs tenant-owned fallback CLI apps with the administrator bootstrap identity, preventing false "app not found" failures when the first-party CLI app is unavailable.
+- `a365 create-instance` now reports invalid custom Graph or authority endpoints as configuration errors instead of aborting with an unhandled exception (#478).
+- Cloud-specific Graph, authority, and Agent 365 Tools endpoint overrides now apply consistently across setup, consent, authentication, query, and create-instance flows for sovereign and custom clouds. (#478)
+- `a365 query-entra instance-scopes` now reports consent status correctly and fails visibly when permission grants cannot be read (#478).
+- `a365 publish` no longer crashes when `manifest.json` has a non-string `name.short` value (#478).
+- `setup all --agent-registration-only` now exits non-zero and reports errors when the requested agent registration step fails, while full setup continues to treat registration as best-effort (#478).
 - `a365 develop-mcp grant-agents-access --device-code` no longer prompts repeatedly within a single command, and no longer fails in embedded or remote terminals where the sign-in prompt could not be displayed (#500).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).

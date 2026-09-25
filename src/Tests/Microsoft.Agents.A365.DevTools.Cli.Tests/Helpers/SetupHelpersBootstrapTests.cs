@@ -16,7 +16,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Helpers;
 
 /// <summary>
 /// Unit tests for the SetupHelpers bootstrap helper methods:
-/// BuildConfiguredPermissionSpecsAsync, ResolveBootstrapTenantIdAsync,
+/// BuildConfiguredPermissionSpecsAsync, ResolveBootstrapTenantIdAsync, ResolveBootstrapEnvironmentAsync,
 /// ResolveBootstrapClientAppIdAsync, and GetJsonString.
 /// </summary>
 [Collection("ConfigTests")]
@@ -225,6 +225,89 @@ public class SetupHelpersBootstrapTests : IDisposable
 
         // Assert
         result.Should().BeNull(because: "a failed az account show must return null, not throw");
+    }
+
+    // ── ResolveBootstrapEnvironmentAsync ───────────────────────────────────────
+
+    [Fact]
+    public async Task ResolveBootstrapEnvironmentAsync_WhenEnvironmentVariableIsSet_UsesItWithoutCallingAzureCli()
+    {
+        const string expectedEnvironment = "gcc";
+        var originalEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
+        Environment.SetEnvironmentVariable("A365_ENVIRONMENT", $" {expectedEnvironment} ");
+        try
+        {
+            var result = await SetupHelpers.ResolveBootstrapEnvironmentAsync(
+                _mockExecutor, NullLogger.Instance, CancellationToken.None);
+
+            result.Should().Be(expectedEnvironment,
+                because: "an explicit environment override must select sovereign-cloud endpoints before the first Graph bootstrap call");
+            await _mockExecutor.DidNotReceive().ExecuteAsync(
+                Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("A365_ENVIRONMENT", originalEnvironment);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapEnvironmentAsync_WhenUnset_UsesActiveAzureCliCloud()
+    {
+        var originalEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
+        Environment.SetEnvironmentVariable("A365_ENVIRONMENT", null);
+        try
+        {
+            _mockExecutor.ExecuteAsync(
+                    "az", "cloud show --query name -o tsv",
+                    Arg.Any<string?>(), true, true, Arg.Any<CancellationToken>())
+                .Returns(new CommandResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = "AzureCloud\n",
+                    StandardError = string.Empty
+                });
+
+            var result = await SetupHelpers.ResolveBootstrapEnvironmentAsync(
+                _mockExecutor, NullLogger.Instance, CancellationToken.None);
+
+            result.Should().Be("AzureCloud",
+                because: "config-free bootstrap must target the active Azure CLI cloud before resolving the client application");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("A365_ENVIRONMENT", originalEnvironment);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveBootstrapEnvironmentAsync_WhenAzureCliUsesUsGovernment_RequiresExplicitEnvironment()
+    {
+        var originalEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
+        Environment.SetEnvironmentVariable("A365_ENVIRONMENT", null);
+        try
+        {
+            _mockExecutor.ExecuteAsync(
+                    "az", "cloud show --query name -o tsv",
+                    Arg.Any<string?>(), true, true, Arg.Any<CancellationToken>())
+                .Returns(new CommandResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = "AzureUSGovernment\n",
+                    StandardError = string.Empty
+                });
+
+            var act = () => SetupHelpers.ResolveBootstrapEnvironmentAsync(
+                _mockExecutor, NullLogger.Instance, CancellationToken.None);
+
+            await act.Should().ThrowAsync<SetupValidationException>(
+                because: "AzureUSGovernment cannot identify whether the tenant is GCC Moderate, GCC High, or DoD");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("A365_ENVIRONMENT", originalEnvironment);
+        }
     }
 
     // ── ResolveBootstrapClientAppIdAsync ──────────────────────────────────────

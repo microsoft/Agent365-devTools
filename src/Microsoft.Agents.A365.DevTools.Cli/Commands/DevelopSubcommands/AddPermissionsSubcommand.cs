@@ -3,6 +3,7 @@
 
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
@@ -74,6 +75,10 @@ internal static class AddPermissionsSubcommand
                 var setupConfig = File.Exists(configFile.FullName)
                     ? await configService.LoadAsync(configFile.FullName)
                     : null;
+                graphApiService.ConfigureCloudEndpoints(setupConfig ?? new Agent365Config
+                {
+                    Environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod"
+                });
 
                 if (setupConfig == null && string.IsNullOrWhiteSpace(appId))
                 {

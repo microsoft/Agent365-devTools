@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -92,12 +93,18 @@ public class BlueprintSubcommandInvalidationTests
         {
             // Force the displayName-first lookup to report "not found" so we reach the new-blueprint
             // creation path. The service's `if (doc == null)` branch maps to Found=false.
-            _graphApiService.GraphGetAsync(
+            _graphApiService.GraphGetWithResponseAsync(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
-                Arg.Any<CancellationToken>(),
-                Arg.Any<IEnumerable<string>?>())
-                .Returns(Task.FromResult<JsonDocument?>(null));
+                false,
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>())
+                .Returns(new GraphApiService.GraphResponse
+                {
+                    IsSuccess = true,
+                    StatusCode = 200,
+                    Json = JsonDocument.Parse("""{"value":[]}""")
+                });
 
             // Pre-populate the in-memory JsonObject with the kinds of stale identifiers the
             // invalidation block exists to wipe. If the clear loop is removed, these survive and
@@ -215,6 +222,73 @@ public class BlueprintSubcommandInvalidationTests
             {
                 Directory.Delete(tempDir, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task CreateAgentBlueprintAsync_WhenLookupIsForbidden_DoesNotInvalidateGeneratedConfig()
+    {
+        // Arrange
+        var tempDir = Path.Combine(Path.GetTempPath(), $"a365-blueprint-lookup-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var configFile = new FileInfo(Path.Combine(tempDir, "a365.config.json"));
+        var generatedConfig = new JsonObject
+        {
+            ["agentBlueprintId"] = "existing-blueprint-app-id",
+            ["agentBlueprintObjectId"] = "existing-blueprint-object-id"
+        };
+        var setupConfig = new Agent365Config
+        {
+            TenantId = TenantId,
+            AgentBlueprintDisplayName = DisplayName,
+            AgentBlueprintObjectId = "existing-blueprint-object-id"
+        };
+
+        try
+        {
+            _graphApiService.GraphGetWithResponseAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                false,
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>())
+                .Returns(new GraphApiService.GraphResponse
+                {
+                    IsSuccess = false,
+                    StatusCode = 403,
+                    ReasonPhrase = "Forbidden"
+                });
+
+            // Act
+            var act = () => BlueprintSubcommand.CreateAgentBlueprintAsync(
+                _logger,
+                _executor,
+                _graphApiService,
+                _blueprintService,
+                _blueprintLookupService,
+                _federatedCredentialService,
+                tenantId: TenantId,
+                displayName: DisplayName,
+                agentIdentityDisplayName: null,
+                managedIdentityPrincipalId: null,
+                useManagedIdentity: true,
+                generatedConfig,
+                setupConfig,
+                _configService,
+                configFile,
+                CancellationToken.None);
+
+            // Assert
+            await act.Should().ThrowAsync<SetupValidationException>(
+                because: "an authorization failure makes existing-resource discovery inconclusive");
+            await _configService.DidNotReceiveWithAnyArgs()
+                .InvalidateGeneratedConfigAsync(default!, default!, default!);
+            generatedConfig["agentBlueprintObjectId"]!.GetValue<string>().Should().Be("existing-blueprint-object-id",
+                because: "inconclusive discovery must preserve the current generated state");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
         }
     }
 }

@@ -154,16 +154,19 @@ public class ClientAppValidationExceptionTests
     public void BuildAdminConsentUrl_EncodesRedirectUri()
     {
         // Act
-        var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(TestClientAppId, TestTenantId);
+        var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(
+            TestClientAppId, TestTenantId, "https://login.example");
 
         // Assert
         consentUrl.Should().NotBeNull();
+        consentUrl.Should().StartWith($"https://login.example/{TestTenantId}/adminconsent",
+            because: "the admin consent URL must be rooted at the cloud-specific authority host with the tenant ID in the path — using the wrong authority host produces an AADSTS error for sovereign/government clouds");
         consentUrl.Should().Contain($"client_id={TestClientAppId}", because: "the client ID must be preserved in the admin consent URL query string");
         consentUrl.Should().Contain(
-            $"redirect_uri={Uri.EscapeDataString("https://login.microsoftonline.com/common/oauth2/nativeclient")}",
+            $"redirect_uri={Uri.EscapeDataString("https://login.example/common/oauth2/nativeclient")}",
             because: "redirect_uri is a URL-valued query parameter and must be encoded so the consent link remains valid when copied through shells, logs, and browsers");
         consentUrl.Should().NotContain(
-            "&redirect_uri=https://login.microsoftonline.com/common/oauth2/nativeclient",
+            "&redirect_uri=https://login.example/common/oauth2/nativeclient",
             because: "an unescaped redirect URI contains reserved characters that can corrupt the admin consent query string");
     }
 

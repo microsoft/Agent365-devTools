@@ -300,4 +300,98 @@ public class QueryEntraCommandInheritanceHandlerTests
         LoggerReceivedContaining(LogLevel.Error, "Failed to query inheritable permissions").Should().BeTrue(
             because: "the error message must clearly identify the operation that failed so operators can correlate with logs");
     }
+
+    [Fact]
+    public async Task InheritanceSubcommand_WhenGrantEnumerationIsForbidden_LogsError_AndExitsOne()
+    {
+        SetupResolver(new Agent365Config { TenantId = ValidTenantId, AgentBlueprintId = ValidBlueprintId });
+        _mockBlueprintService.ListInheritablePermissionsAsync(
+            ValidTenantId, ValidBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new List<(string, bool, bool)>
+            {
+                (GraphAppId, true, true)
+            }));
+        _mockBlueprintService.GetBlueprintSpGrantsAsync(
+                ValidTenantId,
+                ValidBlueprintId,
+                Arg.Any<IEnumerable<string>>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<Dictionary<string, (string[], string[])>>>(_ =>
+                throw new InvalidOperationException("Microsoft Graph could not read OAuth2 permission grants: HTTP 403 Forbidden."));
+
+        var parser = new CommandLineBuilder(BuildRootCommand()).Build();
+        var exitCode = await parser.InvokeAsync("inheritance --agent-name test-agent", new TestConsole());
+
+        exitCode.Should().Be(1,
+            because: "an unreadable grants table is not evidence of zero grants and must fail scripted inheritance checks");
+        LoggerReceivedContaining(LogLevel.Error, "HTTP 403 Forbidden").Should().BeTrue(
+            because: "operators need the authorization failure surfaced instead of a misleading no-permissions result");
+    }
+
+    [Fact]
+    public async Task BlueprintScopesSubcommand_WhenGrantEnumerationIsForbidden_LogsError_AndExitsOne()
+    {
+        SetupResolver(new Agent365Config { TenantId = ValidTenantId, AgentBlueprintId = ValidBlueprintId });
+        _mockBlueprintService.ListInheritablePermissionsAsync(
+            ValidTenantId, ValidBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new List<(string, bool, bool)>
+            {
+                (GraphAppId, true, true)
+            }));
+        _mockBlueprintService.GetBlueprintSpGrantsAsync(
+                ValidTenantId,
+                ValidBlueprintId,
+                Arg.Any<IEnumerable<string>>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<Dictionary<string, (string[], string[])>>>(_ =>
+                throw new InvalidOperationException("Microsoft Graph could not read OAuth2 permission grants: HTTP 403 Forbidden."));
+
+        var parser = new CommandLineBuilder(BuildRootCommand()).Build();
+        var exitCode = await parser.InvokeAsync("blueprint-scopes --agent-name test-agent", new TestConsole());
+
+        exitCode.Should().Be(1,
+            because: "blueprint-scopes must not report zero permissions when Graph denied access to the grants table");
+        LoggerReceivedContaining(LogLevel.Error, "HTTP 403 Forbidden").Should().BeTrue(
+            because: "the command must make the denied administrative read visible to the operator");
+    }
+
+    [Fact]
+    public async Task BlueprintScopesSubcommand_WhenKnownResourcesHaveNoGrants_ReportsEmptyPermissions_AndExitsZero()
+    {
+        SetupResolver(new Agent365Config { TenantId = ValidTenantId, AgentBlueprintId = ValidBlueprintId });
+        _mockBlueprintService.ListInheritablePermissionsAsync(
+            ValidTenantId, ValidBlueprintId, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new List<(string, bool, bool)>
+            {
+                (GraphAppId, true, true),
+                (ObservabilityAppId, true, true)
+            }));
+        _mockBlueprintService.GetBlueprintSpGrantsAsync(
+                ValidTenantId,
+                ValidBlueprintId,
+                Arg.Any<IEnumerable<string>>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new Dictionary<string, (string[], string[])>(StringComparer.OrdinalIgnoreCase)
+            {
+                [GraphAppId] = (Array.Empty<string>(), Array.Empty<string>()),
+                [ObservabilityAppId] = (Array.Empty<string>(), Array.Empty<string>())
+            }));
+
+        var parser = new CommandLineBuilder(BuildRootCommand()).Build();
+        var exitCode = await parser.InvokeAsync("blueprint-scopes --agent-name test-agent", new TestConsole());
+
+        exitCode.Should().Be(0,
+            because: "a successful administrative read proving that known resources have zero grants is a valid query result");
+        LoggerReceivedContaining(LogLevel.Information, "Delegated permissions (0): (none)").Should().BeTrue(
+            because: "the command must visibly report empty delegated permissions rather than conflating them with an unreadable grants table");
+        LoggerReceivedContaining(LogLevel.Information, "Application permissions (0): (none)").Should().BeTrue(
+            because: "the command must visibly report empty application permissions for successfully read resources");
+        LoggerReceivedContaining(LogLevel.Information, "0 of 2 resource(s) have at least one granted permission").Should().BeTrue(
+            because: "the summary must preserve the known-resource versus zero-grants distinction for scripted diagnostics");
+        LoggerReceivedContaining(LogLevel.Error, "Failed to query blueprint granted permissions").Should().BeFalse(
+            because: "a successful empty grants response is not an error");
+    }
 }

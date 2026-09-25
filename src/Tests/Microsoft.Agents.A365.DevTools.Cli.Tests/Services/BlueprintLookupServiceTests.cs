@@ -92,11 +92,13 @@ public class BlueprintLookupServiceTests
         }}";
         var jsonDoc = JsonDocument.Parse(jsonResponse);
 
-        _graphApiService.GraphGetAsync(
+        _graphApiService.GraphGetWithResponseAsync(
             TestTenantId,
             Arg.Is<string>(s => s.Contains("/beta/applications?$filter=")),
+            false,
+            Arg.Is<IEnumerable<string>?>(scopes => scopes != null && scopes.Contains("Application.Read.All")),
             Arg.Any<CancellationToken>())
-            .Returns(jsonDoc);
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = jsonDoc });
 
         // Act
         var result = await _service.GetApplicationByDisplayNameAsync(TestTenantId, TestDisplayName);
@@ -118,11 +120,13 @@ public class BlueprintLookupServiceTests
         var jsonResponse = @"{""value"": []}";
         var jsonDoc = JsonDocument.Parse(jsonResponse);
 
-        _graphApiService.GraphGetAsync(
+        _graphApiService.GraphGetWithResponseAsync(
             TestTenantId,
             Arg.Is<string>(s => s.Contains("/beta/applications?$filter=")),
+            false,
+            Arg.Any<IEnumerable<string>?>(),
             Arg.Any<CancellationToken>())
-            .Returns(jsonDoc);
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = jsonDoc });
 
         // Act
         var result = await _service.GetApplicationByDisplayNameAsync(TestTenantId, TestDisplayName);
@@ -142,22 +146,24 @@ public class BlueprintLookupServiceTests
         var jsonResponse = @"{""value"": []}";
         var jsonDoc = JsonDocument.Parse(jsonResponse);
 
-        _graphApiService.GraphGetAsync(
+        _graphApiService.GraphGetWithResponseAsync(
             TestTenantId,
             Arg.Is<string>(s => s.Contains("Test%27%27Blueprint%27%27Name")), // URL encoded double single quotes
-            Arg.Any<CancellationToken>(),
-            null)
-            .Returns(jsonDoc);
+            false,
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = jsonDoc });
 
         // Act
         await _service.GetApplicationByDisplayNameAsync(TestTenantId, displayNameWithQuotes);
 
         // Assert
-        await _graphApiService.Received(1).GraphGetAsync(
+        await _graphApiService.Received(1).GraphGetWithResponseAsync(
             TestTenantId,
             Arg.Is<string>(s => s.Contains("Test%27%27Blueprint%27%27Name")),
-            Arg.Any<CancellationToken>(),
-            null);
+            false,
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -235,7 +241,7 @@ public class BlueprintLookupServiceTests
     }
 
     [Fact]
-    public async Task GetApplicationByDisplayNameAsync_WhenMultipleBlueprintsFound_ReturnsFirst()
+    public async Task GetApplicationByDisplayNameAsync_WhenMultipleBlueprintsFoundWithoutPreferredId_ReturnsInconclusiveError()
     {
         // Arrange - Simulate multiple results (shouldn't happen with proper naming, but test resilience)
         var objectId1 = "44444444-4444-4444-4444-444444444444";
@@ -256,19 +262,231 @@ public class BlueprintLookupServiceTests
         }}";
         var jsonDoc = JsonDocument.Parse(jsonResponse);
 
-        _graphApiService.GraphGetAsync(
+        _graphApiService.GraphGetWithResponseAsync(
             TestTenantId,
             Arg.Is<string>(s => s.Contains("/beta/applications?$filter=")),
+            false,
+            Arg.Any<IEnumerable<string>?>(),
             Arg.Any<CancellationToken>())
-            .Returns(jsonDoc);
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = jsonDoc });
 
         // Act
         var result = await _service.GetApplicationByDisplayNameAsync(TestTenantId, TestDisplayName);
 
         // Assert
-        result.Should().NotBeNull();
-        result.Found.Should().BeTrue();
-        result.ObjectId.Should().Be(objectId1); // Should return the first match
+        result.Found.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Multiple blueprints",
+            because: "setup must not select an arbitrary application when display names are ambiguous");
+    }
+
+    [Fact]
+    public async Task GetApplicationByDisplayNameAsync_WhenMultipleBlueprintsFound_PrefersCachedObjectId()
+    {
+        // Arrange
+        var objectId1 = "44444444-4444-4444-4444-444444444444";
+        var objectId2 = "55555555-5555-5555-5555-555555555555";
+        var jsonDoc = JsonDocument.Parse($$"""
+            {
+              "value": [
+                { "id": "{{objectId1}}", "appId": "{{TestAppId}}", "displayName": "{{TestDisplayName}}" },
+                { "id": "{{objectId2}}", "appId": "66666666-6666-6666-6666-666666666666", "displayName": "{{TestDisplayName}}" }
+              ]
+            }
+            """);
+
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId,
+            Arg.Any<string>(),
+            false,
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = jsonDoc });
+
+        // Act
+        var result = await _service.GetApplicationByDisplayNameAsync(
+            TestTenantId,
+            TestDisplayName,
+            preferredObjectId: objectId2);
+
+        // Assert
+        result.ObjectId.Should().Be(objectId2,
+            because: "a cached blueprint object ID must win when duplicate display names exist");
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(TestObjectId, false)]
+    [InlineData("44444444-4444-4444-4444-444444444444", true)]
+    public async Task GetApplicationByDisplayNameAsync_WithSingleMatch_WarnsOnlyWhenStoredIdDiffers(
+        string? preferredObjectId, bool expectsWarning)
+    {
+        using var doc = JsonDocument.Parse($$"""
+            {"value":[{"id":"{{TestObjectId}}","appId":"{{TestAppId}}","displayName":"{{TestDisplayName}}"}]}
+            """);
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId, Arg.Any<string>(), false, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = doc });
+
+        var result = await _service.GetApplicationByDisplayNameAsync(
+            TestTenantId, TestDisplayName, preferredObjectId: preferredObjectId);
+
+        result.Found.Should().BeTrue(
+            because: "display-name-first recovery must continue with a sole valid match even when stored state is stale");
+        result.ObjectId.Should().Be(TestObjectId,
+            because: "the sole display-name match remains the selected blueprint");
+        result.RequiresPersistence.Should().BeTrue(
+            because: "setup must persist the selected blueprint identifiers during stale-state recovery");
+        result.ErrorMessage.Should().BeNullOrEmpty();
+
+        var warnings = _logger.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(ILogger.Log) &&
+                call.GetArguments()[0] is LogLevel.Warning)
+            .Select(call => call.GetArguments()[2]?.ToString())
+            .ToList();
+        warnings.Should().HaveCount(expectsWarning ? 1 : 0,
+            because: "only a stored-ID mismatch requires a warning before continuing with a valid single result");
+        if (expectsWarning)
+        {
+            warnings[0].Should().Contain(preferredObjectId!)
+                .And.Contain(TestObjectId)
+                .And.Contain("Continuing")
+                .And.Contain("update the stored blueprint identifiers",
+                    because: "the warning must disclose both identities and the impending state change");
+        }
+    }
+
+    [Fact]
+    public async Task GetApplicationByDisplayNameAsync_WithMultipleUnmatchedResults_DoesNotRecover()
+    {
+        using var doc = JsonDocument.Parse($$"""
+            {"value":[
+              {"id":"{{TestObjectId}}","appId":"{{TestAppId}}","displayName":"{{TestDisplayName}}"},
+              {"id":"55555555-5555-5555-5555-555555555555","appId":"{{TestAppId}}","displayName":"{{TestDisplayName}}"}]}
+            """);
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId, Arg.Any<string>(), false, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = doc });
+
+        var result = await _service.GetApplicationByDisplayNameAsync(
+            TestTenantId, TestDisplayName, preferredObjectId: "44444444-4444-4444-4444-444444444444");
+
+        result.Found.Should().BeFalse(
+            because: "warning-and-continue recovery applies only to a sole valid result, never ambiguous applications");
+        result.ErrorMessage.Should().Contain("none matched",
+            because: "unmatched ambiguous results must remain an explicit discovery failure");
+        result.RequiresPersistence.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetApplicationByDisplayNameAsync_WhenGraphRequestFails_ReturnsInconclusiveError()
+    {
+        // Arrange
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId,
+            Arg.Any<string>(),
+            false,
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse
+            {
+                IsSuccess = false,
+                StatusCode = 403,
+                ReasonPhrase = "Forbidden",
+                Body = """{"error":{"code":"Authorization_RequestDenied"}}"""
+            });
+
+        // Act
+        var result = await _service.GetApplicationByDisplayNameAsync(TestTenantId, TestDisplayName);
+
+        // Assert
+        result.Found.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("HTTP 403 Forbidden",
+            because: "authorization failures must remain distinguishable from a successful empty lookup");
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("""{"id":null}""")]
+    [InlineData("""{"id":42}""")]
+    [InlineData("""{"id":{}}""")]
+    public async Task GetApplicationByDisplayNameAsync_WhenAnotherRowIsMalformed_PreservesPreferredBlueprint(
+        string malformedRow)
+    {
+        using var doc = JsonDocument.Parse($$"""
+            {"value":[{{malformedRow}},
+              {"id":"{{TestObjectId}}","appId":"{{TestAppId}}","displayName":"{{TestDisplayName}}"}]}
+            """);
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId, Arg.Any<string>(), false, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = doc });
+
+        var result = await _service.GetApplicationByDisplayNameAsync(
+            TestTenantId, TestDisplayName, preferredObjectId: TestObjectId);
+
+        result.Found.Should().BeTrue(
+            because: "a malformed unrelated row must not prevent selecting the stored blueprint");
+        result.ObjectId.Should().Be(TestObjectId,
+            because: "discovery must preserve the blueprint identified by generated state");
+        result.AppId.Should().Be(TestAppId);
+        result.ErrorMessage.Should().BeNullOrEmpty();
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("""{"value":null}""")]
+    [InlineData("""{"value":{}}""")]
+    [InlineData("""{"value":[null]}""")]
+    [InlineData("""{"value":[{}]}""")]
+    [InlineData("""{"value":[{"id":null,"appId":"app","displayName":"name"}]}""")]
+    [InlineData("""{"value":[{"id":"id","appId":null,"displayName":"name"}]}""")]
+    [InlineData("""{"value":[{"id":"id","appId":"app","displayName":42}]}""")]
+    [InlineData("""{"value":[{"id":" ","appId":"app","displayName":"name"}]}""")]
+    [InlineData("""{"value":[{"id":"id","appId":"","displayName":"name"}]}""")]
+    public async Task GetApplicationByDisplayNameAsync_WhenResponseIsMalformed_ReturnsInconclusiveError(
+        string responseBody)
+    {
+        using var doc = JsonDocument.Parse(responseBody);
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId, Arg.Any<string>(), false, Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = doc });
+
+        var result = await _service.GetApplicationByDisplayNameAsync(TestTenantId, TestDisplayName);
+
+        result.Found.Should().BeFalse(
+            because: "malformed discovery data cannot establish an existing blueprint");
+        result.ErrorMessage.Should().NotBeNullOrWhiteSpace(
+            because: "an inconclusive lookup must not be treated as absence and create a duplicate blueprint");
+        result.RequiresPersistence.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetApplicationByDisplayNameAsync_WhenCanceled_PropagatesCancellation()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        _graphApiService.GraphGetWithResponseAsync(
+            TestTenantId,
+            Arg.Any<string>(),
+            false,
+            Arg.Any<IEnumerable<string>?>(),
+            cts.Token)
+            .Returns<Task<GraphApiService.GraphResponse>>(_ => throw new OperationCanceledException(cts.Token));
+
+        // Act
+        var act = () => _service.GetApplicationByDisplayNameAsync(
+            TestTenantId,
+            TestDisplayName,
+            cancellationToken: cts.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            because: "Ctrl+C must remain cancellation rather than being reported as a permission failure");
     }
 
     [Fact]
@@ -290,11 +508,13 @@ public class BlueprintLookupServiceTests
         var jsonResponse = @"{""value"": []}"; // No blueprints match the new displayName
         var jsonDoc = JsonDocument.Parse(jsonResponse);
 
-        _graphApiService.GraphGetAsync(
+        _graphApiService.GraphGetWithResponseAsync(
             TestTenantId,
             Arg.Is<string>(s => s.Contains("/beta/applications?$filter=") && s.Contains("NewAgent")),
+            false,
+            Arg.Any<IEnumerable<string>?>(),
             Arg.Any<CancellationToken>())
-            .Returns(jsonDoc);
+            .Returns(new GraphApiService.GraphResponse { IsSuccess = true, StatusCode = 200, Json = jsonDoc });
 
         // Act
         var result = await _service.GetApplicationByDisplayNameAsync(TestTenantId, newDisplayName);

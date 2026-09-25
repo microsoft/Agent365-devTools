@@ -65,6 +65,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
             var createEndpointUrl = EndpointHelper.GetCreateEndpointUrl(config.Environment);
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            var authorityHost = ConfigConstants.GetAuthorityHost(config.Environment, config.AuthorityHost);
 
             _logger.LogDebug("Create endpoint URL: {Url}", createEndpointUrl);
 
@@ -79,7 +80,13 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             {
                 bool forceRefresh = attempt > 0;
 
-                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser, ct: ct);
+                var authToken = await _authService.GetAccessTokenAsync(
+                    audience,
+                    tenantId,
+                    forceRefresh: forceRefresh,
+                    userId: currentUser,
+                    ct: ct,
+                    authorityHost: authorityHost);
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");
@@ -188,6 +195,7 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
 
             var deleteEndpointUrl = EndpointHelper.GetDeleteEndpointUrl(config.Environment);
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
+            var authorityHost = ConfigConstants.GetAuthorityHost(config.Environment, config.AuthorityHost);
 
             _logger.LogDebug("Delete endpoint URL: {Url}", deleteEndpointUrl);
 
@@ -201,7 +209,13 @@ public class TeamsGraphBackendConfigurator : ITeamsGraphBackendConfigurator
             {
                 bool forceRefresh = attempt > 0;
 
-                var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, forceRefresh: forceRefresh, userId: currentUser, ct: ct);
+                var authToken = await _authService.GetAccessTokenAsync(
+                    audience,
+                    tenantId,
+                    forceRefresh: forceRefresh,
+                    userId: currentUser,
+                    ct: ct,
+                    authorityHost: authorityHost);
                 if (string.IsNullOrWhiteSpace(authToken))
                 {
                     _logger.LogError("Failed to acquire authentication token");

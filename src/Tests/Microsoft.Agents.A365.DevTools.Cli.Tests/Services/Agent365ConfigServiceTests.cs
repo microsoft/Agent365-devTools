@@ -683,6 +683,46 @@ public class Agent365ConfigServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TryResolveClientAppIdAsync_ConfiguresCloudEndpointsBeforeGraphLookup()
+    {
+        const string tenantId = "12345678-1234-1234-1234-123456789012";
+        const string graphBaseUrl = "https://graph.microsoft.us";
+        const string authorityHost = "https://login.microsoftonline.us";
+        var originalCwd = Environment.CurrentDirectory;
+        var graph = CreateMockGraphApiService();
+        try
+        {
+            var configPath = Path.Combine(_testDirectory, ConfigConstants.DefaultConfigFileName);
+            await File.WriteAllTextAsync(
+                configPath,
+                $$"""{"tenantId":"{{tenantId}}","clientAppId":"{{AuthenticationConstants.WellKnownClientAppId}}","environment":"AzureUSGovernment","graphBaseUrl":"{{graphBaseUrl}}","authorityHost":"{{authorityHost}}"}""");
+            Environment.CurrentDirectory = _testDirectory;
+
+            graph.LookupServicePrincipalByAppIdWithResponseAsync(
+                    tenantId, AuthenticationConstants.WellKnownClientAppId, Arg.Any<CancellationToken>())
+                .Returns(_ =>
+                {
+                    graph.GraphBaseUrl.Should().Be(graphBaseUrl,
+                        because: "startup client-app resolution must query the configured sovereign Microsoft Graph endpoint");
+                    graph.AuthorityHost.Should().Be(authorityHost,
+                        because: "startup authentication must use the authority paired with the configured sovereign Graph endpoint");
+                    return new GraphApiService.ServicePrincipalLookupResult
+                    {
+                        IsSuccess = true,
+                        ServicePrincipalId = "first-party-sp-object-id",
+                        StatusCode = 200
+                    };
+                });
+
+            await _service.TryResolveClientAppIdAsync(graph);
+        }
+        finally
+        {
+            Environment.CurrentDirectory = originalCwd;
+        }
+    }
+
+    [Fact]
     public async Task TryResolveClientAppIdAsync_WhenConfiguredIsFirstPartyAndLookupFails_WarnsAndPreservesConfig()
     {
         const string tenantId = "12345678-1234-1234-1234-123456789012";

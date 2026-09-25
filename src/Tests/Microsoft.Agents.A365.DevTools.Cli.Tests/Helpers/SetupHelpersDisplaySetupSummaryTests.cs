@@ -273,6 +273,33 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "when no consent URL is available the non-DW summary must fall back to the LogNonDwAdminConsentInstructions portal walkthrough so the user still has a recovery path");
     }
 
+    [Fact]
+    public void DisplaySetupSummary_NonDwGccAdminConsentPending_UsesGccObservabilityResource()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            ObservabilityResourceAppId = ConfigConstants.GccObservabilityApiAppId,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(ConfigConstants.GccObservabilityApiAppId,
+            because: "manual GCC recovery instructions must target the GCC Observability service");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
+            because: "manual GCC recovery instructions must not target the commercial Observability service");
+    }
+
     /// <summary>
     /// B2 regression — non-admin AID developer running `setup all` as OBO must see the consent URL
     /// surfaced as an action item. Pre-refactor, the orchestrator wrote a misleading
@@ -575,6 +602,36 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the blueprint summary must point to the bot/observability permissions step");
     }
 
+    [Fact]
+    public void DisplaySetupSummary_AgentRegistrationOnlyFailure_UsesErrorStatusInsteadOfSuccess()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildAgentRegistrationOnlyFailureResults(), logger);
+
+        logger.AllOutput.Should().Contain("Setup completed with errors",
+            because: "registration-only mode should treat the requested registration failure as fatal");
+        logger.AllOutput.Should().NotContain("Setup completed successfully",
+            because: "the previous success-with-warnings banner was misleading for this focused failure");
+        logger.AllOutput.Should().Contain("failed — see errors",
+            because: "the registration-only row should direct the operator to the error block");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_FullSetupRegistrationFailure_RemainsWarningStatus()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildFullSetupRegistrationWarningResults(), logger);
+
+        logger.AllOutput.Should().Contain("Setup completed successfully with warnings",
+            because: "full setup intentionally keeps agent registration best-effort so other completed work is preserved");
+        logger.AllOutput.Should().NotContain("Setup completed with errors",
+            because: "the compatibility path should remain non-fatal outside registration-only mode");
+        logger.AllOutput.Should().Contain("failed — see warnings",
+            because: "the full setup row should continue to point at the warning block");
+    }
+
     private const string BlueprintConsentUrl = "https://login.microsoftonline.com/" + TenantId + "/v2.0/adminconsent?client_id=" + BlueprintId;
 
     private static SetupResults BuildBlueprintOnlyResults(bool consentPending) => new()
@@ -592,6 +649,43 @@ public class SetupHelpersDisplaySetupSummaryTests
         TenantWideConsentOutcome = consentPending ? Cli.Models.GrantOutcome.Failed : Cli.Models.GrantOutcome.Granted,
         AdminConsentUrl = consentPending ? BlueprintConsentUrl : null,
     };
+
+    private static SetupResults BuildAgentRegistrationOnlyFailureResults()
+    {
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            PermissionGrantsSkipped = true,
+            AgentIdentityCreated = true,
+            AgentIdentityAlreadyExisted = true,
+            AgentIdentityId = AgentSpId,
+            BlueprintId = BlueprintId,
+            AgentRegistrationFailed = true,
+        };
+        results.Errors.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
+        return results;
+    }
+
+    private static SetupResults BuildFullSetupRegistrationWarningResults()
+    {
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintServicePrincipalCreated = true,
+            BlueprintId = BlueprintId,
+            BlueprintDisplayName = "Repro Blueprint",
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            AgentIdentityDisplayName = "Repro Agent Identity",
+            AgentRegistrationFailed = true,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+        };
+        results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
+        return results;
+    }
 
     // ── helpers ───────────────────────────────────────────────────────────────
 

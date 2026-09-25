@@ -196,11 +196,7 @@ internal static class PermissionsSubcommand
                 return;
             }
 
-            // Configure GraphApiService with custom client app ID if available
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
+            graphApiService.ConfigureCloudEndpoints(setupConfig);
 
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
@@ -329,11 +325,7 @@ internal static class PermissionsSubcommand
                 return;
             }
 
-            // Configure GraphApiService with custom client app ID if available
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
+            graphApiService.ConfigureCloudEndpoints(setupConfig);
 
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
@@ -513,11 +505,7 @@ internal static class PermissionsSubcommand
                 return;
             }
 
-            // Configure GraphApiService with custom client app ID if available
-            if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-            {
-                graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-            }
+            graphApiService.ConfigureCloudEndpoints(setupConfig);
 
             // Verify system requirements (PowerShell modules are required for Graph operations).
             // Skipped in dry-run: PowerShellModulesRequirementCheck can auto-install modules,
@@ -587,9 +575,12 @@ internal static class PermissionsSubcommand
                         StringComparison.OrdinalIgnoreCase);
                     if (isGraph)
                     {
-                        var fullyQualified = scopes.Select(s => $"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
+                        var graphBaseUrl = ConfigConstants.GetGraphBaseUrl(setupConfig.Environment, setupConfig.GraphBaseUrl);
+                        var graphResourceUri = GraphApiConstants.GetResource(graphBaseUrl).TrimEnd('/');
+                        var authorityHost = ConfigConstants.GetAuthorityHost(setupConfig.Environment, setupConfig.AuthorityHost);
+                        var fullyQualified = scopes.Select(s => $"{graphResourceUri}/{s}");
                         var url = SetupHelpers.BuildAdminConsentUrl(
-                            setupConfig.TenantId, setupConfig.AgentBlueprintId!, fullyQualified);
+                            setupConfig.TenantId, setupConfig.AgentBlueprintId!, fullyQualified, authorityHost);
                         LogAdminConsentNextSteps(logger, url);
                     }
                     else
@@ -773,7 +764,11 @@ internal static class PermissionsSubcommand
 
         try
         {
-            var specs = new List<ResourcePermissionSpec>(SetupHelpers.GetFixedApiPermissionSpecs(setInheritable: true, isM365: true));
+            var specs = new List<ResourcePermissionSpec>(
+                SetupHelpers.GetFixedApiPermissionSpecs(
+                    setInheritable: true,
+                    isM365: true,
+                    setupConfig.Environment));
 
             var localResults = setupResults ?? new SetupResults();
             var (_, _, consentGranted, adminConsentUrl) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
@@ -847,11 +842,12 @@ internal static class PermissionsSubcommand
     {
         // Resource app IDs owned by standard setup subcommands — never remove these
         var envAtgAppId = ConfigConstants.GetAgent365ToolsResourceAppId(setupConfig.Environment);
+        var observabilityAppId = ConfigConstants.GetObservabilityApiAppId(setupConfig.Environment);
         var protectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             envAtgAppId,
             ConfigConstants.MessagingBotApiAppId,
-            ConfigConstants.ObservabilityApiAppId,
+            observabilityAppId,
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };
