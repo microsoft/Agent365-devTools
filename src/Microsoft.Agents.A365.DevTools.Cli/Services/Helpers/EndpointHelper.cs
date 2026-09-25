@@ -113,7 +113,8 @@ public static class EndpointHelper
         var customEndpoint = Environment.GetEnvironmentVariable(
             $"A365_CREATE_ENDPOINT_{ConfigConstants.NormalizeEnvironmentKey(environment)}");
         if (!string.IsNullOrEmpty(customEndpoint))
-            return customEndpoint;
+            return ConfigConstants.ParseAgent365ToolsEndpointUri(
+                customEndpoint, "Agent 365 Tools create endpoint").AbsoluteUri;
 
         return ConfigConstants.BuildAgent365ToolsEndpointUrl(
             environment,
@@ -129,7 +130,8 @@ public static class EndpointHelper
         var customEndpoint = Environment.GetEnvironmentVariable(
             $"A365_DELETE_ENDPOINT_{ConfigConstants.NormalizeEnvironmentKey(environment)}");
         if (!string.IsNullOrEmpty(customEndpoint))
-            return customEndpoint;
+            return ConfigConstants.ParseAgent365ToolsEndpointUri(
+                customEndpoint, "Agent 365 Tools delete endpoint").AbsoluteUri;
 
         return ConfigConstants.BuildAgent365ToolsEndpointUrl(
             environment,

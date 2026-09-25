@@ -304,11 +304,16 @@ public static class ConfigConstants
         var candidate = configuredEndpoint is null
             ? ProductionDiscoverEndpointUrl
             : configuredEndpoint.Trim();
-        var uri = ParseHttpsUri(candidate, "Agent 365 Tools discover endpoint");
+        return ParseAgent365ToolsEndpointUri(candidate, "Agent 365 Tools discover endpoint");
+    }
+
+    internal static Uri ParseAgent365ToolsEndpointUri(string value, string settingName)
+    {
+        var uri = ParseHttpsUri(value.Trim(), settingName);
         if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
         {
             throw new ArgumentException(
-                "Agent 365 Tools discover endpoint must not contain a query or fragment.");
+                $"{settingName} must not contain a query or fragment.");
         }
 
         return uri;

@@ -476,6 +476,51 @@ public class EndpointHelperTests
             });
     }
 
+    [Theory]
+    [InlineData("   ")]
+    [InlineData("not-a-url")]
+    [InlineData("/relative/path")]
+    [InlineData("http://endpoint.example/custom")]
+    [InlineData("https://user@endpoint.example/custom")]
+    [InlineData("https://endpoint.example/custom?version=2")]
+    [InlineData("https://endpoint.example/custom#section")]
+    public void Agent365Endpoints_MalformedExplicitOverride_FailsInsteadOfUsingDiscover(string endpoint)
+    {
+        WithEnvironmentVariables(
+            "GCC",
+            "https://discover.example/agents/v2/discoverMCPServers",
+            endpoint,
+            endpoint,
+            () =>
+            {
+                FluentActions.Invoking(() => EndpointHelper.GetCreateEndpointUrl("gcc"))
+                    .Should().Throw<ArgumentException>(
+                        because: "an explicit create override must reject unsafe URL components before a bearer token is sent");
+                FluentActions.Invoking(() => EndpointHelper.GetDeleteEndpointUrl("gcc"))
+                    .Should().Throw<ArgumentException>(
+                        because: "an explicit delete override must reject unsafe URL components rather than silently use discovery");
+            });
+    }
+
+    [Fact]
+    public void Agent365Endpoints_ExplicitHttpsOverrides_PreserveCustomPathsAndNormalizeOrigins()
+    {
+        WithEnvironmentVariables(
+            "GCC",
+            discoverEndpoint: null,
+            " https://CREATE.EXAMPLE:443/custom/create ",
+            " https://DELETE.EXAMPLE:443/custom/delete ",
+            () =>
+            {
+                EndpointHelper.GetCreateEndpointUrl("gcc").Should().Be(
+                    "https://create.example/custom/create",
+                    because: "valid explicit HTTPS overrides retain custom routes while normalizing the origin");
+                EndpointHelper.GetDeleteEndpointUrl("gcc").Should().Be(
+                    "https://delete.example/custom/delete",
+                    because: "delete overrides follow the same URL contract as create overrides");
+            });
+    }
+
     private static void WithEnvironmentVariables(
         string environmentKey,
         string? discoverEndpoint,

@@ -177,7 +177,7 @@ export A365_ENVIRONMENT=gcc
 export A365_DISCOVER_ENDPOINT_GCC=https://gcc.agent365.svc.cloud.microsoft/agents/v2/discoverMCPServers
 ```
 
-The discovery override supplies the full discovery URL and the HTTPS origin used for related Agent 365 routes. Explicit create/delete overrides take precedence. Setting only `A365_ENVIRONMENT=gcc` leaves discovery pointing at the commercial service.
+The discovery override supplies the full discovery URL and the HTTPS origin used for related Agent 365 routes. Explicit create/delete overrides take precedence and allow custom paths, but must also be HTTPS URLs without user information, query strings, or fragments. Setting only `A365_ENVIRONMENT=gcc` leaves discovery pointing at the commercial service.
 
 For other clouds, configure `graphBaseUrl` and `authorityHost` in `a365.config.json`, or supply `A365_GRAPH_BASE_URL_{ENV}` and `A365_AUTHORITY_HOST_{ENV}`. Environment-scoped variables take precedence over config; otherwise the defaults are `https://graph.microsoft.com` and `https://login.microsoftonline.com`. Unsuffixed variables for these two settings are not read. Environment suffixes are uppercase with non-alphanumeric characters replaced by underscores, so `gcc-high` uses `GCC_HIGH`.
 

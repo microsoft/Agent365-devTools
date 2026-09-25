@@ -68,6 +68,7 @@ Agents provisioned before this release need `Agent365.Observability.OtelWrite` g
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- Messaging endpoint create and delete overrides now reject non-HTTPS URLs and URLs containing user information, query strings, or fragments (#478).
 - Graph authentication now keeps cached tokens separate for each authority host when switching clouds (#478).
 - Blueprint discovery now tolerates malformed unrelated results when locating a stored blueprint and stops safely when the selected result is invalid (#478).
 - Setup now requests the required Graph scopes and stops safely when existing blueprint discovery is inconclusive, preventing duplicate blueprints after CLI permission changes.
