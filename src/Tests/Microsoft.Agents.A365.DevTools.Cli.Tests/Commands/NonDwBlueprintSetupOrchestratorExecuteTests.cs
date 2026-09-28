@@ -294,7 +294,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Agent365Config? config = null,
             ILogger? logger = null,
             bool agentInstanceOnly = true,
-            bool skipObservabilityPermissions = false)
+            bool skipObservabilityPermissions = false,
+            string? authMode = null)
     {
         var graph = Substitute.ForPartsOf<GraphApiService>();
 
@@ -347,7 +348,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             clientAppValidator: Substitute.For<IClientAppValidator>(),
             agentInstanceOnly: agentInstanceOnly,
             loginHintResolver: () => Task.FromResult<string?>(null),
-            skipObservabilityPermissions: skipObservabilityPermissions);
+            skipObservabilityPermissions: skipObservabilityPermissions,
+            authMode: authMode);
 
         return (ctx, graph, blueprintService);
     }
@@ -866,6 +868,58 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
                     because: "--agent-registration-only skips identity creation, so it cannot recover a run that never created the identity");
             ctx.Results.HasErrors.Should().BeTrue(
                 because: "the full setup command maps recorded errors to exit code 1");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Step 5: an s2s run whose identity step fails still records its auth mode and that no S2S app role
+    /// is requested, so the summary does not fall back to delegated-consent wording.
+    /// </summary>
+    [Fact]
+    public async Task Step5_IdentityStepFails_S2sMode_SummaryStillReportsNoS2SAppRolesToGrant()
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwS2sIdentityFailureTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                DeploymentProjectPath = projectDir,
+                AgentBlueprintClientSecret = null,
+            };
+            var (ctx, _, blueprintService) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: false, skipObservabilityPermissions: true, authMode: "s2s");
+            blueprintService.FindExistingAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((string?)null);
+            // A non-admin run: the blueprint grants completed but tenant-wide consent was not granted.
+            ctx.Results.IsNonDwBlueprintFlow = true;
+            ctx.Results.BatchPermissionsPhase1Completed = true;
+            ctx.Results.BatchPermissionsPhase2Completed = true;
+            ctx.Results.TenantWideConsentOutcome = GrantOutcome.Failed;
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.AgentIdentityFailed.Should().BeTrue(because: "precondition: the missing secret stops identity creation");
+            ctx.Results.EffectiveAuthMode.Should().Be(AuthMode.S2s,
+                because: "the auth mode is known before identity creation, and the summary derives delegated-consent applicability from it");
+            ctx.Results.NoS2SAppRolesToGrant.Should().BeTrue(
+                because: "no requested spec carries an app role, whether or not the identity step succeeds");
+
+            var logger = new CapturingLogger();
+            SetupHelpers.DisplaySetupSummary(ctx.Results, logger);
+            logger.AllOutput.Split('\n').Should().ContainSingle(l => l.Contains("Blueprint Permission Grants"))
+                .Which.Should().Contain("not required  (no S2S app roles to grant)",
+                    because: "an s2s run with no app roles to grant needs no blueprint grant, even when the identity step failed");
         }
         finally
         {

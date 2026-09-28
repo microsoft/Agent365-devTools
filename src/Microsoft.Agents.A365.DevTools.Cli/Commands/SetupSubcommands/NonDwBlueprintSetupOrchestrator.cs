@@ -465,6 +465,12 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Skipped when --agent-registration-only: identity result flags are pre-set by the caller.
         if (!skipIdentityAndPermissions)
         {
+            // Record the auth mode and whether any S2S app role is requested before identity creation,
+            // so the summary stays accurate when the identity step fails.
+            ctx.Results.EffectiveAuthMode = ctx.IsBothMode ? Models.AuthMode.Both : ctx.IsS2sMode ? Models.AuthMode.S2s : Models.AuthMode.Obo;
+            if (ctx.IsS2sMode || ctx.IsBothMode)
+                ctx.Results.NoS2SAppRolesToGrant = !specs.Any(s => s.AppRoleScopes is { Length: > 0 });
+
             ctx.Logger.LogInformation("");
 
             if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
@@ -552,8 +558,6 @@ internal static class NonDwBlueprintSetupOrchestrator
             // Step 5a: Grant permissions to the agent identity, gated by authMode.
             if (!string.IsNullOrWhiteSpace(ctx.Config.AgenticAppId))
             {
-                ctx.Results.EffectiveAuthMode = ctx.IsBothMode ? Models.AuthMode.Both : ctx.IsS2sMode ? Models.AuthMode.S2s : Models.AuthMode.Obo;
-
                 // OBO and Both: delegated permissions for the agent identity are inherited from the
                 // blueprint via the inheritable permissions configured in Phase 1 plus the tenant-wide
                 // admin consent granted via the /v2.0/adminconsent URL in Phase 2. No per-identity
