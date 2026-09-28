@@ -592,16 +592,16 @@ public class SetupCommandTests
     /// Help text must not promise default S2S app-role grants for blueprint agents.
     /// </summary>
     [Fact]
-    public void SetupAll_AuthMode_HelpText_StatesBlueprintAgentsGrantNoAppRolesByDefault()
+    public void SetupAll_AuthMode_HelpText_StatesBlueprintAgentsDoNotRequestOtelWrite()
     {
         var setup = BuildSetupCommand();
         var all = setup.Children.OfType<Command>().Single(c => c.Name == "all");
         var authMode = all.Options.Single(o => o.Name == "authmode");
 
-        authMode.Description.Should().Contain("blueprint agents grant none by default",
-            because: "the CLI no longer requests OtelWrite, so S2S has no app role to grant by default");
-        authMode.Description.Should().NotContain("app permissions on agent identity; Global Admin needed or PowerShell fallback",
-            because: "that stale wording implies setup still grants a default app role for blueprint agents");
+        authMode.Description.Should().Contain("blueprint agents no longer request OtelWrite",
+            because: "the CLI no longer requests the Observability app role, but future default specs may carry other app roles");
+        authMode.Description.Should().NotContain("blueprint agents grant none by default",
+            because: "that wording would become stale if another default spec adds app roles");
     }
 
     /// <summary>

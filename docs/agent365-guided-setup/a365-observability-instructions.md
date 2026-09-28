@@ -116,13 +116,13 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 
 1. **Bash** — Run package installation (path-dependent):
 
-   **OBO path** (`user-delegated` or `agentic-identity`):
+   **AI Teammate / legacy delegated path only**:
    ```bash
    dotnet add package Microsoft.Agents.A365.Observability.Runtime
    dotnet add package Microsoft.Agents.A365.Observability.Hosting
    ```
 
-   **S2S / autonomous agents — use the unified distro** (preferred; do NOT also add Runtime/Hosting):
+   **Non-AI-Teammate blueprint agents — use the app-only S2S distro in every workload auth mode** (preferred; do NOT also add Runtime/Hosting):
    ```bash
    dotnet add package Microsoft.OpenTelemetry --version 1.0.0-beta.1
    dotnet add package Azure.Identity
@@ -177,6 +177,8 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
    npm install @microsoft/agents-a365-observability
    npm install @microsoft/agents-a365-runtime
    npm install @microsoft/agents-a365-observability-hosting
+   # Non-AI-Teammate blueprint telemetry uses app-only S2S in every workload auth mode.
+   npm install @azure/msal-node @azure/identity
    ```
 
 2. **Optional auto-instrumentation extensions** — ask the user which AI framework they use.
@@ -204,10 +206,10 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 1. **Bash** — Run package installation (unified distro + S2S deps):
    ```bash
    pip3 install microsoft-opentelemetry 2>/dev/null || pip install microsoft-opentelemetry
-   # S2S path also requires:
+   # Non-AI-Teammate blueprint telemetry uses app-only S2S in every workload auth mode.
    pip3 install msal azure-identity httpx 2>/dev/null || pip install msal azure-identity httpx
    ```
-   > **OBO path:** only `microsoft-opentelemetry` is required. The `msal`, `azure-identity`, and `httpx` packages are only needed for the S2S token service.
+   > **AI Teammate / legacy delegated path:** follow the AI Teammate sample's delegated hosting package guidance instead of the blueprint app-only resolver.
 
 2. **Optional auto-instrumentation extensions** — ask the user which AI framework they use and install accordingly:
    ```bash
@@ -749,20 +751,19 @@ For **AI Teammate** agents, `a365 setup all` still **attempts** to grant the `Ag
 
 If the script was not captured — or for a blueprint agent whose SDK still exports through the delegated (OBO) route — grant the permission manually via Entra portal (requires Global Admin):
 1. [Entra portal](https://entra.microsoft.com) > App registrations > select Blueprint app > API permissions
-2. Add a permission > APIs my organization uses > search `9b975845-388f-4429-889e-eab1ef63949c`
+2. Add a permission > APIs my organization uses > search the Observability app ID for your cloud (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; see `src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides` for other clouds)
 3. Add both **Delegated** and **Application** `Agent365.Observability.OtelWrite` > Grant admin consent
 
-Alternatively, look up the Blueprint enterprise application's service-principal object ID and use the Graph API:
+Alternatively, look up the Blueprint and Observability enterprise applications and use Microsoft Graph PowerShell:
 
-```bash
-# Create a temp JSON body file (required on Windows due to az rest escaping)
-echo '{"principalId":"<blueprintSPObjectId>","resourceId":"2a275186-1775-4439-8551-5438df22cdfc","appRoleId":"8f71190c-00c8-461d-a63b-f74abde9ba52"}' > body.json
-az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/<blueprintSPObjectId>/appRoleAssignments" --body @body.json
-rm body.json
+```powershell
+$blueprintSp = Get-MgServicePrincipal -Filter "appId eq '<blueprintAppId>'"
+$obsSp = Get-MgServicePrincipal -Filter "appId eq '<Observability app ID for your cloud>'"
+$roleId = ($obsSp.AppRoles | Where-Object { $_.Value -eq 'Agent365.Observability.OtelWrite' }).Id
+New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $blueprintSp.Id -PrincipalId $blueprintSp.Id -ResourceId $obsSp.Id -AppRoleId $roleId
 ```
 
-- `resourceId` `2a275186-...` is the Observability API SP object ID
-- `appRoleId` `8f71190c-...` is the OtelWrite role ID
+- `<Observability app ID for your cloud>` is the resource application ID, not the service-principal object ID.
 - For agents provisioned before CLI 1.1, this manual step is still required
 
 ### Node.js and .NET SDK `/otlp/` URL Path Bug

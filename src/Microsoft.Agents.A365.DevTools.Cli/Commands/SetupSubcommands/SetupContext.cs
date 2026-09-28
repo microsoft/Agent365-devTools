@@ -106,6 +106,10 @@ internal sealed class SetupContext
     /// </summary>
     public bool SkipObservabilityPermissions { get; }
 
+    /// <summary>True only when neither the default specs nor custom permissions request Observability.</summary>
+    public bool ObservabilityPermissionsEffectivelySkipped =>
+        SkipObservabilityPermissions && !SetupHelpers.CustomPermissionsRequestObservability(Config);
+
     /// <summary>
     /// Overrides the az CLI login hint resolver used during blueprint creation.
     /// Null in production — injected as a no-op in tests to avoid spawning 'az account show'.

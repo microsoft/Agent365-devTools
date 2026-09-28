@@ -111,7 +111,7 @@ No OBO user token is required.
 > standard client-credential request. This workaround will be removed once MSAL ships native
 > `fmiPath` support for the client-secret credential path.
 
-> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite`.
+> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; other clouds are listed under [Environment Variable Overrides](../../../src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides)).
 
 > **IMPORTANT — SDK `useS2SEndpoint` bug (v0.1.0-beta.1):** The `@microsoft/opentelemetry`
 > distro does **not** pass `useS2SEndpoint` to `Agent365Exporter`. The exporter defaults
@@ -1047,7 +1047,7 @@ setLogger({
 | `Cannot find module '@microsoft/agents-a365-observability'` | Package not installed | Run `npm install @microsoft/agents-a365-observability` |
 | `Cannot find module '@microsoft/agents-a365-observability-hosting'` | Package not installed | Run `npm install @microsoft/agents-a365-observability-hosting` |
 | Traces not in Admin Center | Exporter env var not set | Set `ENABLE_A365_OBSERVABILITY_EXPORTER=true` in production |
-| 401 on export | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `useS2SEndpoint: true` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite` |
+| 401 on export | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `useS2SEndpoint: true` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial example: `9b975845-388f-4429-889e-eab1ef63949c`; see the per-cloud table in the CLI design) |
 | Spans dropped silently | Missing tenant/agent ID | Ensure `BaggageBuilder` (or `BaggageMiddleware`) populates tenant/agent ID before creating spans |
 | TypeScript error on `agentAuid` in `AgentDetails` | Interface field is `agentAUID` (uppercase UID), not `agentAuid` | Change to `agentAUID: '...'` |
 | `extensions-openai` install fails / peer dep error | Missing `@openai/agents` peer dep | Run `npm install @openai/agents@^0.7.0` first; this is the OpenAI Agents SDK, not the `openai` package |

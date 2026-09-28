@@ -358,7 +358,7 @@ public class AllSubcommandTests : IDisposable
     // Observability API permission wiring
     // -----------------------------------------------------------------------
 
-    private SetupContext BuildPermissionsContext(bool skipObservabilityPermissions)
+    private SetupContext BuildPermissionsContext(bool skipObservabilityPermissions, List<CustomResourcePermission>? customPermissions = null)
     {
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
         var graph = Substitute.For<GraphApiService>();
@@ -376,6 +376,7 @@ public class AllSubcommandTests : IDisposable
                 AgentBlueprintId = "blueprint-id",
                 ClientAppId = "client-app-id",
                 DeploymentProjectPath = _tempDir,
+                CustomBlueprintPermissions = customPermissions,
             },
             results: new SetupResults(),
             logger: NullLogger.Instance,
@@ -458,5 +459,37 @@ public class AllSubcommandTests : IDisposable
             because: "only the URL is cleared; the rest of the earlier record stays");
         ctx.Results.CombinedConsentUrl.Should().BeNull(
             because: "consent was granted in this run, so there is nothing to hand off");
+    }
+
+    [Fact]
+    public void ApplyConsentUrlsIfNeeded_AdminRun_CustomObservabilityPermission_KeepsSavedObservabilityConsentUrl()
+    {
+        var ctx = BuildPermissionsContext(
+            skipObservabilityPermissions: true,
+            customPermissions:
+            [
+                new CustomResourcePermission
+                {
+                    ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                    ResourceName = "Observability API",
+                    Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                }
+            ]);
+        ctx.Results.TenantWideConsentOutcome = GrantOutcome.Granted;
+        ctx.Config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+            ConsentUrl = "https://login.microsoftonline.com/custom-observability",
+            InheritablePermissionsConfigured = true,
+        });
+
+        SetupHelpers.ApplyConsentUrlsIfNeeded(
+            ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes, new[] { "McpServers.Mail.All" }, isM365: false);
+
+        ctx.Config.ResourceConsents.Should().ContainSingle(rc =>
+                rc.ResourceAppId == ConfigConstants.ObservabilityApiAppId &&
+                rc.ConsentUrl == "https://login.microsoftonline.com/custom-observability",
+            because: "custom Observability permissions opt back into the resource, so setup must not clear the saved hand-off URL");
     }
 }

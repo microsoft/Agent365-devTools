@@ -36,6 +36,15 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null, bool skipObservabilityPermissions = false)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
+        var observabilityPermissionsEffectivelySkipped =
+            skipObservabilityPermissions && !SetupHelpers.CustomPermissionsRequestObservability(config);
+        // Dry-run S2S work comes only from fixed specs today; MCP and custom specs carry delegated scopes.
+        var fixedSpecsHaveAppRoles = SetupHelpers.GetFixedApiPermissionSpecs(
+            setInheritable: true,
+            isM365,
+            config.Environment,
+            includeObservability: !skipObservabilityPermissions)
+            .Any(s => s.AppRoleScopes is { Length: > 0 });
         // --messaging-endpoint flag (if supplied) wins over the init-only config value for the plan.
         var plannedEndpoint = !string.IsNullOrWhiteSpace(messagingEndpointOverride)
             ? messagingEndpointOverride
@@ -126,7 +135,7 @@ internal static class NonDwBlueprintSetupOrchestrator
             : selectedAuthMode.Trim().ToLowerInvariant();
         logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for {Resources} (Global Administrator required; consent URL printed if absent)",
             skipObservabilityPermissions ? "Power Platform API and custom permissions" : "Observability API, Power Platform API, and custom permissions");
-        if (skipObservabilityPermissions)
+        if (observabilityPermissionsEffectivelySkipped)
             logger.LogInformation(sub + "Observability API not requested (registered agents export telemetry with an app-only token)");
 
         // 4. Blueprint Permission Grants — per authMode. The consent URL targets the blueprint
@@ -136,11 +145,11 @@ internal static class NonDwBlueprintSetupOrchestrator
         if (effectiveMode is "obo")
             logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)");
         else if (effectiveMode is "s2s")
-            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (skipObservabilityPermissions
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (!fixedSpecsHaveAppRoles
                 ? "not required  (no S2S app roles to grant)"
                 : $"S2S app roles — attempted programmatically ({AuthenticationConstants.S2SGrantRequiredRoles} required if 403)"));
         else if (effectiveMode is "both")
-            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (skipObservabilityPermissions
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (!fixedSpecsHaveAppRoles
                 ? "delegated grants for the signed-in principal; no S2S app roles to grant"
                 : $"delegated grants for the signed-in principal + S2S app roles — attempted programmatically; {AuthenticationConstants.S2SGrantRequiredRoles} required for S2S if 403"));
 
@@ -273,7 +282,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
         ctx.Results.IsNonDwBlueprintFlow = true;
-        ctx.Results.ObservabilityPermissionsSkipped = ctx.SkipObservabilityPermissions;
+        ctx.Results.ObservabilityPermissionsSkipped = ctx.ObservabilityPermissionsEffectivelySkipped;
         ctx.Results.TenantId = ctx.Config.TenantId;
         // Bootstrap already printed the "Running..." banner before auth steps; skip here to avoid duplication.
         if (!ctx.IsBootstrap)
@@ -372,7 +381,7 @@ internal static class NonDwBlueprintSetupOrchestrator
 
                 // Step 4: Build permission specs — stamps Graph, manifest MCP audiences, Power Platform,
                 // custom permissions, Messaging Bot (only when isM365), and Observability unless skipped.
-                if (ctx.SkipObservabilityPermissions)
+                if (ctx.ObservabilityPermissionsEffectivelySkipped)
                     ctx.Logger.LogInformation("Observability API permissions not requested: registered agents export telemetry with an app-only token.");
                 var buildResult = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
                 specs = buildResult.specs;
@@ -565,7 +574,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("Registering agent...");
 
         // Registration failure fails setup when it is the run's purpose (--agent-registration-only) or the agent's only Observability authorization.
-        var registrationRequired = skipIdentityAndPermissions || ctx.SkipObservabilityPermissions;
+        var registrationRequired = skipIdentityAndPermissions || ctx.ObservabilityPermissionsEffectivelySkipped;
         void RecordRegistrationFailure(string message)
         {
             ctx.Results.AgentRegistrationFailed = true;

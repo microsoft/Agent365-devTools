@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -22,7 +23,8 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     private static Agent365Config BuildConfig(
         string displayName = "My Agent",
         string tenantId = "tenant-id",
-        string? blueprintId = null) =>
+        string? blueprintId = null,
+        List<CustomResourcePermission>? customPermissions = null) =>
         new()
         {
             AgentIdentityDisplayName = displayName,
@@ -31,7 +33,8 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
             UseBlueprint = true,
             ClientAppId = "client-app-id",
             DeploymentProjectPath = "./app",
-            AgentBlueprintId = blueprintId
+            AgentBlueprintId = blueprintId,
+            CustomBlueprintPermissions = customPermissions,
         };
 
     private bool AnyLogContains(string value) =>
@@ -180,6 +183,27 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
             because: "the dry-run plan must match the real summary when the spec list has no app roles");
         AnyLogContains("Global Administrator required if 403").Should().BeFalse(
             because: "there is no S2S grant to perform when blueprint agents skip OtelWrite");
+    }
+
+    [Fact]
+    public void PrintDryRunPlan_CustomObservabilityPermission_DoesNotClaimObservabilityNotRequested()
+    {
+        var config = BuildConfig(customPermissions:
+        [
+            new CustomResourcePermission
+            {
+                ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                ResourceName = "Observability API",
+                Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+            }
+        ]);
+
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(config, _logger, authMode: "s2s", skipObservabilityPermissions: true);
+
+        AnyLogContains("Observability API not requested").Should().BeFalse(
+            because: "a custom Observability permission explicitly opts back into requesting Observability permissions");
+        AnyLogContains("not required  (no S2S app roles to grant)").Should().BeTrue(
+            because: "custom permissions carry delegated scopes only, so there is still no S2S app role to grant");
     }
 
     /// <summary>

@@ -87,7 +87,7 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 - `a365 query-entra instance-scopes` now reports consent status correctly and fails visibly when permission grants cannot be read (#478).
 - `a365 publish` no longer crashes when `manifest.json` has a non-string `name.short` value (#478).
 - `setup all --agent-registration-only` now exits non-zero and reports errors when the requested agent registration step fails (#478).
-- `a365 setup all` now exits with code 1 for blueprint agents when agent registration fails or cannot be verified, because registration is what authorizes their app-only telemetry export. `--agent-registration-only` now also fails when an existing registration cannot be verified (#501).
+- `a365 setup all` now exits with code 1 when blueprint-agent registration fails or cannot be verified, including `--agent-registration-only` runs with unverifiable existing registrations (#501).
 - `a365 develop-mcp grant-agents-access --device-code` no longer prompts repeatedly within a single command, and no longer fails in embedded or remote terminals where the sign-in prompt could not be displayed (#500).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).

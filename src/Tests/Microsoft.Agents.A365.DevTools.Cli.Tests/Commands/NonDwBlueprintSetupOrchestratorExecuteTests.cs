@@ -60,7 +60,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         return executor;
     }
 
-    private static SetupContext BuildContext(Agent365Config? config = null, bool skipRequirements = true)
+    private static SetupContext BuildContext(Agent365Config? config = null, bool skipRequirements = true, bool skipObservabilityPermissions = false)
     {
         var cfg = config ?? new Agent365Config
         {
@@ -136,7 +136,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             blueprintLookupService: blueprintLookupService,
             federatedCredentialService: federatedCredentialService,
             clientAppValidator: Substitute.For<IClientAppValidator>(),
-            loginHintResolver: () => Task.FromResult<string?>(null));
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            skipObservabilityPermissions: skipObservabilityPermissions);
     }
 
     /// <summary>
@@ -151,6 +152,34 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         var exitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
         exitCode.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CustomObservabilityPermission_DoesNotMarkObservabilitySkipped()
+    {
+        var ctx = BuildContext(
+            new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentIdentityDisplayName = "Test Agent",
+                ClientAppId = "client-app-id",
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        ResourceName = "Observability API",
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                    }
+                ],
+            },
+            skipObservabilityPermissions: true);
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.ObservabilityPermissionsSkipped.Should().BeFalse(
+            because: "a valid custom Observability permission is an explicit opt-back-in even though setup omits the default fixed OtelWrite spec");
     }
 
     /// <summary>
@@ -417,8 +446,10 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         exitCode.Should().Be(1,
             because: "registration-only mode requested only agent registration, so that failure must be fatal");
-        ctx.Results.Errors.Should().ContainSingle(error => error.StartsWith("Agent registration failed via Graph copilot/agentRegistrations API."));
-        ctx.Results.Warnings.Should().NotContain(warning => warning.StartsWith("Agent registration failed"));
+        ctx.Results.Errors.Should().ContainSingle(error => error.StartsWith("Agent registration failed via Graph copilot/agentRegistrations API."),
+            because: "registration-only failures are fatal and must be listed under Errors for the summary and exit-code path");
+        ctx.Results.Warnings.Should().NotContain(warning => warning.StartsWith("Agent registration failed"),
+            because: "registration-only failures must not be downgraded to warnings");
         logger.AllOutput.Should().Contain("Setup completed with errors",
             because: "the summary must not present a registration-only failure as successful");
         logger.AllOutput.Should().NotContain("Setup completed successfully",
@@ -862,6 +893,49 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
                     because: "the failure guidance should name the Graph permission the registration API requires");
             ctx.Results.Warnings.Any(w => w.Contains("Agent registration failed")).Should().Be(!skipObservabilityPermissions,
                 because: "when Observability permissions are requested the agent keeps OtelWrite, and a failed registration remains a non-fatal warning");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Step6_RegistrationFailureWithCustomObservabilityPermission_RemainsWarning()
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwRegistrationTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                AgenticAppId = "agentic-app-id",
+                DeploymentProjectPath = projectDir,
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        ResourceName = "Observability API",
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                    }
+                ],
+            };
+            var (ctx, graph, _) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: false, skipObservabilityPermissions: true);
+            StubRegistrationFailure(graph);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.Errors.Should().NotContain(e => e.Contains("Agent registration failed"),
+                because: "custom Observability permissions mean registration is not the agent's only Observability authorization");
+            ctx.Results.Warnings.Should().Contain(w => w.Contains("Agent registration failed"),
+                because: "registration failure remains non-fatal when Observability was explicitly requested through custom permissions");
         }
         finally
         {

@@ -190,7 +190,7 @@ public static class ObservabilityServiceExtensions
 >   - `true` (production) — MSI → Blueprint FIC → Agent Identity → API
 >   - `false` (local dev) — Client Secret → Blueprint FIC → Agent Identity → API
 >
-> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite`.
+> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; other clouds are listed under [Environment Variable Overrides](../../../src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides)).
 
 ```csharp
 using Azure.Core;
@@ -934,7 +934,7 @@ The `a365 setup` command (as of April 2026) automatically writes the following t
 | No logs in Defender | Missing `Logging.LogLevel` config | Add `Microsoft.Agents.A365.Observability: Debug` to appsettings.json |
 | `AgenticAppId` is null | Missing `AGENTIC_APP_ID` env var | Set it in `.env` or App Service config |
 | Token resolver returns null | `AddAgenticTracingExporter()` not called | Add to `Program.cs` DI |
-| 401 from A365 exporter | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `UseS2SEndpoint` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite` |
+| 401 from A365 exporter | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `UseS2SEndpoint` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial example: `9b975845-388f-4429-889e-eab1ef63949c`; see the per-cloud table in the CLI design) |
 | Build error on `BaggageBuilder` | Wrong namespace | Use `Microsoft.Agents.A365.Observability.Runtime.Common` |
 | Build error on `AgenticTokenStruct` | Object initializer syntax used | Use constructor: `new AgenticTokenStruct(userAuthorization: ..., turnContext: ..., authHandlerName: "AGENTIC")` |
 | Build error on `IExporterTokenCache` | Wrong namespace | Use `Microsoft.Agents.A365.Observability.Hosting.Caching` |

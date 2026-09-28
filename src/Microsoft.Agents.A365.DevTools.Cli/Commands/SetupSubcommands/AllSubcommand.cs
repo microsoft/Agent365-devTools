@@ -143,8 +143,8 @@ internal static class AllSubcommand
             "--authmode",
             description: "Authentication pattern for the agent identity (blueprint agents only).\n" +
                          "  obo  — on-behalf-of (default); principal-scoped delegated grants; no admin consent needed.\n" +
-                         "  s2s  — service-to-service; app-role grants when a requested spec has app roles; blueprint agents grant none by default.\n" +
-                         "  both — delegated grants (OBO) plus S2S app-role grants when any are requested.\n" +
+                         "  s2s  — service-to-service; grants the app roles in requested specs (blueprint agents no longer request OtelWrite).\n" +
+                         "  both — delegated grants (OBO) plus those S2S app-role grants.\n" +
                          "Not supported with --aiteammate true.");
 
         var skipSpProvisioningOption = new Option<bool>(

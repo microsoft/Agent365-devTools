@@ -64,7 +64,7 @@ No OBO user token is required.
 
 > **⚠️ Known Issue (msal v1.34.0):** Python MSAL does NOT properly support `fmi_path` as a parameter to `acquire_token_for_client()`. Passing it causes `TypeError: Session.request() got an unexpected keyword argument 'fmi_path'`. Use **direct HTTP POST** to the token endpoint with `fmi_path` as a form parameter for Hop 1+2 (same workaround as Node.js). MSAL is fine for Hop 3 (no `fmi_path` needed).
 
-> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite`.
+> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; other clouds are listed under [Environment Variable Overrides](../../../src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides)).
 
 #### Step 1 — Create `observability/token_cache.py`
 
@@ -860,7 +860,7 @@ python -c "from microsoft.opentelemetry import use_microsoft_opentelemetry; from
 | Token resolver returns `None` | Per-turn OBO token cache was never refreshed | Call `exchange_token()` and `cache_agentic_token()` at the start of each message handler turn |
 | `ModuleNotFoundError` | Package not installed | Run `pip install microsoft-opentelemetry` and install `msal azure-identity httpx` when needed |
 | Traces not in Admin Center | Exporter env var not set | Set `ENABLE_A365_OBSERVABILITY_EXPORTER=true` in production |
-| 401 on export | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `a365_use_s2s_endpoint=True` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite` |
+| 401 on export | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `a365_use_s2s_endpoint=True` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial example: `9b975845-388f-4429-889e-eab1ef63949c`; see the per-cloud table in the CLI design) |
 | Spans dropped silently | Missing tenant/agent ID | Ensure `BaggageBuilder` or `populate()` adds tenant/agent identity before creating spans |
 | S2S: OBO token-refresh code still runs in the handler | S2S does not use per-turn OBO token exchange | Remove the OBO handler refresh path; token comes from the background token service via `a365_token_resolver` |
 | S2S 401: wrong Hop 3 scope | FMI Hop 3 used `https://api.powerplatform.com/.default` from older samples | Change Hop 3 scope to `api://9b975845-388f-4429-889e-eab1ef63949c/.default` |

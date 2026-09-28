@@ -96,6 +96,15 @@ internal static class SetupHelpers
         return specs.ToArray();
     }
 
+    /// <summary>Mirrors custom-permission inclusion to detect explicit Observability opt-back-in.</summary>
+    internal static bool CustomPermissionsRequestObservability(Agent365Config config) =>
+        (config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+        .Any(customPerm =>
+        {
+            var (isValid, _) = customPerm.Validate();
+            return isValid && ConfigConstants.IsObservabilityApiAppId(customPerm.ResourceAppId);
+        });
+
     /// <summary>
     /// Builds the full resource permission spec list from config. Used by both the DW (AI Teammate)
     /// and non-DW (blueprint-only) setup flows.
@@ -1594,7 +1603,7 @@ internal static class SetupHelpers
         IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null)
     {
         // Before the early return, so an admin run also clears a URL saved by an earlier non-admin run.
-        if (ctx.SkipObservabilityPermissions)
+        if (ctx.ObservabilityPermissionsEffectivelySkipped)
             ClearSkippedObservabilityConsentUrl(ctx.Config);
 
         if (ctx.Results.TenantWideConsentOutcome == Models.GrantOutcome.Granted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
