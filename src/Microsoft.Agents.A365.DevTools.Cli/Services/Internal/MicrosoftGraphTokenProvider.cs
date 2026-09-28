@@ -33,7 +33,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 ///   contamination on shared machines
 ///
 /// TOKEN CACHING:
-/// - In-memory cache per CLI process: Tokens cached by (tenant + clientId + scopes)
+/// - In-memory cache per CLI process: Tokens partitioned by authority, tenant, client, scopes, and login hint.
 /// - MSAL persistent cache: DPAPI on Windows, Keychain on macOS, in-memory on Linux
 ///
 /// USAGE:
@@ -45,8 +45,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
     private readonly CommandExecutor _executor;
     private readonly ILogger<MicrosoftGraphTokenProvider> _logger;
 
-    // Cache tokens per (tenant + clientId + scopes) for the lifetime of this CLI process.
-    // This reduces repeated auth prompts during multi-step setup flows.
+    // Partition cached tokens and acquisition locks by authority as well as identity.
     private readonly ConcurrentDictionary<string, CachedToken> _tokenCache = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
@@ -86,6 +85,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
+    public void ClearTokenCache() => _tokenCache.Clear();
+
     public async Task<string?> GetMgGraphAccessTokenAsync(
         string tenantId,
         IEnumerable<string> scopes,
@@ -93,9 +94,13 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         string? clientAppId = null,
         CancellationToken ct = default,
         string? loginHint = null,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        string? graphBaseUrl = null,
+        string? authorityHost = null)
     {
-        var validatedScopes = ValidateAndPrepareScopes(scopes);
+        var resolvedGraphBaseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
+        var resolvedAuthorityHost = ConfigConstants.NormalizeAuthorityHost(authorityHost);
+        var validatedScopes = ValidateAndPrepareScopes(scopes, resolvedGraphBaseUrl);
         ValidateTenantId(tenantId);
 
         if (!string.IsNullOrWhiteSpace(clientAppId))
@@ -103,7 +108,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             ValidateClientAppId(clientAppId);
         }
 
-        var cacheKey = MakeCacheKey(tenantId, validatedScopes, clientAppId, loginHint);
+        var cacheKey = MakeCacheKey(resolvedAuthorityHost, tenantId, validatedScopes, clientAppId, loginHint);
         var tokenExpirationMinutes = AuthenticationConstants.TokenExpirationBufferMinutes;
 
         // When forceRefresh is requested, evict the cached entry so the acquire path always runs.
@@ -149,7 +154,9 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             // and WAM on Windows authenticates via the OS broker (no browser, CAP-compliant).
             var token = MsalTokenAcquirerOverride != null
                 ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
-                : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct, loginHint, forceRefresh, useDeviceCode);
+                : await AcquireGraphTokenViaMsalAsync(
+                    tenantId, validatedScopes, clientAppId, resolvedAuthorityHost, ct, loginHint,
+                    forceRefresh, useDeviceCode);
 
             // Fall back to PowerShell Connect-MgGraph if MSAL is unavailable (e.g. no clientAppId)
             // or fails for any reason. Explicit device code is excluded: Connect-MgGraph -UseDeviceCode
@@ -164,6 +171,15 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
             if (string.IsNullOrWhiteSpace(token))
             {
+                if (!string.Equals(resolvedAuthorityHost, ConfigConstants.DefaultAuthorityHost, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(resolvedGraphBaseUrl, GraphApiConstants.BaseUrl, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError(
+                        "MSAL Graph authentication failed for the configured cloud. " +
+                        "PowerShell fallback is available only for commercial Graph and authority endpoints.");
+                    return null;
+                }
+
                 _logger.LogDebug("MSAL token acquisition failed, falling back to PowerShell Connect-MgGraph...");
                 var script = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode, clientAppId);
 
@@ -180,7 +196,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                         _logger.LogWarning(
                             "PowerShell interactive browser authentication failed (Conditional Access Policy or embedded terminal). " +
                             "Retrying with device code authentication...");
-                        var deviceCodeScript = BuildPowerShellScript(tenantId, validatedScopes, useDeviceCode: true, clientAppId);
+                        var deviceCodeScript = BuildPowerShellScript(
+                            tenantId, validatedScopes, useDeviceCode: true, clientAppId);
                         var deviceCodeResult = await ExecuteWithFallbackAsync(deviceCodeScript, ct);
                         token = ProcessResult(deviceCodeResult);
                     }
@@ -240,7 +257,9 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 // Retry once — do not recurse; use the underlying acquirer directly.
                 var retryToken = MsalTokenAcquirerOverride != null
                     ? await MsalTokenAcquirerOverride(tenantId, validatedScopes, clientAppId, ct)
-                    : await AcquireGraphTokenViaMsalAsync(tenantId, validatedScopes, clientAppId, ct, loginHint, forceRefresh: true);
+                    : await AcquireGraphTokenViaMsalAsync(
+                        tenantId, validatedScopes, clientAppId, resolvedAuthorityHost, ct, loginHint,
+                        forceRefresh: true, useDeviceCode: useDeviceCode);
 
                 if (!string.IsNullOrWhiteSpace(retryToken))
                     token = retryToken;
@@ -273,13 +292,17 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         }
     }
 
-    private string[] ValidateAndPrepareScopes(IEnumerable<string> scopes)
+    private string[] ValidateAndPrepareScopes(IEnumerable<string> scopes, string graphBaseUrl)
     {
         if (scopes == null)
             throw new ArgumentNullException(nameof(scopes));
 
         var validScopes = scopes
             .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .Select(s => s.Contains("://", StringComparison.Ordinal)
+                ? s
+                : $"{graphBaseUrl}/{s.TrimStart('/')}")
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -316,7 +339,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                 nameof(clientAppId));
     }
 
-    private static string BuildPowerShellScript(string tenantId, string[] scopes, bool useDeviceCode, string? clientAppId = null)
+    private static string BuildPowerShellScript(
+        string tenantId, string[] scopes, bool useDeviceCode, string? clientAppId = null)
     {
         var escapedTenantId = CommandStringHelper.EscapePowerShellString(tenantId);
         var scopesArray = BuildScopesArray(scopes);
@@ -406,6 +430,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
         string tenantId,
         string[] scopes,
         string? clientAppId,
+        string authorityHost,
         CancellationToken ct,
         string? loginHint = null,
         bool forceRefresh = false,
@@ -424,22 +449,18 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
 
         try
         {
-            // MSAL requires fully-qualified scope URIs; PS Connect-MgGraph handles this internally.
-            var fullScopes = scopes
-                .Select(s => s.Contains("://", StringComparison.Ordinal) ? s : $"https://graph.microsoft.com/{s}")
-                .ToArray();
-
-            _logger.LogDebug("Acquiring Graph token via MSAL for scopes: {Scopes}", string.Join(", ", fullScopes));
+            _logger.LogDebug("Acquiring Graph token via MSAL for scopes: {Scopes}", string.Join(", ", scopes));
 
             var msalCredential = new MsalBrowserCredential(
                 effectiveClientAppId,
                 tenantId,
                 logger: _logger,
+                authority: $"{authorityHost}/{tenantId}",
                 useWam: !useDeviceCode,
                 loginHint: loginHint,
                 forceRefresh: forceRefresh,
                 useDeviceCode: useDeviceCode);
-            var tokenResult = await msalCredential.GetTokenAsync(new TokenRequestContext(fullScopes), ct);
+            var tokenResult = await msalCredential.GetTokenAsync(new TokenRequestContext(scopes), ct);
 
             if (string.IsNullOrWhiteSpace(tokenResult.Token))
                 return null;
@@ -660,7 +681,8 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
                token.Count(c => c == '.') == 2;
     }
 
-    private static string MakeCacheKey(string tenantId, IEnumerable<string> scopes, string? clientAppId, string? loginHint = null)
+    private static string MakeCacheKey(
+        string authorityHost, string tenantId, IEnumerable<string> scopes, string? clientAppId, string? loginHint)
     {
         var scopeKey = string.Join(" ", scopes
             .Where(s => !string.IsNullOrWhiteSpace(s))
@@ -668,7 +690,7 @@ public sealed class MicrosoftGraphTokenProvider : IMicrosoftGraphTokenProvider, 
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
 
-        return $"{tenantId}::{clientAppId ?? ""}::{scopeKey}::{loginHint ?? ""}";
+        return $"{authorityHost.ToLowerInvariant()}::{tenantId}::{clientAppId ?? ""}::{scopeKey}::{loginHint ?? ""}";
     }
 
     private bool TryGetJwtExpiryUtc(string jwt, out DateTimeOffset expiresOnUtc)

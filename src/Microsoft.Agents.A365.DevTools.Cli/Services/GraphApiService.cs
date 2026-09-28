@@ -27,6 +27,11 @@ public class GraphApiService
     private readonly IAuthenticationService _authService;
     private readonly RetryHelper _retryHelper;
     private string _graphBaseUrl;
+    private string _authorityHost = ConfigConstants.DefaultAuthorityHost;
+    private string? GraphBaseUrlOverride =>
+        string.Equals(_graphBaseUrl, GraphApiConstants.BaseUrl, StringComparison.OrdinalIgnoreCase) ? null : _graphBaseUrl;
+    private string? AuthorityHostOverride =>
+        string.Equals(_authorityHost, ConfigConstants.DefaultAuthorityHost, StringComparison.OrdinalIgnoreCase) ? null : _authorityHost;
 
     // Login hint resolved once per GraphApiService instance.
     // Used to direct MSAL/WAM to the correct identity, preventing the Windows default
@@ -62,7 +67,29 @@ public class GraphApiService
     public string GraphBaseUrl
     {
         get => _graphBaseUrl;
-        set => _graphBaseUrl = string.IsNullOrWhiteSpace(value) ? GraphApiConstants.BaseUrl : value;
+        set => _graphBaseUrl = ConfigConstants.NormalizeGraphBaseUrl(value);
+    }
+
+    /// <summary>
+    /// OAuth authority host used for token acquisition.
+    /// </summary>
+    public string AuthorityHost
+    {
+        get => _authorityHost;
+        set => _authorityHost = ConfigConstants.NormalizeAuthorityHost(value);
+    }
+
+    /// <summary>
+    /// Applies cloud endpoints and the custom client app from a loaded project config.
+    /// </summary>
+    public void ConfigureCloudEndpoints(Agent365Config config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(config.Environment, config.GraphBaseUrl);
+        AuthorityHost = ConfigConstants.GetAuthorityHost(config.Environment, config.AuthorityHost);
+        if (!string.IsNullOrWhiteSpace(config.ClientAppId))
+            CustomClientAppId = config.ClientAppId;
     }
 
     // Lightweight wrapper to surface HTTP status, reason and body to callers
@@ -114,7 +141,7 @@ public class GraphApiService
         _loginHintResolver = loginHintResolver is not null
             ? _ => loginHintResolver()
             : clientId => ResolveLoginHintWithFallbackAsync(authService, clientId);
-        _graphBaseUrl = string.IsNullOrWhiteSpace(graphBaseUrl) ? GraphApiConstants.BaseUrl : graphBaseUrl;
+        _graphBaseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
         _agentRegistryRetryDelay = agentRegistryRetryDelay ?? TimeSpan.FromSeconds(30);
     }
 
@@ -167,7 +194,11 @@ public class GraphApiService
     /// can invalidate after an operation that makes cached tokens stale — most commonly after adding
     /// the <c>wids</c> optional claim to the client app registration.
     /// </summary>
-    public virtual Task ClearTokenCacheAsync() => _authService.ClearTokenCacheAsync();
+    public virtual async Task ClearTokenCacheAsync()
+    {
+        _tokenProvider?.ClearTokenCache();
+        await _authService.ClearTokenCacheAsync();
+    }
 
     /// <summary>
     /// Acquires an access token for Microsoft Graph API via MSAL (WAM on Windows,
@@ -192,8 +223,12 @@ public class GraphApiService
             // token provider attempts a silent cache read first, so route device code through it.
             var token = useDeviceCode && _tokenProvider != null
                 ? await _tokenProvider.GetMgGraphAccessTokenAsync(
-                    tenantId, [AuthenticationConstants.UserReadScope], true, null, ct, loginHint, forceRefresh)
-                : await _authService.GetAccessTokenAsync(resource, tenantId, forceRefresh: forceRefresh, clientId: clientId, useInteractiveBrowser: !useDeviceCode, userId: loginHint, ct: ct);
+                    tenantId, [AuthenticationConstants.UserReadScope], true, null, ct, loginHint, forceRefresh,
+                    GraphBaseUrlOverride, AuthorityHostOverride)
+                : await _authService.GetAccessTokenAsync(
+                    resource, tenantId, forceRefresh: forceRefresh, clientId: clientId,
+                    useInteractiveBrowser: !useDeviceCode, userId: loginHint, ct: ct,
+                    authorityHost: AuthorityHostOverride);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -238,7 +273,9 @@ public class GraphApiService
             clientAppId: clientAppId,
             ct: ct,
             loginHint: loginHint,
-            forceRefresh: false);
+            forceRefresh: false,
+            graphBaseUrl: GraphBaseUrlOverride,
+            authorityHost: AuthorityHostOverride);
     }
 
     private async Task<bool> EnsureGraphHeadersAsync(
@@ -268,9 +305,9 @@ public class GraphApiService
         //    that need claims from the custom-app JWT (e.g. CheckDirectoryRoleAsync) must guard
         //    for both `_tokenProvider == null` and an empty `CustomClientAppId` themselves.
         //
-        // 4. GraphAuthenticationMode.Ambient: the caller is probing whether a client app exists.
-        //    Authenticating as that app would make its own absence unverifiable, so the resolved
-        //    client app and requested scopes are ignored and the bootstrap path below is used.
+        // 4. GraphAuthenticationMode.Ambient: the caller is diagnosing or repairing a client app.
+        //    Authenticating as that app would make an underconfigured registration unable to
+        //    authorize its own repair, so the resolved app and requested scopes are ignored.
         //
         // All paths go through MSAL — no az CLI subprocess involved.
 
@@ -293,7 +330,8 @@ public class GraphApiService
                 CustomClientAppId, string.Join(", ", effectiveScopes));
             var loginHint = await ResolveLoginHintAsync(useDeviceCode);
             token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, effectiveScopes, useDeviceCode, CustomClientAppId, ct, loginHint, forceRefresh);
+                tenantId, effectiveScopes, useDeviceCode, CustomClientAppId, ct, loginHint, forceRefresh,
+                GraphBaseUrlOverride, AuthorityHostOverride);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -387,9 +425,40 @@ public class GraphApiService
     /// Executes a GET request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<JsonDocument?> GraphGetAsync(string tenantId, string relativePath, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool useDeviceCode = false)
+    public virtual Task<JsonDocument?> GraphGetAsync(
+        string tenantId,
+        string relativePath,
+        CancellationToken ct = default,
+        IEnumerable<string>? scopes = null,
+        bool useDeviceCode = false)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct, useDeviceCode: useDeviceCode)) return null;
+        return GraphGetAsync(
+            tenantId,
+            relativePath,
+            ct,
+            scopes,
+            GraphAuthenticationMode.ResolvedClientApp,
+            useDeviceCode);
+    }
+
+    /// <summary>
+    /// Executes a GET request to Microsoft Graph API using the selected authentication identity.
+    /// </summary>
+    public virtual async Task<JsonDocument?> GraphGetAsync(
+        string tenantId,
+        string relativePath,
+        CancellationToken ct,
+        IEnumerable<string>? scopes,
+        GraphAuthenticationMode authenticationMode,
+        bool useDeviceCode = false)
+    {
+        if (!await EnsureGraphHeadersAsync(
+                tenantId,
+                scopes: scopes,
+                ct: ct,
+                authenticationMode: authenticationMode,
+                useDeviceCode: useDeviceCode))
+            return null;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         try
         {
@@ -426,14 +495,16 @@ public class GraphApiService
         bool forceRefresh = false,
         IEnumerable<string>? scopes = null,
         CancellationToken ct = default,
-        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp,
+        bool useDeviceCode = false)
     {
         if (!await EnsureGraphHeadersAsync(
                 tenantId,
                 forceRefresh: forceRefresh,
                 scopes: scopes,
                 ct: ct,
-                authenticationMode: authenticationMode))
+                authenticationMode: authenticationMode,
+                useDeviceCode: useDeviceCode))
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
 
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
@@ -577,9 +648,43 @@ public class GraphApiService
     /// Executes a PATCH request to Microsoft Graph API.
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
-    public virtual async Task<bool> GraphPatchAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool useDeviceCode = false)
+    public virtual Task<bool> GraphPatchAsync(
+        string tenantId,
+        string relativePath,
+        object payload,
+        CancellationToken ct = default,
+        IEnumerable<string>? scopes = null,
+        bool useDeviceCode = false)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, scopes: scopes, ct: ct, useDeviceCode: useDeviceCode)) return false;
+        return GraphPatchAsync(
+            tenantId,
+            relativePath,
+            payload,
+            ct,
+            scopes,
+            GraphAuthenticationMode.ResolvedClientApp,
+            useDeviceCode);
+    }
+
+    /// <summary>
+    /// Executes a PATCH request to Microsoft Graph API using the selected authentication identity.
+    /// </summary>
+    public virtual async Task<bool> GraphPatchAsync(
+        string tenantId,
+        string relativePath,
+        object payload,
+        CancellationToken ct,
+        IEnumerable<string>? scopes,
+        GraphAuthenticationMode authenticationMode,
+        bool useDeviceCode = false)
+    {
+        if (!await EnsureGraphHeadersAsync(
+                tenantId,
+                scopes: scopes,
+                ct: ct,
+                authenticationMode: authenticationMode,
+                useDeviceCode: useDeviceCode))
+            return false;
         var url = GraphApiConstants.BuildUrl(_graphBaseUrl, relativePath);
         var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         try
@@ -1372,7 +1477,10 @@ public class GraphApiService
     /// <param name="tenantId">Azure AD tenant ID</param>
     /// <param name="clientSpObjectId">Object ID of the service principal to check grants for</param>
     /// <param name="ct">Cancellation token</param>
-    /// <returns>List of grants with their scope strings and consent types, or empty list on failure</returns>
+    /// <returns>List of grants with their scope strings and consent types.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Microsoft Graph could not return a valid permission-grants response.
+    /// </exception>
     public virtual async Task<List<(string resourceId, string scope, string consentType)>> GetOauth2PermissionGrantsAsync(
         string tenantId,
         string clientSpObjectId,
@@ -1392,23 +1500,59 @@ public class GraphApiService
     {
         var grants = new List<(string resourceId, string scope, string consentType)>();
 
-        using var doc = await GraphGetAsync(
+        var response = await GraphGetWithResponseAsync(
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}'",
-            ct,
+            ct: ct,
+            authenticationMode: GraphAuthenticationMode.Ambient,
             useDeviceCode: useDeviceCode);
+        using var doc = response.Json;
 
-        if (doc == null) return null;
-
-        if (doc.RootElement.TryGetProperty("value", out var arr))
+        if (!response.IsSuccess)
         {
-            foreach (var grant in arr.EnumerateArray())
+            var status = response.StatusCode > 0
+                ? $"HTTP {response.StatusCode} {response.ReasonPhrase}".TrimEnd()
+                : response.ReasonPhrase;
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(status)
+                    ? $"Microsoft Graph could not read OAuth2 permission grants for service principal '{clientSpObjectId}'."
+                    : $"Microsoft Graph could not read OAuth2 permission grants for service principal '{clientSpObjectId}': {status}.");
+        }
+
+        if (doc is null ||
+            doc.RootElement.ValueKind != JsonValueKind.Object ||
+            !doc.RootElement.TryGetProperty("value", out var arr) ||
+            arr.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException(
+                $"Microsoft Graph returned an invalid OAuth2 permission grants response for service principal '{clientSpObjectId}'.");
+        }
+
+        foreach (var grant in arr.EnumerateArray())
+        {
+            if (grant.ValueKind != JsonValueKind.Object ||
+                !grant.TryGetProperty("resourceId", out var rid) ||
+                rid.ValueKind != JsonValueKind.String ||
+                !grant.TryGetProperty("scope", out var scopeElement) ||
+                scopeElement.ValueKind != JsonValueKind.String ||
+                !grant.TryGetProperty("consentType", out var consentTypeElement) ||
+                consentTypeElement.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(consentTypeElement.GetString()))
             {
-                var resourceId = grant.TryGetProperty("resourceId", out var rid) ? rid.GetString() ?? "" : "";
-                var scope = grant.TryGetProperty("scope", out var s) ? s.GetString() ?? "" : "";
-                var consentType = grant.TryGetProperty("consentType", out var ct2) ? ct2.GetString() ?? "" : "";
-                grants.Add((resourceId, scope, consentType));
+                throw new InvalidOperationException(
+                    $"Microsoft Graph returned an invalid OAuth2 permission grant for service principal '{clientSpObjectId}'.");
             }
+
+            var resourceId = rid.GetString()!;
+            if (!Guid.TryParse(resourceId, out _))
+            {
+                throw new InvalidOperationException(
+                    $"Microsoft Graph returned an invalid OAuth2 permission grant for service principal '{clientSpObjectId}'.");
+            }
+
+            var scope = scopeElement.GetString()!;
+            var consentType = consentTypeElement.GetString()!;
+            grants.Add((resourceId, scope, consentType));
         }
 
         return grants;
@@ -1578,7 +1722,7 @@ public class GraphApiService
                 clientAppId: CustomClientAppId,
                 ct: ct,
                 loginHint: loginHint,
-                forceRefresh: false);
+                forceRefresh: false, graphBaseUrl: GraphBaseUrlOverride, authorityHost: AuthorityHostOverride);
             if (string.IsNullOrWhiteSpace(token))
                 return Models.RoleCheckResult.Unknown;
 
@@ -1778,7 +1922,7 @@ public class GraphApiService
         // Use .default so the token includes all permissions consented on the "Agent 365 CLI" app,
         // including AgentRegistration.ReadWrite.All, without enumerating scopes explicitly.
         IEnumerable<string>? registrationScopes = _tokenProvider != null
-            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            ? [$"{_graphBaseUrl}/.default"]
             : null;
 
         var now = DateTimeOffset.UtcNow.ToString("o");
@@ -1894,10 +2038,10 @@ public class GraphApiService
         // Use .default so the token includes all permissions consented on the "Agent 365 CLI" app,
         // including AgentRegistration.ReadWrite.All, without enumerating scopes explicitly.
         IEnumerable<string>? scopes = _tokenProvider != null
-            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            ? [$"{_graphBaseUrl}/.default"]
             : null;
 
-        _logger.LogInformation("DELETE https://graph.microsoft.com{Path}/{RegistrationId}", AgentRegistrationsPath, registrationId);
+        _logger.LogInformation("DELETE {GraphBaseUrl}{Path}/{RegistrationId}", _graphBaseUrl, AgentRegistrationsPath, registrationId);
 
         return await GraphDeleteAsync(
             tenantId,
@@ -1920,11 +2064,11 @@ public class GraphApiService
         CancellationToken ct = default)
     {
         IEnumerable<string>? scopes = _tokenProvider != null
-            ? [$"{Constants.AuthenticationConstants.MicrosoftGraphResourceUri}/.default"]
+            ? [$"{_graphBaseUrl}/.default"]
             : null;
 
         var path = $"{AgentRegistrationsPath}/{Uri.EscapeDataString(registrationId)}";
-        _logger.LogDebug("GET https://graph.microsoft.com{Path}", path);
+        _logger.LogDebug("GET {GraphBaseUrl}{Path}", _graphBaseUrl, path);
 
         try
         {
@@ -1959,7 +2103,7 @@ public class GraphApiService
             ? [Constants.AuthenticationConstants.AgentInstanceReadWriteAllScope]
             : null;
 
-        _logger.LogInformation("DELETE https://graph.microsoft.com/beta/agentRegistry/agentInstances/{InstanceId}", instanceId);
+        _logger.LogInformation("DELETE {GraphBaseUrl}/beta/agentRegistry/agentInstances/{InstanceId}", _graphBaseUrl, instanceId);
 
         return await GraphDeleteAsync(
             tenantId,
@@ -1989,7 +2133,7 @@ public class GraphApiService
             _logger.LogDebug("Acquiring blueprint access token via client credentials (CorrelationId: {Id})", effectiveCorrelationId);
 
             using var httpClient = HttpClientFactory.CreateAuthenticatedClient(correlationId: effectiveCorrelationId);
-            var tokenEndpoint = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
+            var tokenEndpoint = ConfigConstants.BuildTokenEndpointUrl(_authorityHost, tenantId);
 
             const int maxRetries = 12;
             const int baseDelaySeconds = 5;
@@ -2001,7 +2145,7 @@ public class GraphApiService
                 {
                     new KeyValuePair<string, string>("client_id", clientId),
                     new KeyValuePair<string, string>("client_secret", clientSecret),
-                    new KeyValuePair<string, string>("scope", "https://graph.microsoft.com/.default"),
+                    new KeyValuePair<string, string>("scope", $"{_graphBaseUrl}/.default"),
                     new KeyValuePair<string, string>("grant_type", "client_credentials"),
                 });
 
@@ -2091,7 +2235,8 @@ public class GraphApiService
             {
                 var loginHint = await ResolveLoginHintAsync();
                 var previewToken = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                    tenantId, scopes, false, CustomClientAppId, ct, loginHint);
+                    tenantId, scopes, false, CustomClientAppId, ct, loginHint,
+                    graphBaseUrl: GraphBaseUrlOverride, authorityHost: AuthorityHostOverride);
                 if (!string.IsNullOrWhiteSpace(previewToken))
                 {
                     var scp = TryDecodeTokenClaim(previewToken, "scp");
@@ -2118,15 +2263,15 @@ public class GraphApiService
             {
                 body["sponsors@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                    $"{_graphBaseUrl}/v1.0/users/{currentUserId}"
                 };
                 body["owners@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                    $"{_graphBaseUrl}/v1.0/users/{currentUserId}"
                 };
             }
 
-            _logger.LogDebug("POST https://graph.microsoft.com/beta/servicePrincipals/Microsoft.Graph.AgentIdentity (delegated)");
+            _logger.LogDebug("POST {GraphBaseUrl}/beta/servicePrincipals/Microsoft.Graph.AgentIdentity (delegated)", _graphBaseUrl);
             _logger.LogDebug("Body: {Body}", body.ToJsonString());
 
             // Use GraphPostWithResponseAsync so we can log the full error body on failure.
@@ -2228,13 +2373,13 @@ public class GraphApiService
             {
                 body["sponsors@odata.bind"] = new JsonArray
                 {
-                    $"https://graph.microsoft.com/v1.0/users/{currentUserId}"
+                    $"{_graphBaseUrl}/v1.0/users/{currentUserId}"
                 };
             }
 
             const int maxAttempts = 5;
             const int baseDelaySeconds = 5;
-            const string agentIdentityUrl = "https://graph.microsoft.com/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
+            var agentIdentityUrl = $"{_graphBaseUrl}/beta/serviceprincipals/Microsoft.Graph.AgentIdentity";
 
             for (int attempt = 0; attempt < maxAttempts; attempt++)
             {

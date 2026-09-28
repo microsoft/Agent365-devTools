@@ -263,16 +263,26 @@ public class MicrosoftGraphTokenProviderTests
         var clientAppId = "87654321-4321-4321-4321-cba987654321";
         var msalToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzZWxsYWsifQ.signature";
 
+        string[]? requestedScopes = null;
         var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
         {
-            MsalTokenAcquirerOverride = (_, _, _, _) => Task.FromResult<string?>(msalToken)
+            MsalTokenAcquirerOverride = (_, resolvedScopes, _, _) =>
+            {
+                requestedScopes = resolvedScopes;
+                return Task.FromResult<string?>(msalToken);
+            }
         };
 
         // Act
-        var token = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, false, clientAppId);
+        var token = await provider.GetMgGraphAccessTokenAsync(
+            tenantId, scopes, false, clientAppId, graphBaseUrl: "https://graph.example",
+            authorityHost: "https://login.example");
 
         // Assert
         token.Should().Be(msalToken);
+        requestedScopes.Should().Equal(
+            new[] { "https://graph.example/AgentIdentityBlueprint.DeleteRestore.All" },
+            because: "short scope names must be normalized to fully-qualified URIs by prepending the configured Graph base URL before being passed to MSAL");
         await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
@@ -338,6 +348,65 @@ public class MicrosoftGraphTokenProviderTests
         token1.Should().Be(msalToken);
         token2.Should().Be(msalToken);
         callCount.Should().Be(1, "second call should return cached token without re-invoking MSAL");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetMgGraphAccessTokenAsync_WithDifferentAuthorities_IsolatesCachedTokens(bool forceRefresh)
+    {
+        var callCount = 0;
+        using var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) =>
+                Task.FromResult<string?>($"test-token-{++callCount}")
+        };
+        const string tenantId = "12345678-1234-1234-1234-123456789abc";
+        const string clientAppId = "87654321-4321-4321-4321-cba987654321";
+        var scopes = new[] { "User.Read" };
+
+        var first = await provider.GetMgGraphAccessTokenAsync(
+            tenantId, scopes, clientAppId: clientAppId, authorityHost: "https://login.example");
+        var second = await provider.GetMgGraphAccessTokenAsync(
+            tenantId, scopes, clientAppId: clientAppId, authorityHost: "https://login.other.example",
+            forceRefresh: forceRefresh);
+        var firstAgain = await provider.GetMgGraphAccessTokenAsync(
+            tenantId, scopes, clientAppId: clientAppId, authorityHost: "https://login.example");
+        var secondAgain = await provider.GetMgGraphAccessTokenAsync(
+            tenantId, scopes, clientAppId: clientAppId, authorityHost: "https://login.other.example");
+
+        second.Should().NotBe(first,
+            because: "a token minted against one authority must never satisfy acquisition against another");
+        firstAgain.Should().Be(first,
+            because: "acquisition or refresh in another authority must not evict this authority's token");
+        secondAgain.Should().Be(second,
+            because: "each authority must retain its own cached token");
+        callCount.Should().Be(2,
+            because: "each distinct authority requires exactly one acquisition in this sequence");
+    }
+
+    [Theory]
+    [InlineData(null, "https://LOGIN.MICROSOFTONLINE.COM:443/")]
+    [InlineData("https://login.example", " https://LOGIN.EXAMPLE:443/ ")]
+    public async Task GetMgGraphAccessTokenAsync_WithEquivalentAuthorities_ReusesCachedToken(
+        string? firstAuthority, string secondAuthority)
+    {
+        var callCount = 0;
+        using var provider = new MicrosoftGraphTokenProvider(_executor, _logger)
+        {
+            MsalTokenAcquirerOverride = (_, _, _, _) =>
+                Task.FromResult<string?>($"test-token-{++callCount}")
+        };
+        const string tenantId = "12345678-1234-1234-1234-123456789abc";
+        var scopes = new[] { "User.Read" };
+
+        var first = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, authorityHost: firstAuthority);
+        var second = await provider.GetMgGraphAccessTokenAsync(tenantId, scopes, authorityHost: secondAuthority);
+
+        second.Should().Be(first,
+            because: "equivalent HTTPS origins must share a token cache partition after normalization");
+        callCount.Should().Be(1,
+            because: "cosmetic authority URL differences must not trigger redundant authentication");
     }
 
     [Theory]

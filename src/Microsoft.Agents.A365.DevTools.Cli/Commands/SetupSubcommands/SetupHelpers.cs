@@ -49,13 +49,18 @@ internal static class SetupHelpers
     /// Returns the fixed-scope ResourcePermissionSpecs for the platform APIs that every
     /// agent blueprint requires.
     /// <para>
-    /// Power Platform API is always included. Observability API is included unless
-    /// <paramref name="includeObservability"/> is false. Messaging Bot API is
+    /// Power Platform API is always included. Observability API, using the app ID for
+    /// <paramref name="environment"/>'s cloud, is included unless <paramref name="includeObservability"/>
+    /// is false. Messaging Bot API is
     /// included only when <paramref name="isM365"/> is true — non-M365 (blueprint-only) agents
     /// have no messaging surface so Bot scopes serve no purpose.
     /// </para>
     /// </summary>
-    internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(bool setInheritable, bool isM365, bool includeObservability = true)
+    internal static ResourcePermissionSpec[] GetFixedApiPermissionSpecs(
+        bool setInheritable,
+        bool isM365,
+        string? environment = null,
+        bool includeObservability = true)
     {
         var specs = new List<ResourcePermissionSpec>();
         if (isM365)
@@ -77,7 +82,7 @@ internal static class SetupHelpers
         if (includeObservability)
         {
             specs.Add(new ResourcePermissionSpec(
-                ConfigConstants.ObservabilityApiAppId,
+                ConfigConstants.GetObservabilityApiAppId(environment),
                 "Observability API",
                 new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
                 setInheritable,
@@ -152,7 +157,7 @@ internal static class SetupHelpers
                     : "Agent 365 Tools",
                 kvp.Value,
                 SetInheritable: setInheritable)));
-        specs.AddRange(GetFixedApiPermissionSpecs(setInheritable, isM365, includeObservability));
+        specs.AddRange(GetFixedApiPermissionSpecs(setInheritable, isM365, config.Environment, includeObservability));
 
         foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
         {
@@ -184,6 +189,52 @@ internal static class SetupHelpers
         string.IsNullOrWhiteSpace(tenantIdFlag)
             ? TenantDetectionHelper.DetectTenantIdAsync(null, logger, executor)
             : Task.FromResult<string?>(tenantIdFlag);
+
+    /// <summary>
+    /// Resolves the cloud environment for config-free bootstrap flows.
+    /// Uses A365_ENVIRONMENT first, then the active Azure CLI cloud.
+    /// </summary>
+    internal static async Task<string> ResolveBootstrapEnvironmentAsync(
+        CommandExecutor executor,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var configuredEnvironment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT");
+        if (!string.IsNullOrWhiteSpace(configuredEnvironment))
+            return configuredEnvironment.Trim();
+
+        try
+        {
+            var result = await executor.ExecuteAsync(
+                "az", "cloud show --query name -o tsv",
+                captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
+            var cloudName = result.StandardOutput?.Trim();
+            if (string.Equals(cloudName, "AzureUSGovernment", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new SetupValidationException(
+                    "The Azure CLI cloud does not distinguish GCC Moderate, GCC High, and DoD.",
+                    mitigationSteps:
+                    [
+                        "Set A365_ENVIRONMENT to gcc, gcc-high, or dod for the target tenant, then retry setup."
+                    ]);
+            }
+
+            return string.IsNullOrWhiteSpace(cloudName) ? "prod" : cloudName;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SetupValidationException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to resolve current Azure CLI cloud; using the default environment.");
+            return "prod";
+        }
+    }
 
     /// <summary>
     /// Resolves the client app ID for config-free bootstrap flows.
@@ -401,11 +452,22 @@ internal static class SetupHelpers
     /// when additional APIs are required (e.g. dynamic MCP scopes, custom permissions).
     /// </summary>
     internal static readonly IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)> NonDwAdminConsentSpecs =
-    [
-        ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Application"),
-        ("Observability API",  ConfigConstants.ObservabilityApiAppId,                          ConfigConstants.ObservabilityApiOtelWriteScope,                     "Delegated"),
-        ("Power Platform API", PowerPlatformConstants.PowerPlatformApiResourceAppId,           PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,  "Delegated"),
-    ];
+        GetNonDwAdminConsentSpecs("prod");
+
+    internal static IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)> GetNonDwAdminConsentSpecs(
+        string? environment)
+        => BuildNonDwAdminConsentSpecs(ConfigConstants.GetObservabilityApiAppId(environment));
+
+    private static IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)> BuildNonDwAdminConsentSpecs(
+        string observabilityAppId)
+    {
+        return
+        [
+            ("Observability API",  observabilityAppId, ConfigConstants.ObservabilityApiOtelWriteScope,                    "Application"),
+            ("Observability API",  observabilityAppId, ConfigConstants.ObservabilityApiOtelWriteScope,                    "Delegated"),
+            ("Power Platform API", PowerPlatformConstants.PowerPlatformApiResourceAppId, PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead, "Delegated"),
+        ];
+    }
 
     /// <summary>
     /// Logs step-by-step instructions for a Global Administrator to grant admin consent
@@ -419,9 +481,11 @@ internal static class SetupHelpers
         ILogger logger,
         string blueprintId,
         IReadOnlyList<(string ResourceName, string ResourceAppId, string Scope, string PermissionType)>? specs = null,
-        string? tenantId = null)
+        string? tenantId = null,
+        string? environment = null)
     {
-        specs ??= NonDwAdminConsentSpecs;
+        specs ??= GetNonDwAdminConsentSpecs(
+            environment ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod");
         var delegatedSpecs = specs.Where(s => s.PermissionType == "Delegated").ToList();
 
         var directLink = $"https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{blueprintId}/isMSAApp~/false";
@@ -430,8 +494,12 @@ internal static class SetupHelpers
         logger.LogInformation("       1. Sign in as {Roles} and open:", AuthenticationConstants.DelegatedGrantRequiredRoles);
         logger.LogInformation("            {Link}", directLink);
         logger.LogInformation("       2. Add the following permissions (click 'Add a permission' for each):");
-        foreach (var group in delegatedSpecs.GroupBy(s => (s.ResourceName, s.Scope)))
-            logger.LogInformation("            - {ResourceName,-20}: {Scope} (Delegated)", group.Key.ResourceName, group.Key.Scope);
+        foreach (var group in delegatedSpecs.GroupBy(s => (s.ResourceName, s.ResourceAppId, s.Scope)))
+            logger.LogInformation(
+                "            - {ResourceName,-20}: {Scope} (Delegated, app ID: {ResourceAppId})",
+                group.Key.ResourceName,
+                group.Key.Scope,
+                group.Key.ResourceAppId);
         logger.LogInformation("       3. Click 'Grant admin consent for your organization' and confirm");
 
         logger.LogInformation("");
@@ -492,8 +560,11 @@ internal static class SetupHelpers
     /// The DW vs non-DW branch is determined solely by <see cref="SetupResults.IsNonDwBlueprintFlow"/>,
     /// which both orchestrators set explicitly — there is no separate caller-supplied flag.
     /// </summary>
-    public static void DisplaySetupSummary(SetupResults results, ILogger logger)
+    public static void DisplaySetupSummary(SetupResults results, ILogger logger, string? graphBaseUrl = null)
     {
+        var resolvedGraphBaseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
+        var observabilityResourceAppId =
+            results.ObservabilityResourceAppId ?? ConfigConstants.ObservabilityApiAppId;
         var isNonDw = results.IsNonDwBlueprintFlow;
         var isBlueprintOnly = results.IsBlueprintOnlyFlow;
         // Which row groups this run actually performs. Blueprint-only ('setup blueprint') stops after
@@ -848,10 +919,14 @@ internal static class SetupHelpers
                 if (isNonDw && string.IsNullOrWhiteSpace(consentUrl))
                 {
                     logger.LogInformation("  {N}. Permission Grants — must be granted by {Roles} in the Entra portal:", actionCount, AuthenticationConstants.DelegatedGrantRequiredRoles);
-                    var consentSpecs = results.ObservabilityPermissionsSkipped
-                        ? NonDwAdminConsentSpecs.Where(s => !string.Equals(s.ResourceAppId, ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase)).ToList()
-                        : null;
-                    LogNonDwAdminConsentInstructions(logger, adminCmdBlueprintId, consentSpecs, tenantId: results.TenantId);
+                    var consentSpecs = BuildNonDwAdminConsentSpecs(observabilityResourceAppId);
+                    if (results.ObservabilityPermissionsSkipped)
+                        consentSpecs = consentSpecs.Where(s => !ConfigConstants.IsObservabilityApiAppId(s.ResourceAppId)).ToList();
+                    LogNonDwAdminConsentInstructions(
+                        logger,
+                        adminCmdBlueprintId,
+                        specs: consentSpecs,
+                        tenantId: results.TenantId);
                 }
                 else
                 {
@@ -963,15 +1038,15 @@ internal static class SetupHelpers
                 if (!results.ObservabilityPermissionsSkipped)
                 {
                     logger.LogInformation("     # Observability API");
-                    logger.LogInformation("     $obsSp = Get-MgServicePrincipal -Filter \"appId eq '{ObsAppId}'\"", ConfigConstants.ObservabilityApiAppId);
+                    logger.LogInformation("     $obsSp = Get-MgServicePrincipal -Filter \"appId eq '{ObsAppId}'\"", observabilityResourceAppId);
                     logger.LogInformation("     $body  = @{{ clientId = $agentSpId; consentType = 'AllPrincipals'; resourceId = $obsSp.Id; scope = '{ObsScope}' }} | ConvertTo-Json", ConfigConstants.ObservabilityApiOtelWriteScope);
-                    logger.LogInformation("     Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' -Body $body -ContentType 'application/json'");
+                    logger.LogInformation("     Invoke-MgGraphRequest -Method POST -Uri '{GraphBaseUrl}/v1.0/oauth2PermissionGrants' -Body $body -ContentType 'application/json'", resolvedGraphBaseUrl);
                     logger.LogInformation("");
                 }
                 logger.LogInformation("     # Power Platform API");
                 logger.LogInformation("     $ppSp  = Get-MgServicePrincipal -Filter \"appId eq '{PpAppId}'\"", PowerPlatformConstants.PowerPlatformApiResourceAppId);
                 logger.LogInformation("     $body  = @{{ clientId = $agentSpId; consentType = 'AllPrincipals'; resourceId = $ppSp.Id; scope = '{PpScope}' }} | ConvertTo-Json", PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead);
-                logger.LogInformation("     Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' -Body $body -ContentType 'application/json'");
+                logger.LogInformation("     Invoke-MgGraphRequest -Method POST -Uri '{GraphBaseUrl}/v1.0/oauth2PermissionGrants' -Body $body -ContentType 'application/json'", resolvedGraphBaseUrl);
             }
             if (messagingEndpointManualRequired)
             {
@@ -1148,7 +1223,15 @@ internal static class SetupHelpers
         IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null,
         bool includeObservability = true)
     {
-        var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, config.AgentApplicationScopes, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames, includeObservability);
+        var graphBaseUrl = ConfigConstants.GetGraphBaseUrl(config.Environment, config.GraphBaseUrl);
+        var graphResourceUri = graphBaseUrl;
+        var authorityHost = ConfigConstants.GetAuthorityHost(config.Environment, config.AuthorityHost);
+        var observabilityResourceAppId = ConfigConstants.GetObservabilityApiAppId(config.Environment);
+
+        var urls = BuildAdminConsentUrls(
+            config.TenantId, config.AgentBlueprintId!, config.AgentApplicationScopes, mcpScopes,
+            isM365, mcpScopesByAudience, mcpAudienceDisplayNames, graphResourceUri, authorityHost,
+            mcpResourceAppId, observabilityResourceAppId, includeObservability);
 
         // Clear an Observability consent URL saved by an earlier run so the admin is not asked for permissions this run skipped.
         if (!includeObservability)
@@ -1165,7 +1248,7 @@ internal static class SetupHelpers
             ["Microsoft Graph"]   = AuthenticationConstants.MicrosoftGraphResourceAppId,
             ["Agent 365 Tools"]   = mcpResourceAppId,
             ["Messaging Bot API"] = ConfigConstants.MessagingBotApiAppId,
-            ["Observability API"] = ConfigConstants.ObservabilityApiAppId,
+            ["Observability API"] = observabilityResourceAppId,
             ["Power Platform API"] = PowerPlatformConstants.PowerPlatformApiResourceAppId,
         };
 
@@ -1235,11 +1318,13 @@ internal static class SetupHelpers
     /// Each scope is individually Uri.EscapeDataString-encoded and joined with %20.
     /// A random GUID state parameter is generated for CSRF protection.
     /// </summary>
-    internal static string BuildAdminConsentUrl(string tenantId, string clientId, IEnumerable<string> fullyQualifiedScopes)
+    internal static string BuildAdminConsentUrl(
+        string tenantId, string clientId, IEnumerable<string> fullyQualifiedScopes, string? authorityHost = null)
     {
         var scopeParam = string.Join("%20", fullyQualifiedScopes.Select(Uri.EscapeDataString));
         var redirectEncoded = Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri);
-        return $"https://login.microsoftonline.com/{tenantId}/v2.0/adminconsent?client_id={clientId}&scope={scopeParam}&redirect_uri={redirectEncoded}&state={Guid.NewGuid():N}";
+        var normalizedAuthorityHost = ConfigConstants.NormalizeAuthorityHost(authorityHost);
+        return $"{normalizedAuthorityHost}/{tenantId}/v2.0/adminconsent?client_id={clientId}&scope={scopeParam}&redirect_uri={redirectEncoded}&state={Guid.NewGuid():N}";
     }
 
     /// <summary>
@@ -1259,20 +1344,24 @@ internal static class SetupHelpers
     /// is a V2 MCP per-server audience (e.g. it sits in the ToolingManifest audience set
     /// or the call site is iterating <c>mcpScopesByAudience</c>). Default false preserves
     /// the safe api://{appId} fallback for any caller that has not been updated.</param>
-    internal static string GetResourceIdentifierUri(string resourceAppId, bool isMcpAudience = false)
+    internal static string GetResourceIdentifierUri(
+        string resourceAppId,
+        bool isMcpAudience = false,
+        string graphResourceUri = AuthenticationConstants.MicrosoftGraphResourceUri,
+        string? sharedMcpResourceAppId = null)
     {
         if (string.Equals(resourceAppId, AuthenticationConstants.MicrosoftGraphResourceAppId, StringComparison.OrdinalIgnoreCase))
-            return AuthenticationConstants.MicrosoftGraphResourceUri;
+            return graphResourceUri;
         if (string.Equals(resourceAppId, ConfigConstants.MessagingBotApiAppId, StringComparison.OrdinalIgnoreCase))
             return ConfigConstants.MessagingBotApiIdentifierUri;
-        if (string.Equals(resourceAppId, ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase))
-            return ConfigConstants.ObservabilityApiIdentifierUri;
+        if (ConfigConstants.IsObservabilityApiAppId(resourceAppId))
+            return ConfigConstants.BuildObservabilityApiIdentifierUri(resourceAppId);
         if (string.Equals(resourceAppId, PowerPlatformConstants.PowerPlatformApiResourceAppId, StringComparison.OrdinalIgnoreCase))
             return PowerPlatformConstants.PowerPlatformApiIdentifierUri;
         // WorkIQ Tools shared (issue #429): match by appId, not display name. V2 per-server
         // audiences are also named "Agent 365 Tools" so the old name-based check collapsed
         // them onto WorkIQ's URI and produced AADSTS650053.
-        if (IsAgent365ToolsResourceAppId(resourceAppId))
+        if (IsAgent365ToolsResourceAppId(resourceAppId, sharedMcpResourceAppId))
             return McpConstants.Agent365ToolsIdentifierUri;
 
         // V2 MCP per-server audiences (identifierUris=null, only bare appId in
@@ -1287,29 +1376,21 @@ internal static class SetupHelpers
 
     /// <summary>
     /// Returns true when the supplied resource appId is the WorkIQ Tools (Agent 365 Tools)
-    /// shared resource — either the hard-coded prod appId or an env-overridden value
-    /// pinned via <c>A365_MCP_APP_ID_&lt;env&gt;</c>. Used by
+    /// shared resource — either the hard-coded production appId or the explicitly resolved
+    /// cloud-specific appId. Used by
     /// <see cref="GetResourceIdentifierUri"/> to distinguish the WorkIQ shared audience
     /// (returns canonical https URI) from V2 MCP per-server audiences (returns bare appId
     /// GUID because per-server SPs have <c>identifierUris = null</c> and Entra rejects
     /// api://{appId} for them with AADSTS500011).
     /// </summary>
-    private static bool IsAgent365ToolsResourceAppId(string resourceAppId)
+    private static bool IsAgent365ToolsResourceAppId(string resourceAppId, string? sharedMcpResourceAppId = null)
     {
         if (string.IsNullOrWhiteSpace(resourceAppId)) return false;
         if (string.Equals(resourceAppId, McpConstants.WorkIQToolsProdAppId, StringComparison.OrdinalIgnoreCase))
             return true;
-        // Also accept any value the environment-aware resolver returns for known env keys.
-        // Cheaper than walking every possible env: only check the env on the running config
-        // when explicitly passed via env var. ConfigConstants.GetAgent365ToolsResourceAppId
-        // already short-circuits to the prod appId when no override is set.
-        foreach (var envKey in new[] { "prod", "preprod", "test", "dev" })
-        {
-            var resolved = ConfigConstants.GetAgent365ToolsResourceAppId(envKey);
-            if (string.Equals(resourceAppId, resolved, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
+
+        return !string.IsNullOrWhiteSpace(sharedMcpResourceAppId)
+            && string.Equals(resourceAppId, sharedMcpResourceAppId, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1320,8 +1401,13 @@ internal static class SetupHelpers
     /// <param name="isMcpAudience">Forwarded to <see cref="GetResourceIdentifierUri"/>; pass
     /// true when the caller knows <paramref name="resourceAppId"/> is a V2 MCP per-server
     /// audience (e.g. found in the loaded ToolingManifest audience set). Default false.</param>
-    internal static string BuildFullyQualifiedScope(string resourceAppId, string scope, bool isMcpAudience = false)
-        => $"{GetResourceIdentifierUri(resourceAppId, isMcpAudience)}/{scope}";
+    internal static string BuildFullyQualifiedScope(
+        string resourceAppId,
+        string scope,
+        bool isMcpAudience = false,
+        string graphResourceUri = AuthenticationConstants.MicrosoftGraphResourceUri,
+        string? sharedMcpResourceAppId = null)
+        => $"{GetResourceIdentifierUri(resourceAppId, isMcpAudience, graphResourceUri, sharedMcpResourceAppId)}/{scope}";
 
     /// <summary>
     /// Builds per-resource admin consent URLs covering every resource stamped on the blueprint
@@ -1344,16 +1430,20 @@ internal static class SetupHelpers
         bool isM365 = true,
         IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
         IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null,
+        string graphResourceUri = AuthenticationConstants.MicrosoftGraphResourceUri,
+        string? authorityHost = null,
+        string? sharedMcpResourceAppId = null,
+        string? observabilityResourceAppId = null,
         bool includeObservability = true)
     {
         var urls = new List<(string, string)>();
 
-        static string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes)
-            => BuildAdminConsentUrl(tenant, client, scopes.Select(s => $"{resourceUri}/{s}"));
+        string Build(string tenant, string client, string resourceUri, IEnumerable<string> scopes)
+            => BuildAdminConsentUrl(tenant, client, scopes.Select(s => $"{resourceUri}/{s}"), authorityHost);
 
         var graphScopeList = graphScopes.ToList();
         if (graphScopeList.Count > 0)
-            urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, AuthenticationConstants.MicrosoftGraphResourceUri, graphScopeList)));
+            urls.Add(("Microsoft Graph", Build(tenantId, blueprintClientId, graphResourceUri, graphScopeList)));
 
         // V2 per-server audiences (issue #429): when the caller passes a by-audience map,
         // emit one URL fragment per audience whose resource identifier is resolved by
@@ -1369,7 +1459,8 @@ internal static class SetupHelpers
                 if (scopes is null || scopes.Length == 0) continue;
                 // The loop iterates over manifest-derived MCP audiences; every key here is
                 // by definition an MCP per-server audience appId.
-                var resourceUri = GetResourceIdentifierUri(audienceAppId, isMcpAudience: true);
+                var resourceUri = GetResourceIdentifierUri(
+                    audienceAppId, isMcpAudience: true, sharedMcpResourceAppId: sharedMcpResourceAppId);
                 // Display name: WorkIQ shared audience keeps the legacy "Agent 365 Tools"
                 // label. Per-server audiences use the manifest McpServerName when supplied
                 // (e.g. "mcp_MailTools (16b1878d-...)") so the consent URL block matches the
@@ -1379,7 +1470,7 @@ internal static class SetupHelpers
                 // TryExtractAudienceAppIdFromResourceName for the PopulateAdminConsentUrls
                 // upsert path.
                 string resourceName;
-                if (IsAgent365ToolsResourceAppId(audienceAppId))
+                if (IsAgent365ToolsResourceAppId(audienceAppId, sharedMcpResourceAppId))
                 {
                     resourceName = "Agent 365 Tools";
                 }
@@ -1407,7 +1498,11 @@ internal static class SetupHelpers
             urls.Add(("Messaging Bot API", Build(tenantId, blueprintClientId, ConfigConstants.MessagingBotApiIdentifierUri, new[] { ConfigConstants.MessagingBotApiAdminConsentScope })));
 
         if (includeObservability)
-            urls.Add(("Observability API", Build(tenantId, blueprintClientId, ConfigConstants.ObservabilityApiIdentifierUri, new[] { ConfigConstants.ObservabilityApiOtelWriteScope })));
+        {
+            var observabilityIdentifierUri = ConfigConstants.BuildObservabilityApiIdentifierUri(
+                observabilityResourceAppId ?? ConfigConstants.ObservabilityApiAppId);
+            urls.Add(("Observability API", Build(tenantId, blueprintClientId, observabilityIdentifierUri, new[] { ConfigConstants.ObservabilityApiOtelWriteScope })));
+        }
         urls.Add(("Power Platform API", Build(tenantId, blueprintClientId, PowerPlatformConstants.PowerPlatformApiIdentifierUri, new[] { PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead })));
 
         return urls;
@@ -1432,11 +1527,15 @@ internal static class SetupHelpers
         IEnumerable<string> mcpScopes,
         bool isM365 = true,
         IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
+        string graphResourceUri = AuthenticationConstants.MicrosoftGraphResourceUri,
+        string? authorityHost = null,
+        string? sharedMcpResourceAppId = null,
+        string? observabilityResourceAppId = null,
         bool includeObservability = true)
     {
         var allScopes = new List<string>();
         foreach (var s in graphScopes)
-            allScopes.Add($"{AuthenticationConstants.MicrosoftGraphResourceUri}/{s}");
+            allScopes.Add($"{graphResourceUri}/{s}");
 
         // V2 per-server audiences (issue #429): when the caller passes a by-audience map,
         // emit per-audience scope URIs using GetResourceIdentifierUri so the WorkIQ
@@ -1451,7 +1550,8 @@ internal static class SetupHelpers
                 if (scopes is null) continue;
                 // The loop iterates over manifest-derived MCP audiences; every key here is
                 // by definition an MCP per-server audience appId.
-                var resourceUri = GetResourceIdentifierUri(audienceAppId, isMcpAudience: true);
+                var resourceUri = GetResourceIdentifierUri(
+                    audienceAppId, isMcpAudience: true, sharedMcpResourceAppId: sharedMcpResourceAppId);
                 foreach (var s in scopes)
                     allScopes.Add($"{resourceUri}/{s}");
             }
@@ -1465,9 +1565,10 @@ internal static class SetupHelpers
         if (isM365)
             allScopes.Add($"{ConfigConstants.MessagingBotApiIdentifierUri}/{ConfigConstants.MessagingBotApiAdminConsentScope}");
         if (includeObservability)
-            allScopes.Add($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
+            allScopes.Add(
+                $"{ConfigConstants.BuildObservabilityApiIdentifierUri(observabilityResourceAppId ?? ConfigConstants.ObservabilityApiAppId)}/{ConfigConstants.ObservabilityApiOtelWriteScope}");
         allScopes.Add($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}");
-        return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes);
+        return BuildAdminConsentUrl(tenantId, blueprintClientId, allScopes, authorityHost);
     }
 
     /// <summary>
@@ -1503,20 +1604,24 @@ internal static class SetupHelpers
         var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames, includeObservability);
         ctx.Results.ConsentUrlsSavedToPath = ctx.GeneratedConfigPath;
         ctx.Results.ConsentResourceNames.AddRange(consentResourceNames);
+        var graphBaseUrl = ConfigConstants.GetGraphBaseUrl(ctx.Config.Environment, ctx.Config.GraphBaseUrl);
+        var graphResourceUri = graphBaseUrl;
+        var authorityHost = ConfigConstants.GetAuthorityHost(ctx.Config.Environment, ctx.Config.AuthorityHost);
+        var observabilityResourceAppId = ConfigConstants.GetObservabilityApiAppId(ctx.Config.Environment);
         ctx.Results.CombinedConsentUrl = BuildCombinedConsentUrl(
             ctx.Config.TenantId!, ctx.Config.AgentBlueprintId!,
-            graphScopes, mcpScopes, isM365, mcpScopesByAudience, includeObservability);
+            graphScopes, mcpScopes, isM365, mcpScopesByAudience, graphResourceUri, authorityHost,
+            mcpResourceAppId, observabilityResourceAppId, includeObservability);
     }
 
     /// <summary>
-    /// Clears the saved Observability API consent URL so an admin is not asked for permissions that
-    /// setup no longer requests. The entry itself stays, including <see cref="ResourceConsent.ConsentGranted"/>
+    /// Clears the saved Observability API consent URL, for any cloud, so an admin is not asked for permissions
+    /// that setup no longer requests. The entry itself stays, including <see cref="ResourceConsent.ConsentGranted"/>
     /// and the inheritable-permission state: re-running setup does not revoke what an earlier run granted.
     /// </summary>
     internal static void ClearSkippedObservabilityConsentUrl(Agent365Config config)
     {
-        foreach (var consent in config.ResourceConsents.Where(rc =>
-                     rc.ResourceAppId.Equals(ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase)))
+        foreach (var consent in config.ResourceConsents.Where(rc => ConfigConstants.IsObservabilityApiAppId(rc.ResourceAppId)))
             consent.ConsentUrl = null;
     }
 
