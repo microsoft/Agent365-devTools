@@ -20,7 +20,7 @@ Agents that export telemetry through the delegated (OBO) route need `Agent365.Ob
 4. Repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 5. **Grant admin consent for \<tenant\>** > confirm
 
-**Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above, or copy the PowerShell instructions printed in the `a365 setup all` summary output.
+**Option B — CLI** (`a365 setup admin`) has been removed in this release. Use Option A above. For AI Teammates, the `a365 setup all` summary also prints the PowerShell steps for the application permission.
 
 Blueprint agents that export telemetry through the app-only S2S endpoint don't need these permissions, and `a365 setup all` no longer requests them for blueprint agents (#501).
 
