@@ -111,6 +111,21 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the required role must be surfaced so the admin knows which Entra role is needed");
     }
 
+    [Fact]
+    public void DisplaySetupSummary_PendingDelegatedAction_WhenObservabilitySkipped_OmitsObservabilityGrant()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildDelegatedPendingResults();
+        results.ObservabilityPermissionsSkipped = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiOtelWriteScope,
+            because: "blueprint agents that skipped Observability permissions must not be told to grant OtelWrite later");
+        logger.AllOutput.Should().Contain(PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,
+            because: "gating the Observability scope must keep the remaining delegated remediation intact");
+    }
+
     // ── pendingS2SAction (non-DW path) ─────────────────────────────────────────
 
     [Fact]

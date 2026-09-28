@@ -589,6 +589,22 @@ public class SetupCommandTests
     }
 
     /// <summary>
+    /// Help text must not promise default S2S app-role grants for blueprint agents.
+    /// </summary>
+    [Fact]
+    public void SetupAll_AuthMode_HelpText_StatesBlueprintAgentsGrantNoAppRolesByDefault()
+    {
+        var setup = BuildSetupCommand();
+        var all = setup.Children.OfType<Command>().Single(c => c.Name == "all");
+        var authMode = all.Options.Single(o => o.Name == "authmode");
+
+        authMode.Description.Should().Contain("blueprint agents grant none by default",
+            because: "the CLI no longer requests OtelWrite, so S2S has no app role to grant by default");
+        authMode.Description.Should().NotContain("app permissions on agent identity; Global Admin needed or PowerShell fallback",
+            because: "that stale wording implies setup still grants a default app role for blueprint agents");
+    }
+
+    /// <summary>
     /// --authmode obo with --aiteammate is redundant (obo is the AI Teammate default) but not
     /// conflicting. It must emit a warning and continue — not exit with an error before setup runs.
     /// --dry-run is used to avoid hitting real Azure auth in the test environment.
@@ -750,6 +766,12 @@ public class SetupCommandTests
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("Observability API not requested")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint Permission Grants") && o.ToString()!.Contains("no S2S app roles to grant")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }

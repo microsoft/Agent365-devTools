@@ -169,6 +169,20 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     /// <summary>
+    /// Blueprint agents skip OtelWrite by default, which leaves the S2S half with no app roles to assign.
+    /// </summary>
+    [Fact]
+    public void PrintDryRunPlan_AuthModeS2s_WhenObservabilitySkipped_ShowsNoAppRolesToGrant()
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "s2s", skipObservabilityPermissions: true);
+
+        AnyLogContains("not required  (no S2S app roles to grant)").Should().BeTrue(
+            because: "the dry-run plan must match the real summary when the spec list has no app roles");
+        AnyLogContains("Global Administrator required if 403").Should().BeFalse(
+            because: "there is no S2S grant to perform when blueprint agents skip OtelWrite");
+    }
+
+    /// <summary>
     /// Both mode must surface both delegated grants and application permissions on the
     /// agent identity SP.
     /// </summary>
@@ -179,6 +193,20 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
 
         AnyLogContains("delegated").Should().BeTrue(because: "Both mode includes OBO delegated grants on the agent identity SP");
         AnyLogContains("S2S app roles").Should().BeTrue(because: "Both mode includes S2S app role assignments on the agent identity SP");
+    }
+
+    /// <summary>
+    /// Both mode still has delegated consent work, but no S2S grant when no spec carries app roles.
+    /// </summary>
+    [Fact]
+    public void PrintDryRunPlan_AuthModeBoth_WhenObservabilitySkipped_ShowsDelegatedOnly()
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "both", skipObservabilityPermissions: true);
+
+        AnyLogContains("delegated grants for the signed-in principal; no S2S app roles to grant").Should().BeTrue(
+            because: "both mode must preserve the delegated half while saying the S2S half has no role to assign");
+        AnyLogContains("Global Administrator required for S2S if 403").Should().BeFalse(
+            because: "there is no S2S grant fallback to describe when blueprint agents skip OtelWrite");
     }
 
     /// <summary>

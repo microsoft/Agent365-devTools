@@ -960,11 +960,14 @@ internal static class SetupHelpers
                 logger.LogInformation("");
                 logger.LogInformation("     $agentSpId = '{AgentSpId}'", results.AgentIdentityId ?? "<agent-identity-sp-id>");
                 logger.LogInformation("");
-                logger.LogInformation("     # Observability API");
-                logger.LogInformation("     $obsSp = Get-MgServicePrincipal -Filter \"appId eq '{ObsAppId}'\"", ConfigConstants.ObservabilityApiAppId);
-                logger.LogInformation("     $body  = @{{ clientId = $agentSpId; consentType = 'AllPrincipals'; resourceId = $obsSp.Id; scope = '{ObsScope}' }} | ConvertTo-Json", ConfigConstants.ObservabilityApiOtelWriteScope);
-                logger.LogInformation("     Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' -Body $body -ContentType 'application/json'");
-                logger.LogInformation("");
+                if (!results.ObservabilityPermissionsSkipped)
+                {
+                    logger.LogInformation("     # Observability API");
+                    logger.LogInformation("     $obsSp = Get-MgServicePrincipal -Filter \"appId eq '{ObsAppId}'\"", ConfigConstants.ObservabilityApiAppId);
+                    logger.LogInformation("     $body  = @{{ clientId = $agentSpId; consentType = 'AllPrincipals'; resourceId = $obsSp.Id; scope = '{ObsScope}' }} | ConvertTo-Json", ConfigConstants.ObservabilityApiOtelWriteScope);
+                    logger.LogInformation("     Invoke-MgGraphRequest -Method POST -Uri 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' -Body $body -ContentType 'application/json'");
+                    logger.LogInformation("");
+                }
                 logger.LogInformation("     # Power Platform API");
                 logger.LogInformation("     $ppSp  = Get-MgServicePrincipal -Filter \"appId eq '{PpAppId}'\"", PowerPlatformConstants.PowerPlatformApiResourceAppId);
                 logger.LogInformation("     $body  = @{{ clientId = $agentSpId; consentType = 'AllPrincipals'; resourceId = $ppSp.Id; scope = '{PpScope}' }} | ConvertTo-Json", PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead);

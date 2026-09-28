@@ -477,7 +477,7 @@ The non-DW spec list is a strict subset of the DW list:
 | Microsoft Graph (delegated) | ✓ | — |
 | Agent 365 Tools (delegated) | ✓ | — |
 | Messaging Bot API | ✓ | — |
-| Observability API | ✓ | ✓ |
+| Observability API | ✓ | — |
 | Power Platform API | ✓ | ✓ |
 
 ---

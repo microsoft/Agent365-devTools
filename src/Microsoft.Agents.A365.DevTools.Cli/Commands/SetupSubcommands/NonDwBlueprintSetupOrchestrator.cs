@@ -136,9 +136,13 @@ internal static class NonDwBlueprintSetupOrchestrator
         if (effectiveMode is "obo")
             logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)");
         else if (effectiveMode is "s2s")
-            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + "S2S app roles — attempted programmatically ({Roles} required if 403)", AuthenticationConstants.S2SGrantRequiredRoles);
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (skipObservabilityPermissions
+                ? "not required  (no S2S app roles to grant)"
+                : $"S2S app roles — attempted programmatically ({AuthenticationConstants.S2SGrantRequiredRoles} required if 403)"));
         else if (effectiveMode is "both")
-            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + "delegated grants for the signed-in principal + S2S app roles — attempted programmatically; {Roles} required for S2S if 403", AuthenticationConstants.S2SGrantRequiredRoles);
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (skipObservabilityPermissions
+                ? "delegated grants for the signed-in principal; no S2S app roles to grant"
+                : $"delegated grants for the signed-in principal + S2S app roles — attempted programmatically; {AuthenticationConstants.S2SGrantRequiredRoles} required for S2S if 403"));
 
         // 5. Agent identity (created after blueprint-side grants so all blueprint rows are grouped)
         var agentIdentityDisplayName = config.AgentIdentityDisplayName ?? "Agent";
@@ -490,8 +494,13 @@ internal static class NonDwBlueprintSetupOrchestrator
                     ctx.Logger.LogInformation("Creating agent identity...");
                     if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
                     {
+                        var message =
+                            "Agent registration failed: blueprint client secret is not available. " +
+                            "Re-run 'a365 setup blueprint' to create it, then retry with: a365 setup all --agent-registration-only";
                         ctx.Results.AgentIdentityFailed = true;
-                        ctx.Logger.LogError("Blueprint client secret is not available. Re-run 'a365 setup blueprint' to create it.");
+                        ctx.Results.AgentRegistrationFailed = true;
+                        ctx.Results.Errors.Add(message);
+                        ctx.Logger.LogError(message);
                         return;
                     }
 
@@ -555,11 +564,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("Registering agent...");
 
-        // Registration is the sole purpose of --agent-registration-only and, with OtelWrite skipped,
-        // the agent's only Observability authorization, so its failure must fail setup.
-        // Every real run of this orchestrator is a blueprint agent, and blueprint agents always skip
-        // OtelWrite, so this is always true outside tests. The optional branches below are kept
-        // deliberately: they state the rule for any caller that requests OtelWrite again, and tests cover them.
+        // Registration failure fails setup when it is the run's purpose (--agent-registration-only) or the agent's only Observability authorization.
         var registrationRequired = skipIdentityAndPermissions || ctx.SkipObservabilityPermissions;
         void RecordRegistrationFailure(string message)
         {
@@ -661,7 +666,9 @@ internal static class NonDwBlueprintSetupOrchestrator
         }
         else if (!verificationFailed)
         {
-            RecordRegistrationFailure("Agent registration failed via Graph copilot/agentRegistrations API.");
+            RecordRegistrationFailure(
+                "Agent registration failed via Graph copilot/agentRegistrations API. " +
+                $"Ensure the CLI client app has admin consent for Microsoft Graph {AuthenticationConstants.AgentRegistrationReadWriteAllScope}.");
         }
 
         } // end else (AgenticAppId present)

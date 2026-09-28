@@ -734,6 +734,49 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             .Returns(((string?)null, false));
 
     /// <summary>
+    /// Step 5: when the blueprint secret is missing, setup cannot create the identity or register the agent.
+    /// </summary>
+    [Fact]
+    public async Task Step5_MissingBlueprintClientSecret_RecordsErrorForExitCode1()
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwMissingSecretTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                DeploymentProjectPath = projectDir,
+                AgentBlueprintClientSecret = null,
+            };
+            var (ctx, _, blueprintService) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: false, skipObservabilityPermissions: true);
+            blueprintService.FindExistingAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((string?)null);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.AgentIdentityFailed.Should().BeTrue(
+                because: "without the blueprint secret setup cannot create the agent identity");
+            ctx.Results.AgentRegistrationFailed.Should().BeTrue(
+                because: "registration is mandatory when Observability permissions were skipped");
+            ctx.Results.Errors.Should().ContainSingle(e => e.Contains("blueprint client secret is not available"),
+                because: "ExecuteAsync returns exit code 1 whenever Results.HasErrors is true");
+            ctx.Results.HasErrors.Should().BeTrue(
+                because: "the full setup command maps recorded errors to exit code 1");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// Step 6 (--agent-registration-only): registration is the command's only purpose, so its failure must exit 1.
     /// </summary>
     [Fact]
@@ -773,6 +816,9 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             ctx.Results.AgentRegistrationFailed.Should().BeTrue(because: "precondition: the stubbed registration API returned no ID");
             ctx.Results.Errors.Any(e => e.Contains("Agent registration failed")).Should().Be(skipObservabilityPermissions,
                 because: "without OtelWrite an unregistered agent cannot export telemetry, so setup must fail (exit 1)");
+            if (skipObservabilityPermissions)
+                ctx.Results.Errors.Should().Contain(e => e.Contains(AuthenticationConstants.AgentRegistrationReadWriteAllScope),
+                    because: "the failure guidance should name the Graph permission the registration API requires");
             ctx.Results.Warnings.Any(w => w.Contains("Agent registration failed")).Should().Be(!skipObservabilityPermissions,
                 because: "when Observability permissions are requested the agent keeps OtelWrite, and a failed registration remains a non-fatal warning");
         }
