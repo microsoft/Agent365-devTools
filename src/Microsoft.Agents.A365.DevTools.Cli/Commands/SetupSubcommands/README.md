@@ -98,7 +98,7 @@ For blueprint agents, `setup all` does not request `Agent365.Observability.OtelW
 
 Agents whose SDK still exports through the delegated (OBO) route need `OtelWrite`; grant it manually (see the CHANGELOG upgrade note). AI Teammate setup is unchanged. Re-running setup does not revoke permissions granted earlier.
 
-To opt a blueprint agent back into delegated-route Observability, add the Observability API to `customBlueprintPermissions` or run `a365 setup permissions custom --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite`; the custom path stamps inheritable permissions and requires admin-run consent (custom permissions are not included in the non-admin combined consent URL).
+To opt a blueprint agent back into delegated-route Observability, add the Observability API to `customBlueprintPermissions` or run `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; other clouds are listed under [Environment Variable Overrides](../../design.md#environment-variable-overrides)); the custom path stamps inheritable permissions and requires admin-run consent (custom permissions are not included in the non-admin combined consent URL).
 
 ---
 
