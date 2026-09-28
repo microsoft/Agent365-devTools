@@ -292,6 +292,26 @@ public class SetupResults
     /// </summary>
     public bool ObservabilityPermissionsSkipped { get; set; }
 
+    /// <summary>
+    /// True when the s2s/both grant step ran but no permission spec carries an app role (blueprint
+    /// agents no longer request the Observability API OtelWrite role). The setup summary then reports
+    /// that no S2S app roles were needed instead of falling back to the delegated rows.
+    /// </summary>
+    public bool NoS2SAppRolesToGrant { get; set; }
+
+    /// <summary>
+    /// App-role specs not assigned on the blueprint service principal because the grant failed or
+    /// was not attempted (non-admin caller or declined prompt). The setup summary's S2S PowerShell
+    /// block lists exactly these roles.
+    /// </summary>
+    internal List<ResourcePermissionSpec> PendingBlueprintAppRoleSpecs { get; } = new();
+
+    /// <summary>
+    /// App-role specs whose assignment on the agent identity service principal failed. The setup
+    /// summary's S2S PowerShell block lists exactly these roles.
+    /// </summary>
+    internal List<ResourcePermissionSpec> PendingAgentIdentityAppRoleSpecs { get; } = new();
+
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();
 

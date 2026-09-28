@@ -349,6 +349,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Granted,
             because: "when the az rest POST /appRoleAssignments succeeds the Action Required block must be suppressed");
+        setupResults.PendingBlueprintAppRoleSpecs.Should().BeEmpty(
+            because: "a completed fallback leaves no app role for the summary's hand-off");
     }
 
     /// <summary>
@@ -378,6 +380,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
             because: "a non-zero az rest exit code means the assignment was not created — Action Required must remain visible");
+        setupResults.PendingBlueprintAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "the summary's hand-off must list the app role the fallback could not assign");
     }
 
     /// <summary>
@@ -410,6 +414,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert — outcome is Failed (Action Required surfaces manual steps).
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
             because: "operator declined the confirmation, so no S2S grants were attempted; Action Required must surface the manual steps");
+        setupResults.PendingBlueprintAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "a declined grant leaves every requested app role for the summary's hand-off");
 
         // Primary path: no Graph API S2S call should have been made.
         await _blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
@@ -533,6 +539,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
             because: "a non-admin user cannot complete S2S app role assignment directly — the outcome must be marked Failed so DisplaySetupSummary surfaces the hand-off block");
+        setupResults.PendingBlueprintAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "a non-admin run leaves every requested app role for the summary's hand-off");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────────────

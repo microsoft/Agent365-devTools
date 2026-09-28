@@ -563,6 +563,10 @@ internal static class SetupHelpers
         // (e.g. admin already granted tenant consent but the per-principal call still failed).
         var pendingDelegatedAction = agentIdDelegatedFailed && !pendingAdminAction;
         var pendingS2SAction = permissionGrantsPending && isS2SFlow;
+        // Blueprint agents no longer request OtelWrite, the only app role setup requested, so an
+        // s2s/both run usually has no S2S grant at all. Say so explicitly: otherwise the row falls
+        // through to the delegated wording, which for s2s-only shows a PENDING with no action item.
+        var noS2SAppRolesToGrant = isNonDw && (isS2sOnlyMode || isBothMode) && results.NoS2SAppRolesToGrant && !isS2SFlow;
 
         if (results.PermissionGrantsSkipped && isNonDw)
         {
@@ -651,6 +655,8 @@ internal static class SetupHelpers
             logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + notRun);
         else if (results.PermissionGrantsSkipped)
             logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "skipped (--agent-registration-only)");
+        else if (noS2SAppRolesToGrant && isS2sOnlyMode)
+            logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "not required  (no S2S app roles to grant)");
         else if (isS2SFlow && s2sOk)
         {
             if (isBothMode && !delegatedOk)
@@ -696,6 +702,9 @@ internal static class SetupHelpers
                     : "granted  tenant-wide delegated")
                 : tenantConsentUnverified ? "unverified — run 'a365 query-entra inheritance' to confirm"
                 : "PENDING";
+            // Both mode with no app roles: this row reports only the delegated half, so name the S2S half too.
+            if (noS2SAppRolesToGrant)
+                delegatedLabel += "; no S2S app roles to grant";
             logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + delegatedLabel);
         }
 
@@ -868,41 +877,70 @@ internal static class SetupHelpers
             if (pendingS2SAction)
             {
                 actionCount++;
-                logger.LogInformation("");
-                logger.LogInformation("  {N}. Observability API S2S app role (PowerShell):", actionCount);
-                logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
-                if (!string.IsNullOrWhiteSpace(results.TenantId))
-                    logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All'", results.TenantId);
-                else
-                    logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All'");
                 // Switch on which side actually failed rather than on DW vs non-DW: non-DW now
                 // stamps the blueprint too, so blueprintS2sFailed is reachable in the non-DW flow.
-                if (agentIdS2sFailed)
+                // List only the app roles that were not assigned; never assume a particular role.
+                var pendingAppRoleSpecs = (agentIdS2sFailed ? results.PendingAgentIdentityAppRoleSpecs : results.PendingBlueprintAppRoleSpecs)
+                    .Where(spec => spec.AppRoleScopes is { Length: > 0 })
+                    .ToList();
+                var pendingResourceNames = pendingAppRoleSpecs
+                    .Select(spec => spec.ResourceName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var s2sHeading = pendingResourceNames.Count == 1 ? $"{pendingResourceNames[0]} S2S app role" : "S2S app roles";
+                logger.LogInformation("");
+                logger.LogInformation("  {N}. {Heading} (PowerShell):", actionCount, s2sHeading);
+                logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
+                if (pendingAppRoleSpecs.Count == 0)
                 {
-                    // Grant targets the agent identity SP directly (SP object ID, not an app ID).
-                    var agentSpId = results.AgentIdentityId ?? "<agent-identity-sp-object-id>";
-                    logger.LogInformation("       $agentSpId = '{AgentSpId}'", agentSpId);
-                    logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);
-                    logger.LogInformation("       $rid = ($obs.AppRoles | Where-Object {{ $_.Value -eq '{ObsScope}' }}).Id", ConfigConstants.ObservabilityApiOtelWriteScope);
-                    logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $agentSpId -PrincipalId $agentSpId -ResourceId $obs.Id -AppRoleId $rid");
-                    logger.LogInformation("");
-                    if (!string.IsNullOrWhiteSpace(results.TenantId))
-                        logger.LogInformation("     Tenant        : {TenantId}", results.TenantId);
-                    logger.LogInformation("     Agent Identity: {AgentSpId}", agentSpId);
+                    // Defensive: every writer of a failed S2S outcome records the specs it could not assign.
+                    logger.LogInformation("     Re-run 'a365 setup all' as {Roles} to assign the app roles reported in the setup output above.", AuthenticationConstants.S2SGrantRequiredRoles);
                 }
                 else
                 {
-                    // DW: grant targets the blueprint SP (looked up by app ID).
-                    logger.LogInformation("       $bp  = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
-                    logger.LogInformation("       $obs = Get-MgServicePrincipal -Filter \"appId eq '{ObsApiAppId}'\"", ConfigConstants.ObservabilityApiAppId);
-                    logger.LogInformation("       $rid = ($obs.AppRoles | Where-Object {{ $_.Value -eq '{ObsScope}' }}).Id", ConfigConstants.ObservabilityApiOtelWriteScope);
-                    logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $obs.Id -AppRoleId $rid");
-                    logger.LogInformation("");
-                    logger.LogInformation("     To share with your {Roles}:", AuthenticationConstants.S2SGrantRequiredRoles);
-                    logger.LogInformation("       Blueprint : {BlueprintAppId}", blueprintAppId);
                     if (!string.IsNullOrWhiteSpace(results.TenantId))
-                        logger.LogInformation("       Tenant    : {TenantId}", results.TenantId);
-                    logger.LogInformation("       Run the PowerShell commands listed above.");
+                        logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All'", results.TenantId);
+                    else
+                        logger.LogInformation("       Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All'");
+
+                    // The agent identity grant targets its SP object ID directly; the blueprint grant
+                    // looks the blueprint SP up by app ID.
+                    var agentSpId = results.AgentIdentityId ?? "<agent-identity-sp-object-id>";
+                    if (agentIdS2sFailed)
+                        logger.LogInformation("       $agentSpId = '{AgentSpId}'", agentSpId);
+                    else
+                        logger.LogInformation("       $bp  = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
+
+                    foreach (var spec in pendingAppRoleSpecs)
+                    {
+                        if (pendingResourceNames.Count > 1)
+                            logger.LogInformation("       # {ResourceName}", spec.ResourceName);
+                        logger.LogInformation("       $res = Get-MgServicePrincipal -Filter \"appId eq '{ResourceAppId}'\"", spec.ResourceAppId);
+                        foreach (var role in spec.AppRoleScopes!)
+                        {
+                            logger.LogInformation("       $rid = ($res.AppRoles | Where-Object {{ $_.Value -eq '{Role}' }}).Id", role);
+                            if (agentIdS2sFailed)
+                                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $agentSpId -PrincipalId $agentSpId -ResourceId $res.Id -AppRoleId $rid");
+                            else
+                                logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $res.Id -AppRoleId $rid");
+                        }
+                    }
+                    logger.LogInformation("");
+
+                    if (agentIdS2sFailed)
+                    {
+                        if (!string.IsNullOrWhiteSpace(results.TenantId))
+                            logger.LogInformation("     Tenant        : {TenantId}", results.TenantId);
+                        logger.LogInformation("     Agent Identity: {AgentSpId}", agentSpId);
+                    }
+                    else
+                    {
+                        logger.LogInformation("     To share with your {Roles}:", AuthenticationConstants.S2SGrantRequiredRoles);
+                        logger.LogInformation("       Blueprint : {BlueprintAppId}", blueprintAppId);
+                        if (!string.IsNullOrWhiteSpace(results.TenantId))
+                            logger.LogInformation("       Tenant    : {TenantId}", results.TenantId);
+                        logger.LogInformation("       Run the PowerShell commands listed above.");
+                    }
                 }
             }
             if (pendingDelegatedAction)
@@ -1103,9 +1141,9 @@ internal static class SetupHelpers
     {
         var urls = BuildAdminConsentUrls(config.TenantId, config.AgentBlueprintId!, config.AgentApplicationScopes, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames, includeObservability);
 
-        // Drop an Observability entry saved by an earlier run so the admin is not asked for permissions this run skipped.
+        // Clear an Observability consent URL saved by an earlier run so the admin is not asked for permissions this run skipped.
         if (!includeObservability)
-            config.ResourceConsents.RemoveAll(rc => rc.ResourceAppId.Equals(ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase));
+            ClearSkippedObservabilityConsentUrl(config);
 
         // Map resource names to App IDs for upsert into ResourceConsents. The fixed-name
         // entries cover Graph + Bot + Obs + PP + the WorkIQ shared MCP audience. V2
@@ -1431,8 +1469,9 @@ internal static class SetupHelpers
     /// Messaging Bot API URLs are included only when <paramref name="isM365"/> is true, and
     /// Observability API URLs only when the context requests Observability permissions; the other
     /// resources (Graph, MCP, Power Platform) are always included so a tenant admin
-    /// can complete the hand-off with a single URL. No-op if admin consent was already granted or
-    /// the blueprint ID is absent.
+    /// can complete the hand-off with a single URL. When Observability permissions are skipped, a
+    /// consent URL saved for them by an earlier run is cleared on every run, admin runs included.
+    /// Otherwise this is a no-op if admin consent was already granted or the blueprint ID is absent.
     /// </para>
     /// </summary>
     internal static void ApplyConsentUrlsIfNeeded(
@@ -1444,6 +1483,10 @@ internal static class SetupHelpers
         IReadOnlyDictionary<string, string[]>? mcpScopesByAudience = null,
         IReadOnlyDictionary<string, List<string>>? mcpAudienceDisplayNames = null)
     {
+        // Before the early return, so an admin run also clears a URL saved by an earlier non-admin run.
+        if (ctx.SkipObservabilityPermissions)
+            ClearSkippedObservabilityConsentUrl(ctx.Config);
+
         if (ctx.Results.TenantWideConsentOutcome == Models.GrantOutcome.Granted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
             return;
 
@@ -1454,6 +1497,18 @@ internal static class SetupHelpers
         ctx.Results.CombinedConsentUrl = BuildCombinedConsentUrl(
             ctx.Config.TenantId!, ctx.Config.AgentBlueprintId!,
             graphScopes, mcpScopes, isM365, mcpScopesByAudience, includeObservability);
+    }
+
+    /// <summary>
+    /// Clears the saved Observability API consent URL so an admin is not asked for permissions that
+    /// setup no longer requests. The entry itself stays, including <see cref="ResourceConsent.ConsentGranted"/>
+    /// and the inheritable-permission state: re-running setup does not revoke what an earlier run granted.
+    /// </summary>
+    internal static void ClearSkippedObservabilityConsentUrl(Agent365Config config)
+    {
+        foreach (var consent in config.ResourceConsents.Where(rc =>
+                     rc.ResourceAppId.Equals(ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase)))
+            consent.ConsentUrl = null;
     }
 
     /// <summary>

@@ -884,6 +884,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
             because: "when AgenticAppId (the SP object ID) is absent, grants cannot proceed and the outcome must be Failed");
+        ctx.Results.PendingAgentIdentityAppRoleSpecs.Should().ContainSingle(s => s.ResourceName == "Test Resource",
+            because: "the summary's hand-off must list the app role that could not be assigned");
         await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
@@ -958,6 +960,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
             because: "when both the Graph grant and the az rest fallback fail, AgentIdentityS2SOutcome must be Failed");
+        ctx.Results.PendingAgentIdentityAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == resourceAppId,
+            because: "the summary's hand-off must list exactly the app role that failed");
         ctx.Results.HasWarnings.Should().BeTrue(
             because: "a failed S2S grant must add a warning so the setup summary shows Action Required");
         ctx.Results.Warnings.Should().ContainSingle()
@@ -1021,6 +1025,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
             because: "when the az rest fallback assigns the app role, the agent identity S2S grant succeeded");
+        ctx.Results.PendingAgentIdentityAppRoleSpecs.Should().BeEmpty(
+            because: "a completed fallback leaves no app role for the summary's hand-off");
         ctx.Results.HasWarnings.Should().BeFalse(
             because: "a successful az rest fallback must not surface a PowerShell hand-off warning");
     }
@@ -1068,6 +1074,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
             because: "without inheritance the direct grant runs and, when it succeeds, the outcome is Granted");
+        ctx.Results.NoS2SAppRolesToGrant.Should().BeFalse(
+            because: "an app role was requested, so the summary must report the S2S grant");
     }
 
     /// <summary>
@@ -1091,6 +1099,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.NotApplicable,
             because: "with no S2S specs there is nothing to grant or inherit, so the outcome must remain NotApplicable");
+        ctx.Results.NoS2SAppRolesToGrant.Should().BeTrue(
+            because: "the summary needs to know the s2s/both grant step had no app role to grant");
     }
 
     // -------------------------------------------------------------------------

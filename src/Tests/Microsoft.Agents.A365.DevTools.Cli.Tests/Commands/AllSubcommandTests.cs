@@ -432,4 +432,31 @@ public class AllSubcommandTests : IDisposable
         ctx.Results.CombinedConsentUrl.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
             because: "the single hand-off URL must not request Observability API scopes that setup skipped");
     }
+
+    [Fact]
+    public void ApplyConsentUrlsIfNeeded_AdminRun_ClearsObservabilityConsentUrlSavedByAnEarlierRun()
+    {
+        var ctx = BuildPermissionsContext(skipObservabilityPermissions: true);
+        ctx.Results.TenantWideConsentOutcome = GrantOutcome.Granted;
+        ctx.Config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+            ConsentUrl = "https://login.microsoftonline.com/earlier-non-admin-run",
+            InheritablePermissionsConfigured = true,
+        });
+
+        SetupHelpers.ApplyConsentUrlsIfNeeded(
+            ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes, new[] { "McpServers.Mail.All" }, isM365: false);
+
+        var observability = ctx.Config.ResourceConsents.Should().ContainSingle(
+            rc => rc.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "re-running setup does not revoke, so the earlier record is kept").Which;
+        observability.ConsentUrl.Should().BeNull(
+            because: "an admin run must also stop handing out a consent URL that an earlier non-admin run saved for permissions setup no longer requests");
+        observability.InheritablePermissionsConfigured.Should().Be(true,
+            because: "only the URL is cleared; the rest of the earlier record stays");
+        ctx.Results.CombinedConsentUrl.Should().BeNull(
+            because: "consent was granted in this run, so there is nothing to hand off");
+    }
 }

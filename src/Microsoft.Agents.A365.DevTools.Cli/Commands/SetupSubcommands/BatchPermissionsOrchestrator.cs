@@ -220,7 +220,10 @@ internal static class BatchPermissionsOrchestrator
                         {
                             logger.LogInformation("Skipping S2S app role assignment per operator response. The setup summary lists the manual steps.");
                             if (setupResults is not null)
+                            {
                                 setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Failed;
+                                SetPendingBlueprintAppRoleSpecs(setupResults, specs);
+                            }
                         }
                         else
                         {
@@ -243,6 +246,7 @@ internal static class BatchPermissionsOrchestrator
                                 {
                                     logger.LogInformation("Application permissions granted.");
                                     setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Granted;
+                                    setupResults.PendingBlueprintAppRoleSpecs.Clear();
                                 }
                                 else if (attempted)
                                     logger.LogWarning("Some app role assignments did not complete - see output above. Manual steps in summary.");
@@ -261,7 +265,10 @@ internal static class BatchPermissionsOrchestrator
         {
             var hasS2SSpecs = specs.Any(s => s.AppRoleScopes is { Length: > 0 });
             if (hasS2SSpecs)
+            {
                 setupResults.BlueprintS2SOutcome = Models.GrantOutcome.Failed;
+                SetPendingBlueprintAppRoleSpecs(setupResults, specs);
+            }
         }
 
         // --- Admin consent ---
@@ -504,6 +511,7 @@ internal static class BatchPermissionsOrchestrator
         // true so the early-return-protected loop (zero specs cannot reach here) stays true
         // only when EVERY spec returned AllAlreadyAssigned=true.
         var allAlreadyAssigned = true;
+        var failedSpecs = new List<ResourcePermissionSpec>();
         foreach (var spec in s2sSpecs)
         {
             logger.LogDebug(
@@ -535,6 +543,7 @@ internal static class BatchPermissionsOrchestrator
                 // adding actionable detail — keep the actionable Action Required item, drop the
                 // redundant warning to reduce summary noise.
                 allS2SOk = false;
+                failedSpecs.Add(spec);
             }
 
             // Any spec that newly created at least one assignment, or failed, breaks the "all already assigned" claim.
@@ -548,7 +557,20 @@ internal static class BatchPermissionsOrchestrator
             // Only meaningful when the grant succeeded: distinguishes "everything was already there"
             // from "we POSTed at least one new assignment" for the summary's "already granted" wording.
             setupResults.BlueprintS2SAlreadyAssigned = allS2SOk && allAlreadyAssigned;
+            // The summary's PowerShell block lists exactly these roles.
+            setupResults.PendingBlueprintAppRoleSpecs.Clear();
+            setupResults.PendingBlueprintAppRoleSpecs.AddRange(failedSpecs);
         }
+    }
+
+    /// <summary>
+    /// Records every app-role spec as pending on the blueprint when the grant was not attempted
+    /// (non-admin caller or declined prompt), replacing any earlier entries.
+    /// </summary>
+    private static void SetPendingBlueprintAppRoleSpecs(SetupResults setupResults, IEnumerable<ResourcePermissionSpec> specs)
+    {
+        setupResults.PendingBlueprintAppRoleSpecs.Clear();
+        setupResults.PendingBlueprintAppRoleSpecs.AddRange(specs.Where(s => s.AppRoleScopes is { Length: > 0 }));
     }
 
     /// <summary>

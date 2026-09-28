@@ -20,6 +20,15 @@ public class SetupHelpersDisplaySetupSummaryTests
     private const string AgentSpId = "agent-sp-id-123";
     private const string TenantId = "tenant-id-456";
     private const string BlueprintId = "blueprint-app-id-789";
+    private const string CustomAppRoleResourceAppId = "contoso-api-app-id";
+    private const string NoAppRolesConsentUrl = "https://login.microsoftonline.com/tenant/v2.0/adminconsent?client_id=bp-no-app-roles";
+
+    private static readonly ResourcePermissionSpec CustomAppRoleSpec =
+        new(CustomAppRoleResourceAppId, "Contoso API", [], false, AppRoleScopes: ["Contoso.Write"]);
+
+    private static readonly ResourcePermissionSpec ObservabilityAppRoleSpec =
+        new(ConfigConstants.ObservabilityApiAppId, "Observability API", [ConfigConstants.ObservabilityApiOtelWriteScope], false,
+            AppRoleScopes: [ConfigConstants.ObservabilityApiOtelWriteScope]);
 
     private sealed class CapturingLogger : ILogger
     {
@@ -164,6 +173,129 @@ public class SetupHelpersDisplaySetupSummaryTests
         logger.AllOutput.Should().Contain(TenantId,
             because: "the Connect-MgGraph call must include -TenantId so the admin targets the correct tenant");
     }
+
+    // ── S2S app roles: hand-off lists what failed; none to grant for blueprint agents ─
+
+    [Fact]
+    public void DisplaySetupSummary_PendingS2SAction_ListsOnlyTheAppRolesThatFailed()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SPendingResults();
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Contoso API S2S app role (PowerShell)",
+            because: "the hand-off heading must name the resource whose app role was not assigned");
+        logger.AllOutput.Should().Contain($"appId eq '{CustomAppRoleResourceAppId}'",
+            because: "the PowerShell must look up the resource whose grant actually failed");
+        logger.AllOutput.Should().Contain("$_.Value -eq 'Contoso.Write'",
+            because: "the PowerShell must assign the role whose grant actually failed");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiOtelWriteScope,
+            because: "setup no longer requests OtelWrite for blueprint agents, so the hand-off must not grant it");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_PendingBlueprintS2S_AiTeammate_ListsTheObservabilityRole()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+            BlueprintS2SOutcome = Cli.Models.GrantOutcome.Failed,
+            PendingBlueprintAppRoleSpecs = { ObservabilityAppRoleSpec },
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Observability API S2S app role (PowerShell)",
+            because: "AI Teammates still request OtelWrite, so a declined or failed grant keeps its hand-off");
+        logger.AllOutput.Should().Contain($"$_.Value -eq '{ConfigConstants.ObservabilityApiOtelWriteScope}'",
+            because: "the recorded pending role is OtelWrite");
+        logger.AllOutput.Should().Contain($"appId eq '{BlueprintId}'",
+            because: "the AI Teammate grant targets the blueprint service principal");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_PendingS2SAction_WithoutRecordedSpecs_DoesNotAssumeARole()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SPendingResults();
+        results.PendingAgentIdentityAppRoleSpecs.Clear();
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Re-run 'a365 setup all'",
+            because: "without a recorded spec the hand-off can only point back to setup");
+        logger.AllOutput.Should().NotContain("New-MgServicePrincipalAppRoleAssignment",
+            because: "without a recorded spec there is no role to assign");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiOtelWriteScope,
+            because: "the hand-off must never fall back to a hardcoded role");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void DisplaySetupSummary_S2sMode_NoAppRolesToGrant_ReportsNotRequired(bool isAdmin)
+    {
+        var logger = new CapturingLogger();
+        var results = BuildNoAppRolesToGrantResults(Cli.Models.AuthMode.S2s, isAdmin);
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("not required  (no S2S app roles to grant)",
+            because: "blueprint agents request no app role, so the s2s grant step has nothing to do");
+        logger.AllOutput.Should().NotContain("tenant-wide delegated",
+            because: "an s2s run must not be reported as a delegated grant");
+        logger.AllOutput.Should().NotContain("PENDING",
+            because: "nothing is pending when no app role needs to be granted");
+        logger.AllOutput.Should().NotContain("Action Required",
+            because: "an s2s run with no app roles leaves nothing for an administrator to do");
+        logger.AllOutput.Should().Contain("Setup completed successfully",
+            because: "no step failed and nothing is pending");
+    }
+
+    [Theory]
+    [InlineData(true, "granted  tenant-wide delegated; no S2S app roles to grant")]
+    [InlineData(false, "PENDING; no S2S app roles to grant")]
+    public void DisplaySetupSummary_BothMode_NoAppRolesToGrant_ReportsTheDelegatedHalf(bool isAdmin, string expectedRow)
+    {
+        var logger = new CapturingLogger();
+        var results = BuildNoAppRolesToGrantResults(Cli.Models.AuthMode.Both, isAdmin);
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(expectedRow,
+            because: "both mode still needs delegated consent, and the row must say the S2S half had nothing to grant");
+        logger.AllOutput.Should().NotContain("New-MgServicePrincipalAppRoleAssignment",
+            because: "no app role was requested, so there is no S2S hand-off");
+        if (!isAdmin)
+            logger.AllOutput.Should().Contain(NoAppRolesConsentUrl,
+                because: "a non-admin both-mode run still hands the delegated consent URL to an administrator");
+    }
+
+    private static SetupResults BuildNoAppRolesToGrantResults(Cli.Models.AuthMode authMode, bool isAdmin) => new()
+    {
+        IsNonDwBlueprintFlow = true,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        BlueprintServicePrincipalCreated = true,
+        AgentIdentityCreated = true,
+        AgentIdentityId = AgentSpId,
+        TenantId = TenantId,
+        EffectiveAuthMode = authMode,
+        ObservabilityPermissionsSkipped = true,
+        NoS2SAppRolesToGrant = true,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+        TenantWideConsentOutcome = isAdmin ? Cli.Models.GrantOutcome.Granted : Cli.Models.GrantOutcome.Failed,
+        CombinedConsentUrl = isAdmin ? null : NoAppRolesConsentUrl,
+    };
 
     // ── pendingAdminAction (DW path) ──────────────────────────────────────────
 
@@ -677,6 +809,7 @@ public class SetupHelpersDisplaySetupSummaryTests
         TenantId = TenantId,
         EffectiveAuthMode = Cli.Models.AuthMode.S2s,
         AgentIdentityS2SOutcome = Cli.Models.GrantOutcome.Failed,
+        PendingAgentIdentityAppRoleSpecs = { CustomAppRoleSpec },
         BatchPermissionsPhase1Completed = true,
         BatchPermissionsPhase2Completed = true,
     };

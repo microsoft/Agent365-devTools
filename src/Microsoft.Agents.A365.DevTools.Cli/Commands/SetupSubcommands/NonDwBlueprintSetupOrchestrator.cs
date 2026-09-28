@@ -557,6 +557,9 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // Registration is the sole purpose of --agent-registration-only and, with OtelWrite skipped,
         // the agent's only Observability authorization, so its failure must fail setup.
+        // Every real run of this orchestrator is a blueprint agent, and blueprint agents always skip
+        // OtelWrite, so this is always true outside tests. The optional branches below are kept
+        // deliberately: they state the rule for any caller that requests OtelWrite again, and tests cover them.
         var registrationRequired = skipIdentityAndPermissions || ctx.SkipObservabilityPermissions;
         void RecordRegistrationFailure(string message)
         {
@@ -693,6 +696,9 @@ internal static class NonDwBlueprintSetupOrchestrator
         List<ResourcePermissionSpec> specs)
     {
         var hasS2sSpecs = specs.Any(s => s.AppRoleScopes is { Length: > 0 });
+        // Blueprint agents no longer request OtelWrite, the only app role setup requested, so this
+        // step usually has nothing to grant. Record that so the summary does not report a delegated grant.
+        ctx.Results.NoS2SAppRolesToGrant = !hasS2sSpecs;
         if (hasS2sSpecs && AgentIdentityInheritsBlueprintAppRoles(ctx.Results))
         {
             ctx.Logger.LogDebug("Agent identity inherits S2S app roles from the blueprint; skipping redundant direct grant.");
@@ -732,6 +738,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         {
             ctx.Logger.LogWarning("Agent identity SP object ID is missing. App role assignments must be granted manually.");
             ctx.Results.AgentIdentityS2SOutcome = Models.GrantOutcome.Failed;
+            ctx.Results.PendingAgentIdentityAppRoleSpecs.AddRange(s2sSpecs);
             return;
         }
 
@@ -780,6 +787,7 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // Non-admin fallback: print PowerShell instructions for only the failed resources.
         ctx.Results.AgentIdentityS2SOutcome = Models.GrantOutcome.Failed;
+        ctx.Results.PendingAgentIdentityAppRoleSpecs.AddRange(failedSpecs);
         ctx.Logger.LogInformation("");
         ctx.Logger.LogInformation("S2S app role assignments require {Roles}. Run the following PowerShell:", AuthenticationConstants.S2SGrantRequiredRoles);
         ctx.Logger.LogInformation("");
