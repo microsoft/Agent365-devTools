@@ -876,28 +876,34 @@ internal static class SetupHelpers
             }
             if (pendingS2SAction)
             {
-                actionCount++;
-                // Switch on which side actually failed rather than on DW vs non-DW: non-DW now
-                // stamps the blueprint too, so blueprintS2sFailed is reachable in the non-DW flow.
-                // List only the app roles that were not assigned; never assume a particular role.
-                var pendingAppRoleSpecs = (agentIdS2sFailed ? results.PendingAgentIdentityAppRoleSpecs : results.PendingBlueprintAppRoleSpecs)
-                    .Where(spec => spec.AppRoleScopes is { Length: > 0 })
-                    .ToList();
-                var pendingResourceNames = pendingAppRoleSpecs
-                    .Select(spec => spec.ResourceName)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                var s2sHeading = pendingResourceNames.Count == 1 ? $"{pendingResourceNames[0]} S2S app role" : "S2S app roles";
-                logger.LogInformation("");
-                logger.LogInformation("  {N}. {Heading} (PowerShell):", actionCount, s2sHeading);
-                logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
-                if (pendingAppRoleSpecs.Count == 0)
+                // One hand-off per failed target. Non-DW can fail on both in one run (blueprint stamping,
+                // then the agent identity grant), and each hand-off lists only the app roles that target
+                // did not receive; never assume a particular role.
+                var s2sTargets = new List<(bool IsAgentIdentity, List<ResourcePermissionSpec> Specs)>();
+                if (isNonDw && agentIdS2sFailed)
+                    s2sTargets.Add((true, results.PendingAgentIdentityAppRoleSpecs.Where(spec => spec.AppRoleScopes is { Length: > 0 }).ToList()));
+                if (blueprintS2sFailed)
+                    s2sTargets.Add((false, results.PendingBlueprintAppRoleSpecs.Where(spec => spec.AppRoleScopes is { Length: > 0 }).ToList()));
+
+                foreach (var (isAgentIdentityTarget, pendingAppRoleSpecs) in s2sTargets)
                 {
-                    // Defensive: every writer of a failed S2S outcome records the specs it could not assign.
-                    logger.LogInformation("     Re-run 'a365 setup all' as {Roles} to assign the app roles reported in the setup output above.", AuthenticationConstants.S2SGrantRequiredRoles);
-                }
-                else
-                {
+                    actionCount++;
+                    var pendingResourceNames = pendingAppRoleSpecs
+                        .Select(spec => spec.ResourceName)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    var s2sHeading = pendingResourceNames.Count == 1 ? $"{pendingResourceNames[0]} S2S app role" : "S2S app roles";
+                    var targetSuffix = s2sTargets.Count > 1 ? (isAgentIdentityTarget ? " on the agent identity" : " on the blueprint") : "";
+                    logger.LogInformation("");
+                    logger.LogInformation("  {N}. {Heading}{Target} (PowerShell):", actionCount, s2sHeading, targetSuffix);
+                    logger.LogInformation("     Required role: {Roles}", AuthenticationConstants.S2SGrantRequiredRoles);
+                    if (pendingAppRoleSpecs.Count == 0)
+                    {
+                        // Defensive: every writer of a failed S2S outcome records the specs it could not assign.
+                        logger.LogInformation("     Re-run 'a365 setup all' as {Roles} to assign the app roles reported in the setup output above.", AuthenticationConstants.S2SGrantRequiredRoles);
+                        continue;
+                    }
+
                     if (!string.IsNullOrWhiteSpace(results.TenantId))
                         logger.LogInformation("       Connect-MgGraph -TenantId '{TenantId}' -Scopes 'AppRoleAssignment.ReadWrite.All','Application.Read.All'", results.TenantId);
                     else
@@ -906,7 +912,7 @@ internal static class SetupHelpers
                     // The agent identity grant targets its SP object ID directly; the blueprint grant
                     // looks the blueprint SP up by app ID.
                     var agentSpId = results.AgentIdentityId ?? "<agent-identity-sp-object-id>";
-                    if (agentIdS2sFailed)
+                    if (isAgentIdentityTarget)
                         logger.LogInformation("       $agentSpId = '{AgentSpId}'", agentSpId);
                     else
                         logger.LogInformation("       $bp  = Get-MgServicePrincipal -Filter \"appId eq '{BlueprintAppId}'\"", blueprintAppId);
@@ -919,7 +925,7 @@ internal static class SetupHelpers
                         foreach (var role in spec.AppRoleScopes!)
                         {
                             logger.LogInformation("       $rid = ($res.AppRoles | Where-Object {{ $_.Value -eq '{Role}' }}).Id", role);
-                            if (agentIdS2sFailed)
+                            if (isAgentIdentityTarget)
                                 logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $agentSpId -PrincipalId $agentSpId -ResourceId $res.Id -AppRoleId $rid");
                             else
                                 logger.LogInformation("       New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $bp.Id -PrincipalId $bp.Id -ResourceId $res.Id -AppRoleId $rid");
@@ -927,7 +933,7 @@ internal static class SetupHelpers
                     }
                     logger.LogInformation("");
 
-                    if (agentIdS2sFailed)
+                    if (isAgentIdentityTarget)
                     {
                         if (!string.IsNullOrWhiteSpace(results.TenantId))
                             logger.LogInformation("     Tenant        : {TenantId}", results.TenantId);

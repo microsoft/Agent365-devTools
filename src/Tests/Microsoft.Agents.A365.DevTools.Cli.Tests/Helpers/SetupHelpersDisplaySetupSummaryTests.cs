@@ -26,6 +26,9 @@ public class SetupHelpersDisplaySetupSummaryTests
     private static readonly ResourcePermissionSpec CustomAppRoleSpec =
         new(CustomAppRoleResourceAppId, "Contoso API", [], false, AppRoleScopes: ["Contoso.Write"]);
 
+    private static readonly ResourcePermissionSpec BlueprintOnlyAppRoleSpec =
+        new("fabrikam-api-app-id", "Fabrikam API", [], false, AppRoleScopes: ["Fabrikam.Read"]);
+
     private static readonly ResourcePermissionSpec ObservabilityAppRoleSpec =
         new(ConfigConstants.ObservabilityApiAppId, "Observability API", [ConfigConstants.ObservabilityApiOtelWriteScope], false,
             AppRoleScopes: [ConfigConstants.ObservabilityApiOtelWriteScope]);
@@ -236,6 +239,26 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "without a recorded spec there is no role to assign");
         logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiOtelWriteScope,
             because: "the hand-off must never fall back to a hardcoded role");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_PendingS2SAction_BothTargetsFailed_ListsEachTargetsRoles()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SPendingResults();
+        results.BlueprintS2SOutcome = Cli.Models.GrantOutcome.Failed;
+        results.PendingBlueprintAppRoleSpecs.Add(BlueprintOnlyAppRoleSpec);
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Contoso API S2S app role on the agent identity (PowerShell)",
+            because: "the agent identity's failed role needs its own hand-off");
+        logger.AllOutput.Should().Contain("Fabrikam API S2S app role on the blueprint (PowerShell)",
+            because: "a blueprint role that also failed in the same run must not be dropped");
+        logger.AllOutput.Should().Contain("$_.Value -eq 'Contoso.Write'")
+            .And.Contain("$_.Value -eq 'Fabrikam.Read'");
+        logger.AllOutput.Should().Contain($"$agentSpId = '{AgentSpId}'")
+            .And.Contain($"appId eq '{BlueprintId}'", because: "each hand-off targets its own service principal");
     }
 
     [Theory]
