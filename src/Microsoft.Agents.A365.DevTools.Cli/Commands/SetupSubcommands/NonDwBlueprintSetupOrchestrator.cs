@@ -495,8 +495,8 @@ internal static class NonDwBlueprintSetupOrchestrator
                     if (string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintClientSecret))
                     {
                         var message =
-                            "Agent registration failed: blueprint client secret is not available. " +
-                            "Re-run 'a365 setup blueprint' to create it, then retry with: a365 setup all --agent-registration-only";
+                            "Agent registration failed: blueprint client secret is not available, so the agent identity could not be created. " +
+                            "Re-run 'a365 setup blueprint' to create the secret, then re-run 'a365 setup all'.";
                         ctx.Results.AgentIdentityFailed = true;
                         ctx.Results.AgentRegistrationFailed = true;
                         ctx.Results.Errors.Add(message);

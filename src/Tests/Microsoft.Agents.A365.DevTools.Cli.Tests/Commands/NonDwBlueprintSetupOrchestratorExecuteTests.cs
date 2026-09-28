@@ -767,6 +767,9 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
                 because: "registration is mandatory when Observability permissions were skipped");
             ctx.Results.Errors.Should().ContainSingle(e => e.Contains("blueprint client secret is not available"),
                 because: "ExecuteAsync returns exit code 1 whenever Results.HasErrors is true");
+            ctx.Results.Errors.Single().Should().Contain("re-run 'a365 setup all'")
+                .And.NotContain("--agent-registration-only",
+                    because: "--agent-registration-only skips identity creation, so it cannot recover a run that never created the identity");
             ctx.Results.HasErrors.Should().BeTrue(
                 because: "the full setup command maps recorded errors to exit code 1");
         }
