@@ -881,9 +881,9 @@ internal static class SetupHelpers
                 // did not receive; never assume a particular role.
                 var s2sTargets = new List<(bool IsAgentIdentity, List<ResourcePermissionSpec> Specs)>();
                 if (isNonDw && agentIdS2sFailed)
-                    s2sTargets.Add((true, results.PendingAgentIdentityAppRoleSpecs.Where(spec => spec.AppRoleScopes is { Length: > 0 }).ToList()));
+                    s2sTargets.Add((true, results.PendingAgentIdentityAppRoleSpecs.Where(spec => spec.AppRoleScopes is { Length: > 0 }).Distinct().ToList()));
                 if (blueprintS2sFailed)
-                    s2sTargets.Add((false, results.PendingBlueprintAppRoleSpecs.Where(spec => spec.AppRoleScopes is { Length: > 0 }).ToList()));
+                    s2sTargets.Add((false, results.PendingBlueprintAppRoleSpecs.Where(spec => spec.AppRoleScopes is { Length: > 0 }).Distinct().ToList()));
 
                 foreach (var (isAgentIdentityTarget, pendingAppRoleSpecs) in s2sTargets)
                 {

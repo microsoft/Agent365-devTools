@@ -242,6 +242,19 @@ public class SetupHelpersDisplaySetupSummaryTests
     }
 
     [Fact]
+    public void DisplaySetupSummary_PendingS2SAction_RepeatedSpec_IsListedOnce()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SPendingResults();
+        results.PendingAgentIdentityAppRoleSpecs.Add(CustomAppRoleSpec);
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        System.Text.RegularExpressions.Regex.Matches(logger.AllOutput, "Value -eq 'Contoso.Write'").Count.Should().Be(1,
+            because: "a role recorded twice for the same target needs only one assignment command");
+    }
+
+    [Fact]
     public void DisplaySetupSummary_PendingS2SAction_BothTargetsFailed_ListsEachTargetsRoles()
     {
         var logger = new CapturingLogger();
