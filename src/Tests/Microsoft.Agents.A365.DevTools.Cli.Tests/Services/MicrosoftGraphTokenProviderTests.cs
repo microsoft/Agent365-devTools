@@ -65,6 +65,45 @@ public class MicrosoftGraphTokenProviderTests
             Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveMsalClientAppId_DeviceCodeWithoutClientApp_UsesWellKnownPowerShellApp(string? clientAppId)
+    {
+        var resolved = MicrosoftGraphTokenProvider.ResolveMsalClientAppId(clientAppId, useDeviceCode: true);
+
+        resolved.Should().Be(
+            AuthenticationConstants.GraphPowershellClientId,
+            because: "device code has no working PowerShell fallback - Connect-MgGraph cannot render its " +
+                     "prompt from a child process with redirected I/O - so MSAL must run in-process as the " +
+                     "same Graph command-line app Connect-MgGraph uses, which is preauthorized for Graph " +
+                     "delegated scopes (AADSTS65002 rejects apps that are not)");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void ResolveMsalClientAppId_WithoutDeviceCodeOrClientApp_KeepsSubprocessPath(string? clientAppId)
+    {
+        var resolved = MicrosoftGraphTokenProvider.ResolveMsalClientAppId(clientAppId, useDeviceCode: false);
+
+        resolved.Should().BeNullOrWhiteSpace(
+            because: "without device code the PowerShell Connect-MgGraph fallback remains usable, so an " +
+                     "unconfigured client app must not silently switch the browser flow to a different app");
+    }
+
+    [Fact]
+    public void ResolveMsalClientAppId_WithConfiguredClientApp_IsNeverOverridden()
+    {
+        const string configured = "11111111-2222-3333-4444-555555555555";
+
+        MicrosoftGraphTokenProvider.ResolveMsalClientAppId(configured, useDeviceCode: true)
+            .Should().Be(configured,
+                because: "the custom app carries the optional claims callers depend on, so device code must " +
+                         "not substitute the well-known PowerShell app for it");
+    }
+
     [Fact]
     public async Task GetMgGraphAccessTokenAsync_WithoutClientAppId_OmitsClientIdParameter()
     {
@@ -474,9 +513,9 @@ public class MicrosoftGraphTokenProviderTests
     }
 
     [Fact]
-    public async Task GetMgGraphAccessTokenAsync_WhenUseDeviceCodeAlreadyTrue_DoesNotRetryAgain()
+    public async Task GetMgGraphAccessTokenAsync_WhenUseDeviceCode_DoesNotFallBackToPowerShell()
     {
-        // Arrange — ensures no double-retry when the caller already requested device code
+        // Arrange
         var tenantId = "12345678-1234-1234-1234-123456789abc";
         var scopes = new[] { "User.Read" };
         var browserFailureError = "InteractiveBrowserCredential authentication failed";
@@ -497,9 +536,10 @@ public class MicrosoftGraphTokenProviderTests
 
         // Assert
         token.Should().BeNull(
-            because: "when useDeviceCode is already true the retry guard (!useDeviceCode) prevents an infinite loop");
-        // Only one PowerShell call — no retry
-        await _executor.Received(1).ExecuteWithStreamingAsync(
+            because: "Connect-MgGraph -UseDeviceCode cannot render its prompt as a child process " +
+                     "with redirected stdio, so falling back to it would return no context and hide " +
+                     "the real MSAL failure; explicit device code must surface the failure instead");
+        await _executor.DidNotReceive().ExecuteWithStreamingAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(),
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<Func<string, string?>?>(),
             Arg.Any<bool>(), Arg.Any<CancellationToken>());

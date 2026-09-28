@@ -179,7 +179,8 @@ public class AgentBlueprintService
     public virtual async Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintAsync(
         string tenantId,
         string blueprintId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool useDeviceCode = false)
     {
         var spScopes = new[] { AuthenticationConstants.AgentIdentityReadAllScope };
         var encodedId = Uri.EscapeDataString(blueprintId);
@@ -189,7 +190,8 @@ public class AgentBlueprintService
             tenantId,
             $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,displayName",
             spScopes,
-            cancellationToken);
+            cancellationToken,
+            useDeviceCode);
 
         // Agent user query requires AgentIdUser.ReadWrite.All, which is intentionally absent from
         // RequiredClientAppPermissions until create-instance is re-enabled. This means agent user
@@ -202,7 +204,8 @@ public class AgentBlueprintService
                 tenantId,
                 $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,identityParentId",
                 userScopes,
-                cancellationToken);
+                cancellationToken,
+                useDeviceCode);
         }
         else
         {
@@ -282,7 +285,8 @@ public class AgentBlueprintService
         string tenantId,
         string initialPath,
         string[] requiredScopes,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool useDeviceCode = false)
     {
         var items = new List<JsonElement>();
         string? nextPageUrl = null;
@@ -297,7 +301,8 @@ public class AgentBlueprintService
                 tenantId,
                 requestPath,
                 cancellationToken,
-                requiredScopes);
+                requiredScopes,
+                useDeviceCode);
 
             if (doc is null)
             {

@@ -209,6 +209,26 @@ public class MsalBrowserCredentialTests
             mode);
     }
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void SelectAuthenticationMode_ExplicitDeviceCode_OverridesWamAndSystemBrowser(
+        bool useWam,
+        bool isWindows)
+    {
+        var mode = MsalBrowserCredential.SelectAuthenticationMode(
+            ValidClientId,
+            useWam,
+            isWindows,
+            useDeviceCode: true);
+
+        mode.Should().Be(
+            MsalBrowserCredential.InteractiveAuthenticationMode.DeviceCode,
+            because: "an explicit device code request means no dialog or browser can be shown, which WAM and the system browser both require");
+    }
+
     [Fact]
     public void SelectAuthenticationMode_CustomAppOnWindowsWithWam_PreservesWam()
     {
