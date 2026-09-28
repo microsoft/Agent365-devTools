@@ -491,25 +491,47 @@ public class SetupHelpersDisplaySetupSummaryTests
     [Theory]
     [InlineData(true, "failed — see errors")]
     [InlineData(false, "failed — see warnings")]
-    public void DisplaySetupSummary_RegistrationFailed_RowPointsToTheListHoldingTheFailure(bool observabilitySkipped, string expectedStatus)
+    public void DisplaySetupSummary_IdentityFailed_RowPointsToTheListHoldingTheFailure(bool failureIsError, string expectedStatus)
     {
         var logger = new CapturingLogger();
         var results = new SetupResults
         {
             IsNonDwBlueprintFlow = true,
-            ObservabilityPermissionsSkipped = observabilitySkipped,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityFailed = true,
+            AgentIdentityFailureIsError = failureIsError,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Split('\n').Should().ContainSingle(l => l.Contains("Agent identity"))
+            .Which.Should().Contain(expectedStatus,
+                because: "the identity row must point to Errors only when the writer recorded an error-severity identity failure");
+    }
+
+    [Theory]
+    [InlineData(true, "failed — see errors")]
+    [InlineData(false, "failed — see warnings")]
+    public void DisplaySetupSummary_RegistrationFailed_RowPointsToTheListHoldingTheFailure(bool failureIsError, string expectedStatus)
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
             BlueprintCreated = true,
             BlueprintId = BlueprintId,
             AgentIdentityCreated = true,
             AgentIdentityId = AgentSpId,
             AgentRegistrationFailed = true,
+            AgentRegistrationFailureIsError = failureIsError,
         };
 
         SetupHelpers.DisplaySetupSummary(results, logger);
 
         logger.AllOutput.Split('\n').Should().ContainSingle(l => l.Contains("Agent Registration"))
             .Which.Should().Contain(expectedStatus,
-                because: "a registration failure is recorded as an error when Observability permissions were skipped, so the row must point to the list that holds it");
+                because: "the registration row must point to Errors only when the writer recorded an error-severity registration failure");
     }
 
     [Fact]

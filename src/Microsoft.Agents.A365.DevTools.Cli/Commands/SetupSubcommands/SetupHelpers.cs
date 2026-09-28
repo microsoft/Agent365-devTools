@@ -96,14 +96,29 @@ internal static class SetupHelpers
         return specs.ToArray();
     }
 
-    /// <summary>Mirrors custom-permission inclusion to detect explicit Observability opt-back-in.</summary>
-    internal static bool CustomPermissionsRequestObservability(Agent365Config config) =>
-        (config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
-        .Any(customPerm =>
+    /// <summary>
+    /// Mirrors custom-permission inclusion to detect explicit OtelWrite opt-back-in for the configured cloud.
+    /// Scope names are matched case-insensitively, consistent with custom-permission validation.
+    /// </summary>
+    internal static bool CustomPermissionsRequestObservability(Agent365Config config)
+    {
+        string? expectedAppId = null;
+        foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
         {
             var (isValid, _) = customPerm.Validate();
-            return isValid && ConfigConstants.IsObservabilityApiAppId(customPerm.ResourceAppId);
-        });
+            if (!isValid || !ConfigConstants.IsObservabilityApiAppId(customPerm.ResourceAppId))
+                continue;
+
+            expectedAppId ??= ConfigConstants.GetObservabilityApiAppId(config.Environment);
+            if (string.Equals(customPerm.ResourceAppId, expectedAppId, StringComparison.OrdinalIgnoreCase)
+                && customPerm.Scopes.Contains(ConfigConstants.ObservabilityApiOtelWriteScope, StringComparer.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Builds the full resource permission spec list from config. Used by both the DW (AI Teammate)
@@ -800,7 +815,14 @@ internal static class SetupHelpers
                     results.AgentIdentityDisplayName ?? "unknown", results.AgentIdentityId ?? "unknown");
             }
             else if (results.AgentIdentityFailed)
-                logger.LogWarning(DryRunRow(5, "Agent identity") + "failed — see warnings");
+            {
+                var identityMessage = DryRunRow(5, "Agent identity") +
+                    (results.AgentIdentityFailureIsError ? "failed — see errors" : "failed — see warnings");
+                if (results.AgentIdentityFailureIsError)
+                    logger.LogError(identityMessage);
+                else
+                    logger.LogWarning(identityMessage);
+            }
         }
 
         // Non-DW only: Agent Registration — step 6
@@ -816,7 +838,7 @@ internal static class SetupHelpers
                     logger.LogInformation(DryRunRow(6, "Agent Registration") + registrationVerb + " '{Name}' (ID: {Id})",
                         results.AgentRegistrationDisplayName ?? "unknown", results.AgentInstanceId ?? "unknown");
                 }
-                else if (results.AgentRegistrationFailed && results.ObservabilityPermissionsSkipped)
+                else if (results.AgentRegistrationFailed && results.AgentRegistrationFailureIsError)
                     logger.LogError(DryRunRow(6, "Agent Registration") + "failed — see errors");
                 else if (results.AgentRegistrationFailed)
                     logger.LogWarning(DryRunRow(6, "Agent Registration") + "failed — see warnings");

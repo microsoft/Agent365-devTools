@@ -749,12 +749,20 @@ For **AI Teammate** agents, `a365 setup all` still **attempts** to grant the `Ag
 
 **The CLI prints a PowerShell admin consent script** in its output when the assignment fails. When running `a365 setup all`, **always scan the output for this script block** and display it to the user in a fenced code block so they can copy it and hand it to a Global Admin.
 
-If the script was not captured — or for a blueprint agent whose SDK still exports through the delegated (OBO) route — grant the permission manually via Entra portal (requires Global Admin):
+For a **blueprint agent still exporting through the delegated (OBO) route**, prefer the CLI opt-back-in path (requires Global Administrator):
+
+```bash
+a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite
+```
+
+This stamps the Observability inheritable-permission entry on the blueprint and requests admin consent. The Entra portal path below works for existing blueprints only when that inheritable-permission entry already exists.
+
+If the AI Teammate script was not captured, grant the permission manually via Entra portal (requires Global Administrator):
 1. [Entra portal](https://entra.microsoft.com) > App registrations > select Blueprint app > API permissions
 2. Add a permission > APIs my organization uses > search the Observability app ID for your cloud (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; see `src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides` for other clouds)
 3. Add both **Delegated** and **Application** `Agent365.Observability.OtelWrite` > Grant admin consent
 
-Alternatively, look up the Blueprint and Observability enterprise applications and use Microsoft Graph PowerShell:
+Alternatively for **AI Teammates**, look up the Blueprint and Observability enterprise applications and create the application-role assignment the S2S route accepts:
 
 ```powershell
 $blueprintSp = Get-MgServicePrincipal -Filter "appId eq '<blueprintAppId>'"

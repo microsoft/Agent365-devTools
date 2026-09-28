@@ -329,7 +329,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                 {
                     ctx.Logger.LogError("Agent identity ID is not set in config. Run 'a365 setup all' first to create the agent identity, then retry with --agent-registration-only.");
                     ctx.Results.AgentIdentityFailed = true;
+                    ctx.Results.AgentIdentityFailureIsError = true;
                     ctx.Results.AgentRegistrationFailed = true;
+                    ctx.Results.AgentRegistrationFailureIsError = true;
                     ctx.Results.Errors.Add("Agent identity ID not found in config. Run 'a365 setup all' (without --agent-registration-only) to create it first.");
                 }
                 else
@@ -507,7 +509,9 @@ internal static class NonDwBlueprintSetupOrchestrator
                             "Agent registration failed: blueprint client secret is not available, so the agent identity could not be created. " +
                             "Re-run 'a365 setup blueprint' to create the secret, then re-run 'a365 setup all'.";
                         ctx.Results.AgentIdentityFailed = true;
+                        ctx.Results.AgentIdentityFailureIsError = true;
                         ctx.Results.AgentRegistrationFailed = true;
+                        ctx.Results.AgentRegistrationFailureIsError = true;
                         ctx.Results.Errors.Add(message);
                         ctx.Logger.LogError(message);
                         return;
@@ -538,6 +542,7 @@ internal static class NonDwBlueprintSetupOrchestrator
                     else if (!ctx.Results.AgentIdentityFailed)
                     {
                         ctx.Results.AgentIdentityFailed = true;
+                        ctx.Results.AgentIdentityFailureIsError = false;
                         ctx.Results.Warnings.Add("Agent identity creation failed. Ensure blueprint setup completed and the client secret is available.");
                         ctx.Logger.LogWarning("Agent identity creation failed. Ensure blueprint setup completed and the client secret is available.");
                     }
@@ -578,6 +583,7 @@ internal static class NonDwBlueprintSetupOrchestrator
         void RecordRegistrationFailure(string message)
         {
             ctx.Results.AgentRegistrationFailed = true;
+            ctx.Results.AgentRegistrationFailureIsError = registrationRequired;
             (registrationRequired ? ctx.Results.Errors : ctx.Results.Warnings).Add(message);
             ctx.Logger.Log(registrationRequired ? LogLevel.Error : LogLevel.Warning, message);
         }

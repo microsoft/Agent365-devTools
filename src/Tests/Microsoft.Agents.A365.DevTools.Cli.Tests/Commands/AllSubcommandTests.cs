@@ -492,4 +492,104 @@ public class AllSubcommandTests : IDisposable
                 rc.ConsentUrl == "https://login.microsoftonline.com/custom-observability",
             because: "custom Observability permissions opt back into the resource, so setup must not clear the saved hand-off URL");
     }
+
+    public static TheoryData<Agent365Config, bool, string> CustomObservabilityCases() => new()
+    {
+        {
+            new Agent365Config
+            {
+                Environment = "gcc",
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                    }
+                ],
+            },
+            false,
+            "a commercial Observability app ID is not an opt-back-in for a GCC blueprint"
+        },
+        {
+            new Agent365Config
+            {
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        Scopes = ["Agent365.Observability.Read"],
+                    }
+                ],
+            },
+            false,
+            "a custom Observability entry without OtelWrite does not authorize telemetry export"
+        },
+        {
+            new Agent365Config
+            {
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope.ToUpperInvariant()],
+                    }
+                ],
+            },
+            true,
+            "scope names are compared case-insensitively throughout permission handling"
+        },
+        {
+            new Agent365Config
+            {
+                Environment = "gcc",
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.GccObservabilityApiAppId,
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                    }
+                ],
+            },
+            true,
+            "the configured GCC Observability app ID with OtelWrite is an explicit opt-back-in"
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(CustomObservabilityCases))]
+    public void CustomPermissionsRequestObservability_RequiresConfiguredCloudAndOtelWrite(
+        Agent365Config config,
+        bool expected,
+        string because)
+    {
+        SetupHelpers.CustomPermissionsRequestObservability(config).Should().Be(expected, because);
+    }
+
+    [Fact]
+    public void CustomPermissionsRequestObservability_NonObservabilityCustomPermission_DoesNotResolveAmbiguousGovernmentCloud()
+    {
+        var config = new Agent365Config
+        {
+            Environment = "AzureUSGovernment",
+            CustomBlueprintPermissions =
+            [
+                new CustomResourcePermission
+                {
+                    ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
+                    Scopes = ["User.Read"],
+                }
+            ],
+        };
+
+        var act = () => SetupHelpers.CustomPermissionsRequestObservability(config);
+
+        act.Should().NotThrow(
+            because: "GetObservabilityApiAppId throws for ambiguous AzureUSGovernment, so it must be resolved only after an Observability custom entry is detected");
+        act().Should().BeFalse(
+            because: "non-Observability custom permissions must not opt back into Observability handling");
+    }
 }

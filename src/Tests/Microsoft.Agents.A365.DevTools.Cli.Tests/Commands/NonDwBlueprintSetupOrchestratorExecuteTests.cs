@@ -412,8 +412,12 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             because: "missing agent identity is a fatal error for --agent-registration-only");
         ctx.Results.AgentIdentityFailed.Should().BeTrue(
             because: "identity not found via API lookup must surface as an identity failure");
+        ctx.Results.AgentIdentityFailureIsError.Should().BeTrue(
+            because: "registration-only cannot continue without an identity, so the identity row must point to Errors");
         ctx.Results.AgentRegistrationFailed.Should().BeTrue(
             because: "registration cannot proceed without an agent identity");
+        ctx.Results.AgentRegistrationFailureIsError.Should().BeTrue(
+            because: "registration-only cannot complete without an identity, so the registration row must point to Errors");
         await graph.DidNotReceive().CreateAgentIdentityDelegatedAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
@@ -849,8 +853,12 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
             ctx.Results.AgentIdentityFailed.Should().BeTrue(
                 because: "without the blueprint secret setup cannot create the agent identity");
+            ctx.Results.AgentIdentityFailureIsError.Should().BeTrue(
+                because: "the missing secret path records an error, so the identity summary row must say see errors");
             ctx.Results.AgentRegistrationFailed.Should().BeTrue(
                 because: "registration is mandatory when Observability permissions were skipped");
+            ctx.Results.AgentRegistrationFailureIsError.Should().BeTrue(
+                because: "the missing secret path records an error before registration can run");
             ctx.Results.Errors.Should().ContainSingle(e => e.Contains("blueprint client secret is not available"),
                 because: "ExecuteAsync returns exit code 1 whenever Results.HasErrors is true");
             ctx.Results.Errors.Single().Should().Contain("re-run 'a365 setup all'")
@@ -858,6 +866,45 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
                     because: "--agent-registration-only skips identity creation, so it cannot recover a run that never created the identity");
             ctx.Results.HasErrors.Should().BeTrue(
                 because: "the full setup command maps recorded errors to exit code 1");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Step5_IdentityCreationNull_RecordsIdentityWarningSeverity()
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwIdentityNullTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                DeploymentProjectPath = projectDir,
+                AgentBlueprintClientSecret = "secret",
+            };
+            var (ctx, graph, blueprintService) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: false, skipObservabilityPermissions: false);
+            blueprintService.FindExistingAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((string?)null);
+            graph.CreateAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((string?)null);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.AgentIdentityFailed.Should().BeTrue(
+                because: "a null identity creation result is still surfaced to the summary");
+            ctx.Results.AgentIdentityFailureIsError.Should().BeFalse(
+                because: "identity creation returning null is recorded as a warning path, not an Errors path");
         }
         finally
         {

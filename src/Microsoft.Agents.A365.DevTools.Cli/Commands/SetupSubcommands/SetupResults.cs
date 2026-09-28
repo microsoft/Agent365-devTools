@@ -275,8 +275,14 @@ public class SetupResults
     /// <summary>Whether step 6 (Agent identity creation) was attempted but failed.</summary>
     public bool AgentIdentityFailed { get; set; }
 
+    /// <summary>Whether an agent identity failure is fatal and should point to Errors.</summary>
+    public bool AgentIdentityFailureIsError { get; set; }
+
     /// <summary>Whether step 7 (Agent registration) was attempted but failed.</summary>
     public bool AgentRegistrationFailed { get; set; }
+
+    /// <summary>Whether an agent registration failure is fatal and should point to Errors.</summary>
+    public bool AgentRegistrationFailureIsError { get; set; }
 
     /// <summary>Whether step 8 (Project settings) was written to appsettings.json.</summary>
     public bool ProjectSettingsWritten { get; set; }
