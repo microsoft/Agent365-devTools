@@ -72,7 +72,8 @@ public class DevelopMcpCommandRegressionTests
         _mockToolingService.ListServersAsync(Arg.Any<string>()).Returns(new DataverseMcpServersResponse());
         _mockToolingService.PublishServerAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<PublishMcpServerRequest>())
             .Returns(new PublishMcpServerResponse { Status = "Success" });
-        _mockToolingService.UnpublishServerAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
+        _mockToolingService.UnpublishServerAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(new UnpublishMcpServerResponse { Status = "Success" });
 
         var fullCommand = new List<string> { command };
         fullCommand.AddRange(args);
@@ -336,7 +337,8 @@ public class DevelopMcpCommandRegressionTests
         var testEnvId = "test-environment-456";
         var testServerName = "msdyn_TestServer";
 
-        _mockToolingService.UnpublishServerAsync(testEnvId, testServerName).Returns(true);
+        _mockToolingService.UnpublishServerAsync(testEnvId, testServerName)
+            .Returns(new UnpublishMcpServerResponse { Status = "Success" });
 
         // Act
         var result = await _command.InvokeAsync(new[] 
@@ -347,6 +349,61 @@ public class DevelopMcpCommandRegressionTests
         });
 
         // Assert
+        result.Should().Be(0);
+        await _mockToolingService.Received(1).UnpublishServerAsync(testEnvId, testServerName);
+    }
+
+    [Fact]
+    public async Task UnpublishCommand_WhenServiceReturnsNull_ReturnsNonZeroExitCode()
+    {
+        // A null response means the unpublish failed; the command must log the failure and surface it to
+        // the shell as a non-zero exit code (not swallow it as success).
+        var testEnvId = "test-environment-789";
+        var testServerName = "msdyn_TestServer";
+
+        _mockToolingService.UnpublishServerAsync(testEnvId, testServerName)
+            .Returns((UnpublishMcpServerResponse?)null);
+
+        var result = await _command.InvokeAsync(new[]
+        {
+            "unpublish",
+            "-e", testEnvId,
+            "-s", testServerName
+        });
+
+        result.Should().Be(1);
+        await _mockToolingService.Received(1).UnpublishServerAsync(testEnvId, testServerName);
+    }
+
+    [Fact]
+    public async Task UnpublishCommand_WithAppsToCleanup_NoGraphService_SucceedsWithoutThrow()
+    {
+        // The command is created without a GraphApiService (the default), so the returned apps cannot be
+        // deleted. The cleanup step must degrade gracefully (warn, no throw) rather than fail the command.
+        var testEnvId = "test-environment-abc";
+        var testServerName = "TestCustomServer";
+
+        _mockToolingService.UnpublishServerAsync(testEnvId, testServerName)
+            .Returns(new UnpublishMcpServerResponse
+            {
+                Status = "Success",
+                ManualCleanupRequired = new McpServerManualCleanup
+                {
+                    Reason = "The platform cannot delete Entra app registrations in your tenant.",
+                    Apps = new List<McpServerAppEntry>
+                    {
+                        new() { AppName = $"{testServerName}-PublicClients", AppId = "11111111-1111-1111-1111-111111111111" },
+                    },
+                },
+            });
+
+        var result = await _command.InvokeAsync(new[]
+        {
+            "unpublish",
+            "-e", testEnvId,
+            "-s", testServerName
+        });
+
         result.Should().Be(0);
         await _mockToolingService.Received(1).UnpublishServerAsync(testEnvId, testServerName);
     }
