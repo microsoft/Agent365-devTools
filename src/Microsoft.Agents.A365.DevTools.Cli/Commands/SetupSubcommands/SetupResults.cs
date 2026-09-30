@@ -16,6 +16,7 @@ public class SetupResults
     public string? BlueprintDisplayName { get; set; }
     public bool McpPermissionsConfigured { get; set; }
     public bool BotApiPermissionsConfigured { get; set; }
+    public string? ObservabilityResourceAppId { get; set; }
     public bool MessagingEndpointRegistered { get; set; }
 
     /// <summary>

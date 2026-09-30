@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Xunit;
 
@@ -89,6 +90,21 @@ public class LogRedactionServiceTests
             because: "the original GUID must not survive in redacted output (privacy invariant)");
         result.IdsRedacted.Should().Be(1,
             because: "exactly one GUID was present and it must be counted to keep the redaction summary trustworthy");
+    }
+
+    [Theory]
+    [InlineData(ConfigConstants.ObservabilityApiAppId)]
+    [InlineData(ConfigConstants.GccObservabilityApiAppId)]
+    [InlineData(ConfigConstants.GccHighObservabilityApiAppId)]
+    [InlineData(ConfigConstants.DodObservabilityApiAppId)]
+    public void Redact_ObservabilityResourceAppId_IsPreserved(string appId)
+    {
+        var result = _sut.Redact($"[INF] Observability resource: {appId}", Source);
+
+        result.RedactedContent.Should().Contain(appId,
+            because: "public cloud-specific Observability app IDs must remain visible for support diagnostics");
+        result.IdsRedacted.Should().Be(0,
+            because: "well-known first-party resource IDs do not identify a tenant or user");
     }
 
     [Fact]

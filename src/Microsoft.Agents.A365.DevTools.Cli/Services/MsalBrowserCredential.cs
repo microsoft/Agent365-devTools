@@ -154,6 +154,7 @@ public sealed class MsalBrowserCredential : TokenCredential
     private readonly IntPtr _windowHandle;
     private readonly string? _loginHint;
     private readonly bool _forceRefresh;
+    private readonly string _authorityHost;
 
     // Shared persistent cache helper - initialized once and reused across all instances.
     // This is the key to reducing multiple WAM prompts during setup operations.
@@ -198,8 +199,7 @@ public sealed class MsalBrowserCredential : TokenCredential
     /// <param name="redirectUri">The redirect URI for authentication callbacks.</param>
     /// <param name="logger">Optional logger for diagnostic output.</param>
     /// <param name="useWam">Whether to use WAM on Windows. Default is true.</param>
-    /// <param name="authority">Optional authority URL. When provided, overrides the default AzurePublic authority.
-    /// Use this for government clouds (e.g., "https://login.microsoftonline.us/{tenantId}").</param>
+    /// <param name="authority">Optional authority URL. When provided, overrides the default public-cloud authority.</param>
     /// <param name="loginHint">Optional UPN/email to pre-select the account for silent acquisition and interactive auth.
     /// When provided, WAM and silent auth will target this identity instead of the first cached account.</param>
     public MsalBrowserCredential(
@@ -210,7 +210,8 @@ public sealed class MsalBrowserCredential : TokenCredential
         bool useWam = true,
         string? authority = null,
         string? loginHint = null,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        bool useDeviceCode = false)
     {
         if (string.IsNullOrWhiteSpace(clientId))
         {
@@ -228,13 +229,19 @@ public sealed class MsalBrowserCredential : TokenCredential
         _loginHint = loginHint;
         _forceRefresh = forceRefresh;
 
+        // Pin consent URLs (BuildAdminConsentUrl) to the cloud we authenticate against; default commercial.
+        _authorityHost = Uri.TryCreate(authority, UriKind.Absolute, out var authorityUri)
+            ? authorityUri.GetLeftPart(UriPartial.Authority)
+            : ConfigConstants.DefaultAuthorityHost;
+
         // Get window handle for WAM on Windows
         // Try multiple sources: console window, foreground window, or desktop window
         _windowHandle = IntPtr.Zero;
         _authenticationMode = SelectAuthenticationMode(
             clientId,
             useWam,
-            OperatingSystem.IsWindows());
+            OperatingSystem.IsWindows(),
+            useDeviceCode);
         
         if (OperatingSystem.IsWindows() &&
             _authenticationMode == InteractiveAuthenticationMode.Wam)
@@ -324,13 +331,20 @@ public sealed class MsalBrowserCredential : TokenCredential
         _loginHint = loginHint;
         _forceRefresh = forceRefresh;
         _windowHandle = IntPtr.Zero;
+        _authorityHost = ConfigConstants.DefaultAuthorityHost;
     }
 
     internal static InteractiveAuthenticationMode SelectAuthenticationMode(
         string clientId,
         bool useWam,
-        bool isWindows)
+        bool isWindows,
+        bool useDeviceCode = false)
     {
+        // An explicit device code request wins: the caller knows no interactive dialog or browser
+        // can be presented, which WAM and the system browser would both assume.
+        if (useDeviceCode)
+            return InteractiveAuthenticationMode.DeviceCode;
+
         if (useWam && isWindows)
             return InteractiveAuthenticationMode.Wam;
 
@@ -716,7 +730,7 @@ public sealed class MsalBrowserCredential : TokenCredential
     /// </summary>
     private void LogConsentRequiredAndThrow(Exception inner)
     {
-        var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(_clientAppId, _tenantId);
+        var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(_clientAppId, _tenantId, _authorityHost);
         _logger?.LogWarning("Admin consent has not been granted for this application.");
         _logger?.LogWarning("An administrator must grant tenant-wide consent to proceed.");
         if (consentUrl != null)
