@@ -341,8 +341,10 @@ public static class NetworkCommand
 
         // The platform answers 200 with Unknown for an operation id it cannot find -- mistyped,
         // expired, or from another tenant. Nothing settled, so exiting 0 would report success for
-        // an operation that was never observed to finish.
-        if (string.Equals(result.Status, "Unknown", StringComparison.OrdinalIgnoreCase))
+        // an operation that was never observed to finish. A missing status is the same situation
+        // arrived at differently: LogStatus already renders it as Unknown, so exit the same way.
+        if (string.IsNullOrWhiteSpace(result.Status)
+            || string.Equals(result.Status, "Unknown", StringComparison.OrdinalIgnoreCase))
         {
             logger.LogError(
                 "The operation id is unknown or has expired, so its outcome could not be read. " +

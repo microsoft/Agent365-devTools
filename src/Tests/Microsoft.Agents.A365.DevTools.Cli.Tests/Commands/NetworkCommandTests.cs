@@ -512,7 +512,10 @@ public class NetworkCommandTests
     [Theory]
     [InlineData("Unknown")]
     [InlineData("unknown")]
-    public async Task ReportAsync_WhenUnknown_ReturnsFailure(string status)
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ReportAsync_WhenUnknown_ReturnsFailure(string? status)
     {
         var vnet = Substitute.For<IVNetLinkService>();
         var result = new VNetStatusResponse { Status = status, OperationId = OperationId };
@@ -522,7 +525,7 @@ public class NetworkCommandTests
 
         exitCode.Should().Be(
             1,
-            because: "an unrecognised operation id is a mistake to surface, not a success");
+            because: "an unrecognised or missing status is a mistake to surface, not a success");
         await vnet.DidNotReceive().WaitForCompletionAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
     }
 
