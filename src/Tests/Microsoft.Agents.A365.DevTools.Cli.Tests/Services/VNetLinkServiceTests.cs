@@ -5,7 +5,9 @@ using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
@@ -33,18 +35,27 @@ public class VNetLinkServiceTests
     {
         var mock = Substitute.For<IAuthenticationService>();
 
-        // The 8th parameter is the CancellationToken. Omitting a matcher for it pins the setup to
-        // ct == default, so any call carrying a real token -- a caller's, or the wait ceiling's --
-        // silently misses and returns null, which the service reports as a failed token acquisition.
+        // Every optional parameter needs a matcher. Omitting one pins the setup to that
+        // parameter's default, so a call supplying a real value silently misses and returns null,
+        // which the service reports as a failed token acquisition. The CancellationToken and
+        // authorityHost have both caused that already.
         mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(),
+            Arg.Any<string?>())
             .Returns(Task.FromResult(token));
         return mock;
     }
 
     private static ArmApiService FakeArm(string? systemId = PolicySystemId)
     {
-        var arm = Substitute.For<ArmApiService>();
+        // Pass constructor arguments: the parameterless overload builds a real
+        // AuthenticationService, which creates the CLI's app-data directory and deletes any legacy
+        // token file on the machine running the tests.
+        var arm = Substitute.For<ArmApiService>(
+            NullLogger<ArmApiService>.Instance,
+            Substitute.For<IAuthenticationService>(),
+            null,
+            null);
         arm.GetEnterprisePolicySystemIdAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(systemId));
         return arm;
@@ -53,14 +64,17 @@ public class VNetLinkServiceTests
     private static VNetLinkService CreateService(
         HttpMessageHandler handler,
         ArmApiService? arm = null,
-        IAuthenticationService? auth = null) =>
+        IAuthenticationService? auth = null,
+        ILogger<VNetLinkService>? logger = null,
+        TimeSpan? pollInterval = null) =>
         new(
-            NullLogger<VNetLinkService>.Instance,
+            logger ?? NullLogger<VNetLinkService>.Instance,
             auth ?? FakeAuth(),
             arm ?? FakeArm(),
             "prod",
             handler,
-            NoLoginHint);
+            NoLoginHint,
+            pollInterval);
 
     /// <summary>
     /// Stands in for the real resolver so the tests never shell out to `az account show`.
@@ -462,8 +476,9 @@ public class VNetLinkServiceTests
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Running", OperationId));
         var svc = CreateService(handler);
 
-        // A zero budget cannot fit another poll interval, so the first read is also the last.
-        var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.Zero);
+        // Shorter than the poll interval, so the first read is also the last -- without arming
+        // the ceiling at zero, which races the first poll and cancels it before it can return.
+        var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.FromSeconds(5));
 
         result.Should().NotBeNull();
         result!.Status.Should().Be("Running");
@@ -475,16 +490,22 @@ public class VNetLinkServiceTests
     public async Task WaitForCompletionAsync_WhenStatusCannotBeRead_ReturnsNull()
     {
         using var handler = new TestHttpMessageHandler();
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadGateway)
+        for (var i = 0; i < 4; i++)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new { error = "upstream" })),
-        });
-        var svc = CreateService(handler);
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadGateway)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { error = "upstream" })),
+            });
+        }
+
+        var svc = CreateService(handler, pollInterval: TimeSpan.FromMilliseconds(1));
 
         var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.FromMinutes(5));
 
         result.Should().BeNull();
-        handler.RequestCount.Should().Be(1, because: "an unreadable status is terminal for the wait");
+        handler.RequestCount.Should().Be(
+            4,
+            because: "a status read is retried a few times before the wait gives up on it");
     }
 
     [Theory]
@@ -675,6 +696,8 @@ public class VNetLinkServiceTests
             Arg.Any<string?>(),
             Arg.Any<IEnumerable<string>?>(),
             Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(),
             Arg.Any<string?>());
     }
 
@@ -695,6 +718,8 @@ public class VNetLinkServiceTests
             Arg.Any<string?>(),
             Arg.Any<IEnumerable<string>?>(),
             Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(),
             Arg.Any<string?>());
     }
 
@@ -715,6 +740,8 @@ public class VNetLinkServiceTests
             Arg.Any<string?>(),
             Arg.Any<IEnumerable<string>?>(),
             Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(),
             Arg.Any<string?>());
     }
 
@@ -739,5 +766,170 @@ public class VNetLinkServiceTests
     {
         var act = () => new VNetLinkService(NullLogger<VNetLinkService>.Instance, FakeAuth(), null!);
         act.Should().Throw<ArgumentNullException>();
+    }
+
+    // ───────────────────── Authority host and endpoint origin ──────────────────
+
+    [Fact]
+    public async Task SendAsync_AuthenticatesAgainstTheEnvironmentAuthorityHost()
+    {
+        var auth = FakeAuth();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked"));
+        var svc = new VNetLinkService(
+            NullLogger<VNetLinkService>.Instance, auth, FakeArm(), "dogfood", handler, NoLoginHint);
+
+        await svc.GetStatusAsync(TenantId);
+
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(),
+            TenantId,
+            Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>(),
+            Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(),
+            ConfigConstants.GetAuthorityHost("dogfood"));
+    }
+
+    [Fact]
+    public async Task SendAsync_TargetsTheSharedAgent365ToolsOriginForTheEnvironment()
+    {
+        Uri? requestUri = null;
+        using var handler = new CapturingHttpMessageHandler(r => requestUri = r.RequestUri);
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked"));
+        var svc = new VNetLinkService(
+            NullLogger<VNetLinkService>.Instance, FakeAuth(), FakeArm(), "dogfood", handler, NoLoginHint);
+
+        await svc.GetStatusAsync(TenantId);
+
+        requestUri.Should().NotBeNull();
+        requestUri!.ToString().Should().StartWith(
+            ConfigConstants.BuildAgent365ToolsEndpointUrl("dogfood", "/agents/vnet/status"),
+            because: "the origin must come from the shared helper, not a second copy of the table");
+    }
+
+    // ──────────────────────────── 403 disambiguation ───────────────────────────
+
+    [Fact]
+    public async Task SendAsync_WhenForbiddenWithRequiredScope_NamesTheMissingScope()
+    {
+        var logger = new CapturingLogger<VNetLinkService>();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                error = "insufficient_scope",
+                error_description = "The token is missing a required scope.",
+                required_scope = "AgentTools.VNet.Manage.All",
+            })),
+        });
+        var svc = CreateService(handler, logger: logger);
+
+        var result = await svc.GetStatusAsync(TenantId);
+
+        result.Should().BeNull();
+        logger.Messages.Should().Contain(m => m.Contains("The token is missing a required scope."));
+        logger.Messages.Should().Contain(m => m.Contains("AgentTools.VNet.Manage.All") && m.Contains("consent"));
+        logger.Messages.Should().NotContain(m => m.Contains("Global Administrator"));
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenForbiddenWithoutRequiredScope_NamesTheMissingRole()
+    {
+        var logger = new CapturingLogger<VNetLinkService>();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                error = "The signed-in user is not a Power Platform administrator.",
+            })),
+        });
+        var svc = CreateService(handler, logger: logger);
+
+        var result = await svc.GetStatusAsync(TenantId);
+
+        result.Should().BeNull();
+        logger.Messages.Should().Contain(m => m.Contains("not a Power Platform administrator"));
+        logger.Messages.Should().Contain(m =>
+            m.Contains("Global Administrator") && m.Contains("Power Platform Administrator role"));
+        logger.Messages.Should().NotContain(m => m.Contains("consent"));
+    }
+
+    // ───────────────────── Transient poll failure tolerance ────────────────────
+
+    [Fact]
+    public async Task WaitForCompletionAsync_WhenAPollFailsTransiently_KeepsWaiting()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Running", OperationId));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent("{}"),
+        });
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked", OperationId));
+        var svc = CreateService(handler, pollInterval: TimeSpan.FromMilliseconds(1));
+
+        var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.FromMinutes(5));
+
+        result.Should().NotBeNull();
+        result!.Status.Should().Be("Linked");
+        result.OperationId.Should().Be(OperationId);
+        result.PolicyArmId.Should().BeNull();
+        result.Reason.Should().BeNull();
+        handler.RequestCount.Should().Be(3, because: "the failed read is retried rather than ending the wait");
+    }
+
+    [Fact]
+    public async Task WaitForCompletionAsync_WhenPollsFailConsecutivelyPastTheLimit_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        for (var i = 0; i < 4; i++)
+        {
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("{}"),
+            });
+        }
+
+        var logger = new CapturingLogger<VNetLinkService>();
+        var svc = CreateService(handler, logger: logger, pollInterval: TimeSpan.FromMilliseconds(1));
+
+        var result = await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.FromMinutes(5));
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(4, because: "three failures are tolerated and the fourth gives up");
+        logger.Messages.Should().Contain(m =>
+            m.Contains($"--operation-id {OperationId}") && m.Contains($"--tenant-id {TenantId}"));
+    }
+
+    [Fact]
+    public async Task WaitForCompletionAsync_WhenBudgetExhausted_PrintsAResumeCommandNamingTheTenant()
+    {
+        var logger = new CapturingLogger<VNetLinkService>();
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Running", OperationId));
+        var svc = CreateService(handler, logger: logger);
+
+        await svc.WaitForCompletionAsync(TenantId, OperationId, TimeSpan.FromSeconds(5));
+
+        logger.Messages.Should().Contain(m =>
+            m.Contains($"--operation-id {OperationId}") && m.Contains($"--tenant-id {TenantId}"));
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 }

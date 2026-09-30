@@ -336,6 +336,16 @@ public class ArmApiServiceTests
     [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p\n")]
     [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p ")]
     [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/r g/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    // Percent-encoded dot segments. Uri unescapes before normalizing, so these would climb the
+    // path after the regex had already passed them. An allowlist that excludes '%' is what stops
+    // them -- no Uri.AbsolutePath check is reachable, which is why these live in the reject list.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/%2e%2e/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/%2e%2e")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg%2Fx/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    // Backslashes are path separators to Uri on Windows and climb the same way.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg\\..\\..\\x/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    // 36 characters, but not a GUID: the old [0-9a-f-]{36} accepted this.
+    [InlineData("/subscriptions/------------------------------------/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
     public async Task GetEnterprisePolicySystemIdAsync_WhenArmIdIsNotAnEnterprisePolicyPath_RejectsWithoutCalling(
         string policyArmId)
     {
@@ -356,6 +366,8 @@ public class ArmApiServiceTests
     [InlineData("/subscriptions/8D1E5B21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
     [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourcegroups/rg/providers/microsoft.powerplatform/enterprisepolicies/p")]
     [InlineData("/SUBSCRIPTIONS/8D1E5B21-0000-0000-0000-000000000000/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.POWERPLATFORM/ENTERPRISEPOLICIES/P")]
+    // ARM resource names allow dots, hyphens, underscores and parentheses.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg-prod.01_(east)/providers/Microsoft.PowerPlatform/enterprisePolicies/policy.v2_(new)")]
     public async Task GetEnterprisePolicySystemIdAsync_AcceptsAnyCasingOfTheArmId(string policyArmId)
     {
         using var handler = new TestHttpMessageHandler();
@@ -404,7 +416,7 @@ public class ArmApiServiceTests
     {
         var urls = new List<string>();
         using var handler = new CapturingHttpMessageHandler(r => urls.Add(r.RequestUri!.ToString()));
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("") });
+        handler.QueueResponse(ApiVersionRejection("NoRegisteredProviderFound"));
         handler.QueueResponse(PolicyResponse(
             JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
         var svc = CreateService(handler);
@@ -417,18 +429,72 @@ public class ArmApiServiceTests
         urls[1].Should().EndWith("api-version=2020-10-30-preview");
     }
 
+    [Theory]
+    [InlineData("NoRegisteredProviderFound")]
+    [InlineData("InvalidApiVersionParameter")]
+    [InlineData("UnsupportedApiVersion")]
+    [InlineData("unsupportedapiversion")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenApiVersionCodeReturned_TriesTheNextVersion(string code)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(ApiVersionRejection(code));
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId);
+        handler.RequestCount.Should().Be(2);
+    }
+
+    [Theory]
+    // A 400 about the request itself. Retrying the next api-version buries the real reason and
+    // ends the loop in "Azure rejected every supported api-version".
+    [InlineData("{\"error\":{\"code\":\"InvalidResourceType\",\"message\":\"No such resource type.\"}}")]
+    [InlineData("{\"error\":{\"code\":\"InvalidSubscriptionId\",\"message\":\"Bad subscription.\"}}")]
+    // A non-JSON 400 came from something in front of ARM, and is equally not an api-version miss.
+    [InlineData("")]
+    [InlineData("<html>gateway error</html>")]
+    // Well-formed JSON with no recognisable error envelope.
+    [InlineData("{}")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenBadRequestIsNotAboutTheApiVersion_StopsImmediately(
+        string body)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(body) });
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(
+            1,
+            because: "the next api-version would return the same 400 and hide the real reason");
+    }
+
     [Fact]
     public async Task GetEnterprisePolicySystemIdAsync_WhenEveryApiVersionRejected_ReturnsNull()
     {
         using var handler = new TestHttpMessageHandler();
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("") });
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("") });
+        handler.QueueResponse(ApiVersionRejection("NoRegisteredProviderFound"));
+        handler.QueueResponse(ApiVersionRejection("NoRegisteredProviderFound"));
         var svc = CreateService(handler);
 
         var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
 
         result.Should().BeNull(because: "there is no api-version left to try");
+        handler.RequestCount.Should().Be(2);
     }
+
+    private static HttpResponseMessage ApiVersionRejection(string code) =>
+        new(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                error = new { code, message = "The api-version is not supported." },
+            })),
+        };
 
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]

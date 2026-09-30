@@ -17,7 +17,7 @@ public interface IVNetLinkService
     /// </summary>
     /// <param name="policyArmId">ARM resource id of the NetworkInjection enterprise policy.</param>
     /// <param name="swap">Whether an existing link to a different policy may be replaced.</param>
-    /// <param name="tenantId">Tenant to authenticate against for the ARM read.</param>
+    /// <param name="tenantId">Tenant to authenticate against, for both the ARM read and the platform call.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The resulting status, or null when the operation could not be started.</returns>
     Task<VNetStatusResponse?> LinkAsync(

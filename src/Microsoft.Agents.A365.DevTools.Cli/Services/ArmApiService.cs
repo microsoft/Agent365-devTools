@@ -29,21 +29,23 @@ public class ArmApiService : IDisposable
     // Stable first: the module's own ARM templates deploy enterprise policies at 2020-10-30.
     private static readonly string[] EnterprisePolicyApiVersions = ["2020-10-30", "2020-10-30-preview"];
 
-    // ArmBaseUrl has no trailing slash and the ARM bearer token is set as a default request
-    // header, so a policy id that does not begin with "/subscriptions/" can retarget the whole
-    // request: "@evil.example/x" concatenates to "https://management.azure.com@evil.example/x",
-    // where "management.azure.com" is userinfo and the host is the attacker's. Pinning the shape
-    // is what keeps the token pointed at ARM.
-    //
-    // IgnoreCase because ARM ids are case-insensitive and are commonly seen as "resourcegroups"
-    // or "microsoft.powerplatform"; the shape stays pinned either way. Segments exclude
-    // whitespace as well as delimiters, which is what actually rejects a trailing newline --
-    // \z alone does not, because [^/?#]+ would absorb the newline before the anchor is reached.
-    // The dot-segment lookaheads keep the path from normalizing into a different resource --
-    // harmless while the host is fixed, but the validated string should be the string that gets
-    // requested.
+    // ARM's vocabulary for "this api-version is not one I serve here". Anything else in a 400 is
+    // about the request itself and must not be retried against the next version.
+    private static readonly HashSet<string> UnsupportedApiVersionCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "NoRegisteredProviderFound",
+        "InvalidApiVersionParameter",
+        "UnsupportedApiVersion",
+    };
+
+    // ArmBaseUrl has no trailing slash and the ARM bearer is a default request header, so an id
+    // that does not begin with "/subscriptions/" retargets the request: "@evil.example/x" makes
+    // "management.azure.com" userinfo and the attacker's host the target. The segment classes are
+    // an allowlist of ARM name characters rather than a delimiter blocklist, because Uri
+    // normalizes "%2e%2e" and "\" before the request goes out -- so anything the pattern admits
+    // that Uri rewrites would break "what was validated is what gets requested".
     private static readonly Regex EnterprisePolicyArmIdPattern = new(
-        @"^/subscriptions/[0-9a-f-]{36}/resourceGroups/(?!\.{1,2}(?:/|\z))[^/?#\s]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/(?!\.{1,2}\z)[^/?#\s]+\z",
+        @"^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/resourceGroups/(?!\.{1,2}(?:/|\z))[-\w.()]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/(?!\.{1,2}\z)[-\w.()]+\z",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private readonly ILogger<ArmApiService> _logger;
@@ -316,8 +318,41 @@ public class ArmApiService : IDisposable
 
                 if (response.StatusCode == HttpStatusCode.BadRequest)
                 {
-                    _logger.LogDebug("ARM rejected api-version {ApiVersion}; trying the next one", apiVersion);
-                    continue;
+                    // Only an api-version complaint is worth retrying on the next version. Any
+                    // other 400 is about this request, and discarding it ends the loop in
+                    // "Azure rejected every supported api-version", which sends the admin after
+                    // the wrong problem.
+                    var badRequestBody = await response.Content.ReadAsStringAsync(ct);
+                    string? errorCode = null;
+                    string? errorMessage = null;
+
+                    try
+                    {
+                        using var errorDoc = JsonDocument.Parse(badRequestBody);
+                        if (errorDoc.RootElement.TryGetProperty("error", out var error))
+                        {
+                            errorCode = error.TryGetProperty("code", out var c) ? c.GetString() : null;
+                            errorMessage = error.TryGetProperty("message", out var m) ? m.GetString() : null;
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // A non-JSON 400 came from something in front of ARM. Fall through and
+                        // treat it as a real rejection rather than an api-version miss.
+                    }
+
+                    if (UnsupportedApiVersionCodes.Contains(errorCode ?? string.Empty))
+                    {
+                        _logger.LogDebug("ARM rejected api-version {ApiVersion}; trying the next one", apiVersion);
+                        continue;
+                    }
+
+                    _logger.LogError(
+                        "Could not read enterprise policy {PolicyArmId}. Azure returned 400 ({Code}): {Message}",
+                        policyArmId,
+                        errorCode ?? "no error code",
+                        errorMessage ?? "No error detail was returned.");
+                    return null;
                 }
 
                 if (!response.IsSuccessStatusCode)

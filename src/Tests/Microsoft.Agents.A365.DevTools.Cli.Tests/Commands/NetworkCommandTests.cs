@@ -144,7 +144,39 @@ public class NetworkCommandTests
     }
 
     [Fact]
-    public async Task LinkHandler_WithoutSwap_DoesNotPrompt()
+    public async Task LinkHandler_WithoutSwap_StillPrompts()
+    {
+        var vnet = Substitute.For<IVNetLinkService>();
+        vnet.LinkAsync(PolicyArmId, false, TenantId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<VNetStatusResponse?>(new VNetStatusResponse { Status = "Linked" }));
+        var confirmation = Confirming(true);
+        var command = CreateCommand(vnet, confirmation: confirmation);
+
+        var exitCode = await command.InvokeAsync($"vnet link --policy-arm-id {PolicyArmId}");
+
+        exitCode.Should().Be(0);
+        await confirmation.Received(1).ConfirmAsync(
+            Arg.Is<string>(p => p.Contains(TenantId) && p.EndsWith("Continue? (y/N): ")));
+        await vnet.Received(1).LinkAsync(PolicyArmId, false, TenantId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LinkHandler_WhenAPlainLinkIsDeclined_DoesNotCallTheService()
+    {
+        var vnet = Substitute.For<IVNetLinkService>();
+        var command = CreateCommand(vnet, confirmation: Confirming(false));
+
+        var exitCode = await command.InvokeAsync($"vnet link --policy-arm-id {PolicyArmId}");
+
+        exitCode.Should().Be(
+            1,
+            because: "enabling subnet delegation can destabilise the environment for 30 minutes");
+        await vnet.DidNotReceive().LinkAsync(
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LinkHandler_WhenYes_SkipsThePromptWithoutSwap()
     {
         var vnet = Substitute.For<IVNetLinkService>();
         vnet.LinkAsync(PolicyArmId, false, TenantId, Arg.Any<CancellationToken>())
@@ -152,10 +184,26 @@ public class NetworkCommandTests
         var confirmation = Confirming(false);
         var command = CreateCommand(vnet, confirmation: confirmation);
 
-        var exitCode = await command.InvokeAsync($"vnet link --policy-arm-id {PolicyArmId}");
+        var exitCode = await command.InvokeAsync($"vnet link --policy-arm-id {PolicyArmId} --yes");
 
-        exitCode.Should().Be(0, because: "a conflicting link is reported, not replaced, without --swap");
+        exitCode.Should().Be(0);
         await confirmation.DidNotReceive().ConfirmAsync(Arg.Any<string>());
+        await vnet.Received(1).LinkAsync(PolicyArmId, false, TenantId, Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task LinkHandler_WhenPolicyArmIdBlank_FailsWithATargetedMessage(string policyArmId)
+    {
+        var vnet = Substitute.For<IVNetLinkService>();
+        var command = CreateCommand(vnet);
+
+        var exitCode = await command.InvokeAsync(["vnet", "link", "--policy-arm-id", policyArmId]);
+
+        exitCode.Should().Be(1);
+        await vnet.DidNotReceive().LinkAsync(
+            Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -455,7 +503,26 @@ public class NetworkCommandTests
         var exitCode = await NetworkCommand.ReportAsync(
             NullLogger.Instance, vnet, result, wait: true, "Link", TenantId, CancellationToken.None);
 
-        exitCode.Should().Be(0);
+        exitCode.Should().Be(
+            1,
+            because: "a running operation with no id cannot be resumed, so it is an unexpected response");
+        await vnet.DidNotReceive().WaitForCompletionAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("Unknown")]
+    [InlineData("unknown")]
+    public async Task ReportAsync_WhenUnknown_ReturnsFailure(string status)
+    {
+        var vnet = Substitute.For<IVNetLinkService>();
+        var result = new VNetStatusResponse { Status = status, OperationId = OperationId };
+
+        var exitCode = await NetworkCommand.ReportAsync(
+            NullLogger.Instance, vnet, result, wait: false, "Status", TenantId, CancellationToken.None);
+
+        exitCode.Should().Be(
+            1,
+            because: "an unrecognised operation id is a mistake to surface, not a success");
         await vnet.DidNotReceive().WaitForCompletionAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
     }
 

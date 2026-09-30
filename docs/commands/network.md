@@ -12,8 +12,8 @@ which takes an `-environmentId`. Agent 365 provisions a managed Power Platform e
 tenant and does not publish its id, so that final step cannot be run.
 
 `a365 network vnet` replaces only that last step. The CLI reads the policy's `systemId` from Azure
-using your existing `az login`, then asks the Agent 365 platform to perform the link against the
-environment it resolves for your tenant.
+Resource Manager with your own sign-in, then asks the Agent 365 platform to perform the link
+against the environment it resolves for your tenant.
 
 Everything before the final step is unchanged — keep using the PowerShell module to create the
 subnets, delegate them to `Microsoft.PowerPlatform/enterprisePolicies`, and create the policy with
@@ -24,9 +24,11 @@ subnets, delegate them to `Microsoft.PowerPlatform/enterprisePolicies`, and crea
 - **Global Administrator** or **Power Platform Administrator** in the tenant. The platform rejects
   anyone else.
 - An active `az login` session. It supplies two defaults: the tenant to operate on, and the
-  signed-in account to authenticate as. `--tenant-id` overrides the first; the account still comes
-  from `az login`. Tokens are not borrowed from Azure CLI -- both the ARM policy read and the
-  Agent 365 call acquire their own tokens through the CLI's sign-in.
+  signed-in account used as a login hint for the Agent 365 call. `--tenant-id` overrides the
+  first. Tokens are not borrowed from Azure CLI -- both the ARM policy read and the Agent 365 call
+  acquire their own tokens through the CLI's sign-in. The ARM read is not given the login hint, so
+  with several cached accounts in the same tenant it may sign in as a different one; sign out of
+  the accounts you do not want the CLI to use.
 - A NetworkInjection enterprise policy already created by `New-SubnetInjectionEnterprisePolicy`,
   with subnets delegated to `Microsoft.PowerPlatform/enterprisePolicies`.
 - Public cloud only. Sovereign clouds are not supported.
@@ -49,9 +51,13 @@ a365 network vnet link --policy-arm-id <arm-id> [--swap] [--tenant-id <guid>] [-
 | --- | --- |
 | `--policy-arm-id`, `-p` | **Required.** ARM resource id of the policy, as returned by `New-SubnetInjectionEnterprisePolicy`. |
 | `--swap` | Replace an existing link to a *different* policy. Without it, a different existing link is reported as a conflict instead of being silently replaced. |
-| `--tenant-id` | Tenant to authenticate against. Defaults to the tenant of your current `az login`. |
+| `--tenant-id` | Tenant to authenticate against, for both the Azure policy read and the Agent 365 call. Defaults to the tenant of your current `az login`. |
 | `--wait` | Poll until the operation settles instead of returning an operation id. |
-| `--yes`, `-y` | Skip the confirmation prompt shown for `--swap`. |
+| `--yes`, `-y` | Skip the confirmation prompt. |
+
+Every `link` prompts for confirmation: Power Platform documents that enabling subnet delegation can
+leave the environment unstable for up to 30 minutes while connections re-initialize, and the change
+applies to every Agent 365 agent in the tenant. Pass `--yes` in automation.
 
 Linking the policy that is already linked is a no-op and succeeds without `--swap`.
 
@@ -82,19 +88,20 @@ operation.
 | --- | --- |
 | `Linked` | A policy is linked; `Policy` names it. |
 | `NotLinked` | No policy is linked. |
-| `Running` / `NotStarted` | The operation is still in flight; `Operation` is the handle to poll. |
+| `Running` | The operation is still in flight; `Operation` is the handle to poll. |
 | `Failed` | The operation failed; `Reason` explains why. |
+| `Unknown` | The operation id is not recognised — mistyped, expired, or from another tenant. Operation ids are tenant-scoped, so check `--tenant-id`; to read the current link instead, run `status` with no `--operation-id`. |
 
-Exit code is `1` on `Failed` or on any request error, and `0` otherwise — including a still-running
-operation, which is a legitimate outcome when `--wait` is not passed.
+Exit code is `1` on `Failed`, on `Unknown`, and on any request error; `0` otherwise — including a
+still-running operation, which is a legitimate outcome when `--wait` is not passed.
 
 ## Typical flow
 
 ```bash
 # 1. Create the policy with the PowerShell module (unchanged).
-./SubnetInjection/NewSubnetInjectionEnterprisePolicy.ps1 `
-    -subscription <sub> -resourceGroup <rg> -enterprisePolicyName <name> `
-    -enterprisePolicyLocation <region> -virtualNetworkId <vnetId> -subnetName <subnet>
+New-SubnetInjectionEnterprisePolicy `
+    -SubscriptionId <sub> -ResourceGroupName <rg> -PolicyName <name> `
+    -PolicyLocation <geography> -VirtualNetworkId <vnetId> -SubnetName <subnet>
 
 # 2. Link it — this replaces Enable-SubnetInjection.
 a365 network vnet link --policy-arm-id /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.PowerPlatform/enterprisePolicies/<name> --wait
@@ -102,6 +109,13 @@ a365 network vnet link --policy-arm-id /subscriptions/<sub>/resourceGroups/<rg>/
 # 3. Confirm.
 a365 network vnet status
 ```
+
+Two things the Learn walkthrough covers that are easy to miss:
+
+- Geographies with two supported regions (`unitedstates`, for example) need a second virtual
+  network: pass `-VirtualNetworkId2` and `-SubnetName2` as well.
+- The CLI reads the policy with *your* identity, so whoever runs `link` needs read access on the
+  policy even if someone else created it.
 
 ## Troubleshooting
 

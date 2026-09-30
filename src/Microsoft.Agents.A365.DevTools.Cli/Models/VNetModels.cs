@@ -89,8 +89,22 @@ public class VNetStatusResponse
 public class VNetErrorResponse
 {
     /// <summary>
-    /// Human-readable error message.
+    /// Human-readable error message. The role-check 403 puts a sentence here; a scope failure puts
+    /// the code "insufficient_scope" and the sentence in <see cref="ErrorDescription"/>.
     /// </summary>
     [JsonPropertyName("error")]
     public string? Error { get; set; }
+
+    /// <summary>
+    /// Sentence describing a scope failure. Absent on the role-check 403.
+    /// </summary>
+    [JsonPropertyName("error_description")]
+    public string? ErrorDescription { get; set; }
+
+    /// <summary>
+    /// Scope the token was missing. Present only on a scope failure, which is what tells the two
+    /// kinds of 403 apart.
+    /// </summary>
+    [JsonPropertyName("required_scope")]
+    public string? RequiredScope { get; set; }
 }

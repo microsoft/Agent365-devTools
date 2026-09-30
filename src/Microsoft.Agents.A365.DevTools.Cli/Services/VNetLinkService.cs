@@ -31,7 +31,11 @@ public class VNetLinkService : IVNetLinkService
     private const string UnlinkPath = "/agents/vnet/unlink";
     private const string StatusPath = "/agents/vnet/status";
 
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(10);
+
+    // A status read can fail transiently while the operation itself is fine. Tolerate a few in a
+    // row so a single 5xx does not report a running link as failed.
+    private const int MaxConsecutivePollFailures = 3;
 
     private readonly ILogger<VNetLinkService> _logger;
     private readonly IAuthenticationService _authService;
@@ -39,6 +43,7 @@ public class VNetLinkService : IVNetLinkService
     private readonly string _environment;
     private readonly HttpMessageHandler? _handler;
     private readonly Func<Task<string?>> _loginHintResolver;
+    private readonly TimeSpan _pollInterval;
 
     public VNetLinkService(
         ILogger<VNetLinkService> logger,
@@ -46,7 +51,8 @@ public class VNetLinkService : IVNetLinkService
         ArmApiService armApiService,
         string environment = "prod",
         HttpMessageHandler? handler = null,
-        Func<Task<string?>>? loginHintResolver = null)
+        Func<Task<string?>>? loginHintResolver = null,
+        TimeSpan? pollInterval = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
@@ -54,6 +60,7 @@ public class VNetLinkService : IVNetLinkService
         _environment = environment ?? "prod";
         _handler = handler;
         _loginHintResolver = loginHintResolver ?? AzCliHelper.ResolveLoginHintAsync;
+        _pollInterval = pollInterval ?? DefaultPollInterval;
     }
 
     /// <inheritdoc />
@@ -155,41 +162,86 @@ public class VNetLinkService : IVNetLinkService
 
         var stopwatch = Stopwatch.StartNew();
         VNetStatusResponse? last = null;
+        var consecutiveFailures = 0;
 
         while (true)
         {
             try
             {
-                last = await GetStatusAsync(tenantId, operationId, timeoutCts.Token);
+                var polled = await GetStatusAsync(tenantId, operationId, timeoutCts.Token);
+
+                if (polled == null)
+                {
+                    // A single transient 5xx or dropped connection is not the operation failing.
+                    // Ending the wait here would report a link that is still running as failed,
+                    // and the caller never printed an operation id to resume from.
+                    consecutiveFailures++;
+                    if (consecutiveFailures > MaxConsecutivePollFailures)
+                    {
+                        _logger.LogError(
+                            "Gave up after {Count} consecutive failed status reads. The operation may still be running; " +
+                            "check on it with: a365 network vnet status --operation-id {OperationId} --tenant-id {TenantId}",
+                            consecutiveFailures,
+                            operationId,
+                            tenantId);
+                        return null;
+                    }
+
+                    _logger.LogWarning(
+                        "Status read failed ({Count} of {Max}). Retrying...",
+                        consecutiveFailures,
+                        MaxConsecutivePollFailures);
+                }
+                else
+                {
+                    consecutiveFailures = 0;
+                    last = polled;
+                }
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 // The ceiling elapsed mid-request. That is a timeout, not a failure: report the
                 // last known state, exactly as the pre-sleep check below does.
                 _logger.LogInformation(
-                    "Stopped waiting after {Elapsed:0}s. The operation is still running.",
-                    stopwatch.Elapsed.TotalSeconds);
+                    "Stopped waiting after {Elapsed:0}s. The operation is still running. " +
+                    "Check on it with: a365 network vnet status --operation-id {OperationId} --tenant-id {TenantId}",
+                    stopwatch.Elapsed.TotalSeconds,
+                    operationId,
+                    tenantId);
                 return last;
             }
 
-            if (last == null || !IsRunning(last.Status))
+            if (consecutiveFailures == 0 && !IsRunning(last?.Status))
                 return last;
 
-            if (stopwatch.Elapsed + PollInterval >= timeout)
+            if (stopwatch.Elapsed + _pollInterval >= timeout)
+            {
+                _logger.LogInformation(
+                    "Stopped waiting after {Elapsed:0}s. Check on it with: " +
+                    "a365 network vnet status --operation-id {OperationId} --tenant-id {TenantId}",
+                    stopwatch.Elapsed.TotalSeconds,
+                    operationId,
+                    tenantId);
                 return last;
+            }
 
-            _logger.LogInformation("Still running... ({Elapsed:0}s elapsed)", stopwatch.Elapsed.TotalSeconds);
+            if (consecutiveFailures == 0)
+            {
+                _logger.LogInformation("Still running... ({Elapsed:0}s elapsed)", stopwatch.Elapsed.TotalSeconds);
+            }
+
             // The pre-sleep check above guarantees this delay finishes inside the ceiling, so it
             // waits on the caller's token only -- the timeout can't fire here.
-            await Task.Delay(PollInterval, cancellationToken);
+            await Task.Delay(_pollInterval, cancellationToken);
         }
     }
 
     /// <summary>
     /// True when the reported status means the operation has not settled yet.
     ///
-    /// The platform reports a queued operation as NotStarted, which is as unsettled as Running:
-    /// treating it as terminal would make --wait return before the work had begun.
+    /// The platform collapses every unsettled upstream state to Running, so NotStarted is
+    /// defensive rather than expected -- but it is as unsettled as Running, and treating it as
+    /// terminal would make --wait return before the work had begun.
     /// </summary>
     public static bool IsRunning(string? status) =>
         string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase)
@@ -204,18 +256,25 @@ public class VNetLinkService : IVNetLinkService
         CancellationToken cancellationToken)
     {
         var correlationId = HttpClientFactory.GenerateCorrelationId();
-        var baseUrl = BuildBaseUrl();
-        var url = $"{baseUrl}{path}";
+        var url = ConfigConstants.BuildAgent365ToolsEndpointUrl(_environment, path);
 
         try
         {
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
-            var loginHint = await _loginHintResolver();
+            var loginHint = await _loginHintResolver().WaitAsync(cancellationToken);
 
             // The tenant matters as much here as on the ARM read: without it MSAL falls back to
             // the common authority with only a login hint, so on a machine with several cached
             // accounts the platform call can land in a different tenant than the policy read.
-            var authToken = await _authService.GetAccessTokenAsync(audience, tenantId, userId: loginHint, ct: cancellationToken);
+            // The authority host comes from the configured environment for the same reason every
+            // other Agent 365 Tools call passes it: without it a sovereign configuration would
+            // authenticate against the commercial cloud.
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience,
+                tenantId,
+                userId: loginHint,
+                ct: cancellationToken,
+                authorityHost: ConfigConstants.GetAuthorityHost(_environment));
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire an Agent 365 access token.");
@@ -273,9 +332,12 @@ public class VNetLinkService : IVNetLinkService
     private void LogFailure(HttpStatusCode statusCode, string body, string operationName, string correlationId)
     {
         string? message = null;
+        string? requiredScope = null;
         try
         {
-            message = JsonSerializer.Deserialize<VNetErrorResponse>(body)?.Error;
+            var error = JsonSerializer.Deserialize<VNetErrorResponse>(body);
+            message = error?.ErrorDescription ?? error?.Error;
+            requiredScope = error?.RequiredScope;
         }
         catch (JsonException)
         {
@@ -291,18 +353,23 @@ public class VNetLinkService : IVNetLinkService
 
         if (statusCode == HttpStatusCode.Forbidden)
         {
-            _logger.LogError(
-                "This command requires the Global Administrator or Power Platform Administrator role, " +
-                "and a client application consented for AgentTools.VNet.Manage.All.");
+            // The platform distinguishes the two 403s: a scope failure carries required_scope, a
+            // role failure does not. Naming the wrong one sends the admin after a consent they
+            // cannot grant, or after a role they already hold.
+            if (!string.IsNullOrWhiteSpace(requiredScope))
+            {
+                _logger.LogError(
+                    "The client application is missing the {RequiredScope} scope. Ask an administrator " +
+                    "to consent it for the application you signed in with.",
+                    requiredScope);
+            }
+            else
+            {
+                _logger.LogError(
+                    "This command requires the Global Administrator or Power Platform Administrator role.");
+            }
         }
 
         _logger.LogError("Correlation ID: {CorrelationId}", correlationId);
-    }
-
-    private string BuildBaseUrl()
-    {
-        var discoverUrl = ConfigConstants.GetDiscoverEndpointUrl(_environment);
-        var uri = new Uri(discoverUrl);
-        return $"{uri.Scheme}://{uri.Authority}";
     }
 }

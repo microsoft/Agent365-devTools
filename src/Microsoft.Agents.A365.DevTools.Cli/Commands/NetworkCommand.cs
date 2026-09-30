@@ -99,7 +99,7 @@ public static class NetworkCommand
         }
 
         return await confirmationProvider.ConfirmAsync(
-            $"{action} for tenant {tenantId}. This changes networking for every Agent 365 agent in the tenant. Continue?");
+            $"{action} for tenant {tenantId}. This changes networking for every Agent 365 agent in the tenant. Continue? (y/N): ");
     }
 
     private static Command CreateLinkSubcommand(
@@ -129,8 +129,8 @@ public static class NetworkCommand
 
         var tenantIdOption = new Option<string?>(
             "--tenant-id",
-            "Tenant to authenticate against for the Azure policy read. Defaults to the tenant of " +
-            "your current az login.");
+            "Tenant to authenticate against, for both the Azure policy read and the Agent 365 call. " +
+            "Defaults to the tenant of your current az login.");
 
         var waitOption = new Option<bool>(
             "--wait",
@@ -140,7 +140,7 @@ public static class NetworkCommand
 
         var yesOption = new Option<bool>(
             ["--yes", "-y"],
-            "Skip the confirmation prompt shown when --swap would replace an existing link.");
+            "Skip the confirmation prompt.");
 
         command.AddOption(policyArmIdOption);
         command.AddOption(swapOption);
@@ -158,6 +158,15 @@ public static class NetworkCommand
             var yes = context.ParseResult.GetValueForOption(yesOption);
             var ct = context.GetCancellationToken();
 
+            // IsRequired is satisfied by an explicitly blank value, which would otherwise reach
+            // LinkAsync and surface as "Unexpected error occurred. This may be a bug in the CLI."
+            if (string.IsNullOrWhiteSpace(policyArmId))
+            {
+                logger.LogError("--policy-arm-id is required and cannot be blank.");
+                context.ExitCode = 1;
+                return;
+            }
+
             var tenantId = await ResolveTenantIdAsync(logger, azureCliService, tenantIdOptionValue);
             if (tenantId == null)
             {
@@ -165,10 +174,14 @@ public static class NetworkCommand
                 return;
             }
 
-            // Only --swap needs confirming: without it an existing different link is reported as a
-            // conflict rather than replaced, so the command is already non-destructive.
-            if (swap && !await ConfirmChangeAsync(
-                confirmationProvider, yes, "Replace the existing virtual network link", tenantId))
+            // Every link is confirmed, not just --swap. Power Platform documents that enabling
+            // subnet delegation can leave the environment unstable for up to 30 minutes while
+            // connections re-initialize, and the change is tenant-wide either way.
+            var action = swap
+                ? "Replace the existing virtual network link"
+                : "Link a virtual network";
+
+            if (!await ConfirmChangeAsync(confirmationProvider, yes, action, tenantId))
             {
                 logger.LogInformation("Cancelled.");
                 context.ExitCode = 1;
@@ -326,12 +339,37 @@ public static class NetworkCommand
             return 1;
         }
 
+        // The platform answers 200 with Unknown for an operation id it cannot find -- mistyped,
+        // expired, or from another tenant. Nothing settled, so exiting 0 would report success for
+        // an operation that was never observed to finish.
+        if (string.Equals(result.Status, "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogError(
+                "The operation id is unknown or has expired, so its outcome could not be read. " +
+                "Operation ids are scoped to a tenant; check the id and --tenant-id, or read the " +
+                "current link with: a365 network vnet status --tenant-id {TenantId}",
+                tenantId);
+            return 1;
+        }
+
         if (VNetLinkService.IsRunning(result.Status))
         {
+            // The platform always returns an id alongside a running status. Without one there is
+            // nothing to resume from, so this is an unexpected response rather than a nudge.
+            if (string.IsNullOrWhiteSpace(result.OperationId))
+            {
+                logger.LogError(
+                    "{Operation} reported as running but returned no operation id, so it cannot be resumed.",
+                    operationLabel);
+                return 1;
+            }
+
             logger.LogInformation(
-                "{Operation} is still running. Check on it with: a365 network vnet status --operation-id {OperationId}",
+                "{Operation} is still running. Check on it with: " +
+                "a365 network vnet status --operation-id {OperationId} --tenant-id {TenantId}",
                 operationLabel,
-                result.OperationId);
+                result.OperationId,
+                tenantId);
         }
 
         return 0;
