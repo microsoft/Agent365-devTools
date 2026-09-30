@@ -360,7 +360,7 @@ public class ArmApiServiceTests
     {
         using var handler = new TestHttpMessageHandler();
         handler.QueueResponse(PolicyResponse(
-            JsonSerializer.Serialize(new { properties = new { systemId = PolicySystemId } })));
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
         var svc = CreateService(handler);
 
         var result = await svc.GetEnterprisePolicySystemIdAsync(policyArmId, TenantId);
@@ -374,7 +374,7 @@ public class ArmApiServiceTests
     {
         using var handler = new TestHttpMessageHandler();
         handler.QueueResponse(PolicyResponse(
-            JsonSerializer.Serialize(new { properties = new { systemId = PolicySystemId } })));
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
         var svc = CreateService(handler);
 
         var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
@@ -388,7 +388,7 @@ public class ArmApiServiceTests
         HttpRequestMessage? captured = null;
         using var handler = new CapturingHttpMessageHandler(r => captured = r);
         handler.QueueResponse(PolicyResponse(
-            JsonSerializer.Serialize(new { properties = new { systemId = PolicySystemId } })));
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
         var svc = CreateService(handler);
 
         await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
@@ -406,7 +406,7 @@ public class ArmApiServiceTests
         using var handler = new CapturingHttpMessageHandler(r => urls.Add(r.RequestUri!.ToString()));
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("") });
         handler.QueueResponse(PolicyResponse(
-            JsonSerializer.Serialize(new { properties = new { systemId = PolicySystemId } })));
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
         var svc = CreateService(handler);
 
         var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
@@ -447,10 +447,10 @@ public class ArmApiServiceTests
     }
 
     [Theory]
-    [InlineData("{}")]
-    [InlineData("{\"properties\":{}}")]
-    [InlineData("{\"properties\":{\"systemId\":\"\"}}")]
-    [InlineData("{\"properties\":{\"systemId\":\"   \"}}")]
+    [InlineData("{\"kind\":\"NetworkInjection\"}")]
+    [InlineData("{\"kind\":\"NetworkInjection\",\"properties\":{}}")]
+    [InlineData("{\"kind\":\"NetworkInjection\",\"properties\":{\"systemId\":\"\"}}")]
+    [InlineData("{\"kind\":\"NetworkInjection\",\"properties\":{\"systemId\":\"   \"}}")]
     public async Task GetEnterprisePolicySystemIdAsync_WhenSystemIdMissing_ReturnsNull(string body)
     {
         using var handler = new TestHttpMessageHandler();
@@ -460,6 +460,56 @@ public class ArmApiServiceTests
         var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
 
         result.Should().BeNull(because: "a policy without a systemId is not yet usable for linking");
+    }
+
+    [Theory]
+    // Every enterprise policy kind carries a systemId, so a wrong-kind policy reads back perfectly
+    // well. Without the kind check it would reach BAP and return an upstream rejection naming
+    // nothing the admin can act on. Enable-SubnetInjection makes the same check for the same reason.
+    [InlineData("Encryption")]
+    [InlineData("Identity")]
+    [InlineData("networkinjectionx")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenPolicyIsNotNetworkInjection_ReturnsNull(string kind)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind, properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "only a NetworkInjection policy can be linked as a virtual network");
+    }
+
+    [Theory]
+    [InlineData("{\"properties\":{\"systemId\":\"/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000\"}}")]
+    [InlineData("{\"kind\":null,\"properties\":{\"systemId\":\"/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000\"}}")]
+    [InlineData("{\"kind\":\"\",\"properties\":{\"systemId\":\"/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000\"}}")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenKindAbsent_ReturnsNull(string body)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(body));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "an unstated kind is not proof the policy is a subnet injection policy");
+    }
+
+    [Theory]
+    [InlineData("networkinjection")]
+    [InlineData("NETWORKINJECTION")]
+    [InlineData("NetworkInjection")]
+    public async Task GetEnterprisePolicySystemIdAsync_AcceptsAnyCasingOfKind(string kind)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind, properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId, because: "ARM does not guarantee the casing it echoes back");
     }
 
     [Fact]

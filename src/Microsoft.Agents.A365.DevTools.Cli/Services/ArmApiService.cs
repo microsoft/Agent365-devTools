@@ -272,9 +272,13 @@ public class ArmApiService : IDisposable
     /// which is not derivable from the ARM resource id.
     ///
     /// This read happens in the CLI, using the admin's own Azure session, so the Agent 365
-    /// service never needs delegated ARM access.
+    /// service never needs delegated ARM access. Holding the whole policy object here is also what
+    /// lets the kind check happen with a useful message: every enterprise policy kind carries a
+    /// systemId, so a CMK or Identity policy would otherwise sail through to BAP and come back as a
+    /// generic upstream rejection.
     ///
-    /// Returns null when the policy cannot be read or has no systemId; the message is logged.
+    /// Returns null when the policy cannot be read, is not a NetworkInjection policy, or has no
+    /// systemId; the message is logged.
     /// </summary>
     public virtual async Task<string?> GetEnterprisePolicySystemIdAsync(
         string policyArmId,
@@ -328,6 +332,22 @@ public class ArmApiService : IDisposable
 
                 var body = await response.Content.ReadAsStringAsync(ct);
                 using var doc = JsonDocument.Parse(body);
+
+                // Every enterprise policy kind has a systemId, so without this the wrong kind reaches
+                // BAP and returns a generic rejection that names nothing the admin can act on.
+                var kind = doc.RootElement.TryGetProperty("kind", out var kindElement)
+                    ? kindElement.GetString()
+                    : null;
+
+                if (!string.Equals(kind, "NetworkInjection", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError(
+                        "Enterprise policy {PolicyArmId} is of kind '{Kind}', not NetworkInjection. " +
+                        "Supply a subnet injection policy, as returned by New-SubnetInjectionEnterprisePolicy.",
+                        policyArmId,
+                        string.IsNullOrWhiteSpace(kind) ? "unknown" : kind);
+                    return null;
+                }
 
                 if (!doc.RootElement.TryGetProperty("properties", out var properties) ||
                     !properties.TryGetProperty("systemId", out var systemId))
