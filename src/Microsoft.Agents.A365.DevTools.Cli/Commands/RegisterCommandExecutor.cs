@@ -86,7 +86,7 @@ internal class RegisterCommandExecutor
         public string? Connectivity { get; init; }
     }
 
-    private sealed record EntraAppSet(
+    internal sealed record EntraAppSet(
         string A365AppClientId,
         string A365AppSecret,
         string A365AppObjectId,
@@ -325,7 +325,10 @@ internal class RegisterCommandExecutor
                 if (!connectivity.Equals("public", StringComparison.OrdinalIgnoreCase)
                     && !connectivity.Equals("private", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogError("--connectivity must be 'public' or 'private'. Got: '{Value}'", connectivity);
+                    // The value may have come from either source, and naming the wrong one sends
+                    // the caller editing a file they never passed.
+                    var source = args.Connectivity is not null ? "--connectivity" : "connectivity in the input file";
+                    _logger.LogError("{Source} must be 'public' or 'private'. Got: '{Value}'", source, connectivity);
                     return null;
                 }
 
@@ -654,7 +657,7 @@ internal class RegisterCommandExecutor
             PublicClientsAppName: publicClients.AppName);
     }
 
-    private static AddMcpServerRequest BuildRequest(ResolvedInput input, EntraAppSet apps)
+    internal static AddMcpServerRequest BuildRequest(ResolvedInput input, EntraAppSet apps)
     {
         AddMcpServerAuthMetadata authMetadata;
 

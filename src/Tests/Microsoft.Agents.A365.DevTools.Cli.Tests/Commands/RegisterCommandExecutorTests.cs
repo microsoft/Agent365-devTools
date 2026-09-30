@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -294,7 +295,7 @@ public class RegisterCommandExecutorTests
     }
 
     [Fact]
-    public async Task ResolveInputsAsync_WhenTheInputFileConnectivityIsInvalid_Rejects()
+    public async Task ResolveInputsAsync_WhenTheInputFileConnectivityIsInvalid_NamesTheInputFileNotTheOption()
     {
         var logger = Substitute.For<ILogger>();
 
@@ -304,8 +305,79 @@ public class RegisterCommandExecutorTests
         logger.Received().Log(
             LogLevel.Error,
             Arg.Any<EventId>(),
+            Arg.Is<object>(state => state != null
+                && state.ToString()!.Contains("connectivity in the input file")
+                && !state.ToString()!.Contains("--connectivity")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ResolveInputsAsync_WhenTheCommandLineConnectivityIsInvalid_NamesTheOption()
+    {
+        var logger = Substitute.For<ILogger>();
+
+        var resolved = await ResolveAsync(logger, cliConnectivity: "publik", fileConnectivity: null);
+
+        resolved.Should().BeNull();
+        logger.Received().Log(
+            LogLevel.Error,
+            Arg.Any<EventId>(),
             Arg.Is<object>(state => state != null && state.ToString()!.Contains("--connectivity")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    // ───────────────────── Serialized request property name ────────────────────
+
+    [Theory]
+    [InlineData("public")]
+    [InlineData("private")]
+    [InlineData(null)]
+    public void BuildRequest_SerialisesConnectivityUnderTheNameThePlatformReads(string? connectivity)
+    {
+        var input = new RegisterCommandExecutor.ResolvedInput
+        {
+            ServerName = "ext_Test",
+            ServerUrl = "https://example.com/mcp",
+            AuthType = "NoAuth",
+            IsEntra = false,
+            IsExternalIdp = false,
+            IsNoAuth = true,
+            IsApiKey = false,
+            ToolList = [],
+            ToolDescriptions = [],
+            PublisherName = "Contoso",
+            Description = "Test server",
+            DryRun = false,
+            Connectivity = connectivity,
+        };
+
+        var apps = new RegisterCommandExecutor.EntraAppSet(
+            "a365-client-id", "a365-secret", "a365-object-id", "a365-name",
+            null, null, null, "remote-proxy-name", null, null, "public-clients-name");
+
+        var request = RegisterCommandExecutor.BuildRequest(input, apps);
+
+        request.Connectivity.Should().Be(connectivity);
+
+        // The platform binds on the JSON name, so a rename here silently drops the value: the
+        // request still succeeds and the connector is created private.
+        var json = JsonSerializer.Serialize(request);
+        using var doc = JsonDocument.Parse(json);
+
+        if (connectivity == null)
+        {
+            // Null may be written or omitted depending on the serializer options in force; either
+            // way the platform sees no value and its default applies.
+            if (doc.RootElement.TryGetProperty("connectivity", out var written))
+            {
+                written.ValueKind.Should().Be(JsonValueKind.Null);
+            }
+        }
+        else
+        {
+            doc.RootElement.GetProperty("connectivity").GetString().Should().Be(connectivity);
+        }
     }
 }
