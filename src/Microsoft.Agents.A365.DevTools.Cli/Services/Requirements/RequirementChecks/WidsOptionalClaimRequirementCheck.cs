@@ -92,7 +92,8 @@ public class WidsOptionalClaimRequirementCheck : RequirementCheck
             return RequirementCheckResult.Success(details: $"'wids' is present on accessToken optionalClaims for {config.ClientAppId}");
         }
 
-        var manualPatch = BuildManualPatchInstructions(config.ClientAppId, config.TenantId);
+        var graphBaseUrl = ConfigConstants.GetGraphBaseUrl(config.Environment, config.GraphBaseUrl);
+        var manualPatch = BuildManualPatchInstructions(config.ClientAppId, config.TenantId, graphBaseUrl);
 
         return RequirementCheckResult.Failure(
             errorMessage: $"Client app {config.ClientAppId} is missing the 'wids' optional claim on accessToken. " +
@@ -142,7 +143,7 @@ public class WidsOptionalClaimRequirementCheck : RequirementCheck
             details: FirstPartyGuidance);
     }
 
-    private static string BuildManualPatchInstructions(string clientAppId, string tenantId)
+    private static string BuildManualPatchInstructions(string clientAppId, string tenantId, string graphBaseUrl)
     {
         // Two-line remediation: portal path for humans, raw `az rest` for scriptable runs.
         // Both add { name: "wids", essential: false } to optionalClaims.accessToken.
@@ -150,7 +151,7 @@ public class WidsOptionalClaimRequirementCheck : RequirementCheck
             "Add the 'wids' optional claim on the client app's access tokens. Options:\n" +
             $"  1. Portal: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/TokenConfiguration/appId/{clientAppId} → 'Add optional claim' → Token type 'Access' → check 'wids' → Add.\n" +
             "  2. Or run as an Application Administrator / Global Administrator:\n" +
-            $"     az rest --method PATCH --url \"https://graph.microsoft.com/v1.0/applications(appId='{clientAppId}')\" --headers \"Content-Type=application/json\" --body \"{{\\\"optionalClaims\\\":{{\\\"accessToken\\\":[{{\\\"name\\\":\\\"wids\\\",\\\"essential\\\":false,\\\"additionalProperties\\\":[]}}]}}}}\"\n" +
+            $"     az rest --method PATCH --url \"{graphBaseUrl}/v1.0/applications(appId='{clientAppId}')\" --headers \"Content-Type=application/json\" --body \"{{\\\"optionalClaims\\\":{{\\\"accessToken\\\":[{{\\\"name\\\":\\\"wids\\\",\\\"essential\\\":false,\\\"additionalProperties\\\":[]}}]}}}}\"\n" +
             "After updating, sign out and back in (az logout && az login) so the next token carries the new claim, then re-run 'a365 setup requirements'.";
     }
 }

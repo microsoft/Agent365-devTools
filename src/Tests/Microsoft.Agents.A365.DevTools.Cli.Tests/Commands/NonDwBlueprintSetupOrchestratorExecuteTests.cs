@@ -27,6 +27,20 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// </summary>
 public class NonDwBlueprintSetupOrchestratorExecuteTests
 {
+    private sealed class CapturingLogger : ILogger
+    {
+        private readonly List<string> _messages = [];
+
+        public string AllOutput => string.Join("\n", _messages);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => _messages.Add(formatter(state, exception));
+    }
+
     // -------------------------------------------------------------------------
     // ExecuteAsync behavioral tests — error paths
     // -------------------------------------------------------------------------
@@ -247,7 +261,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     /// configure stub return values.
     /// </summary>
     private static (SetupContext ctx, GraphApiService graph, AgentBlueprintService blueprintService)
-        BuildIdempotencyTestContext(Agent365Config? config = null)
+        BuildIdempotencyTestContext(Agent365Config? config = null, ILogger? logger = null)
     {
         var graph = Substitute.ForPartsOf<GraphApiService>();
 
@@ -277,7 +291,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         var ctx = new SetupContext(
             config: cfg,
             results: new SetupResults(),
-            logger: Substitute.For<ILogger>(),
+            logger: logger ?? Substitute.For<ILogger>(),
             configFile: new FileInfo("a365.config.json"),
             generatedConfigPath: "a365.generated.config.json",
             correlationId: "test-correlation-id",
@@ -368,6 +382,42 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             because: "registration cannot proceed without an agent identity");
         await graph.DidNotReceive().CreateAgentIdentityDelegatedAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Step 6 (--agent-registration-only): A registration API failure must be fatal for the focused
+    /// command, returning exit code 1 and emitting an error summary instead of a success-with-warnings banner.
+    /// </summary>
+    [Fact]
+    public async Task Step6_RegistrationOnly_ReturnsExitCode1AndAvoidsSuccessfulSummary_WhenRegistrationFails()
+    {
+        var logger = new CapturingLogger();
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config, logger);
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(((string?)null, false));
+
+        var exitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        exitCode.Should().Be(1,
+            because: "registration-only mode requested only agent registration, so that failure must be fatal");
+        ctx.Results.Errors.Should().ContainSingle(error => error == "Agent registration failed via Graph copilot/agentRegistrations API.");
+        ctx.Results.Warnings.Should().NotContain("Agent registration failed via Graph copilot/agentRegistrations API.");
+        logger.AllOutput.Should().Contain("Setup completed with errors",
+            because: "the summary must not present a registration-only failure as successful");
+        logger.AllOutput.Should().NotContain("Setup completed successfully",
+            because: "registration-only failure must not emit either success status line");
     }
 
     /// <summary>

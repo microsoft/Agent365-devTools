@@ -862,6 +862,39 @@ public class BatchPermissionsOrchestratorTests : IDisposable
     // the deeper layer: that the URL-building loop honors knownMcpAudienceAppIds per spec.
     // ──────────────────────────────────────────────────────────────────────────────────────
 
+    [Fact]
+    public void UpdateResourceConsents_ReplacesCommercialObservabilityEntryForGcc()
+    {
+        var config = new Agent365Config();
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+            ConsentGranted = true,
+        });
+        var specs = new[]
+        {
+            new ResourcePermissionSpec(
+                ConfigConstants.GccObservabilityApiAppId,
+                "Observability API",
+                new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+                SetInheritable: true),
+        };
+        var inheritedResults = new Dictionary<string, (bool configured, bool alreadyExisted)>
+        {
+            [ConfigConstants.GccObservabilityApiAppId] = (true, false),
+        };
+
+        BatchPermissionsOrchestrator.UpdateResourceConsents(config, specs, inheritedResults);
+
+        config.ResourceConsents.Should().ContainSingle(
+            resourceConsent => ConfigConstants.IsObservabilityApiAppId(resourceConsent.ResourceAppId),
+            because: "state must contain only the Observability resource for the currently selected cloud");
+        config.ResourceConsents.Single().ResourceAppId.Should().Be(
+            ConfigConstants.GccObservabilityApiAppId,
+            because: "a GCC rerun must replace stale commercial Observability state");
+    }
+
     /// <summary>
     /// Non-admin path: GrantAdminConsentAsync builds the unified consent URL via the catch-all
     /// spec loop and returns it for hand-off. When a spec's appId is in knownMcpAudienceAppIds,
