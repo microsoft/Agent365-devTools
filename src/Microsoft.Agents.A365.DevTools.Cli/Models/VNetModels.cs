@@ -34,6 +34,25 @@ public class VNetLinkRequest
 }
 
 /// <summary>
+/// Request body for unlinking the virtual network enterprise policy from the tenant's Agent 365
+/// Power Platform environment.
+/// </summary>
+/// <remarks>
+/// The platform holds no copy of the systemId, so this is required on every unlink. The CLI reads
+/// the linked policy's ARM id from the status endpoint and resolves it against ARM on the caller's
+/// own Azure session — the same thing Disable-SubnetInjection does internally.
+/// </remarks>
+public class VNetUnlinkRequest
+{
+    /// <summary>
+    /// The policy's properties.systemId, shaped
+    /// /regions/{region}/providers/Microsoft.PowerPlatform/enterprisePolicies/{guid}.
+    /// </summary>
+    [JsonPropertyName("policySystemId")]
+    public string? PolicySystemId { get; set; }
+}
+
+/// <summary>
 /// Status of the tenant's virtual network link, and the shape returned by link and unlink
 /// once they settle.
 /// </summary>

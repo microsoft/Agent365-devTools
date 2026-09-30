@@ -256,12 +256,22 @@ public class VNetLinkServiceTests
     // ─────────────────────────────── UnlinkAsync ───────────────────────────────
 
     [Fact]
-    public async Task UnlinkAsync_PostsToUnlinkWithNoBody()
+    public async Task UnlinkAsync_ReadsStatusThenResolvesSystemIdAndSendsIt()
     {
-        HttpRequestMessage? captured = null;
-        using var handler = new CapturingHttpMessageHandler(r => captured = r);
+        var captured = new List<HttpRequestMessage>();
+        var bodies = new List<string?>();
+        using var handler = new CapturingHttpMessageHandler(r =>
+        {
+            captured.Add(r);
+
+            // Read here, not after the call: HttpClient disposes request content once the request
+            // completes, so the assertion below would otherwise fault on a disposed StringContent.
+            bodies.Add(r.Content?.ReadAsStringAsync().GetAwaiter().GetResult());
+        });
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked", policyArmId: PolicyArmId));
         handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "NotLinked"));
-        var svc = CreateService(handler);
+        var arm = FakeArm();
+        var svc = CreateService(handler, arm);
 
         var result = await svc.UnlinkAsync(TenantId);
 
@@ -271,18 +281,88 @@ public class VNetLinkServiceTests
         result.OperationId.Should().BeNull();
         result.Reason.Should().BeNull();
 
-        captured!.Method.Should().Be(HttpMethod.Post);
-        captured.RequestUri!.AbsolutePath.Should().Be("/agents/vnet/unlink");
-        captured.Content.Should().BeNull(because: "the platform supplies the stored policy itself");
+        captured.Should().HaveCount(2);
+        captured[0].Method.Should().Be(HttpMethod.Get);
+        captured[0].RequestUri!.AbsolutePath.Should().Be("/agents/vnet/status");
+        bodies[0].Should().BeNull();
+
+        captured[1].Method.Should().Be(HttpMethod.Post);
+        captured[1].RequestUri!.AbsolutePath.Should().Be("/agents/vnet/unlink");
+        bodies[1].Should().Contain("policySystemId").And.Contain(PolicySystemId);
+
+        // The ARM read must use the ARM id the platform reported, not anything the admin typed:
+        // unlink takes no policy argument at all.
+        await arm.Received(1).GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task UnlinkAsync_WhenNothingLinked_ReturnsStatusWithoutCallingArmOrUnlink()
+    {
+        var captured = new List<HttpRequestMessage>();
+        using var handler = new CapturingHttpMessageHandler(r => captured.Add(r));
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "NotLinked"));
+        var arm = FakeArm();
+        var svc = CreateService(handler, arm);
+
+        var result = await svc.UnlinkAsync(TenantId);
+
+        result.Should().NotBeNull();
+        result!.Status.Should().Be("NotLinked");
+        result.PolicyArmId.Should().BeNull();
+        result.OperationId.Should().BeNull();
+        result.Reason.Should().BeNull();
+
+        captured.Should().HaveCount(1);
+        captured[0].Method.Should().Be(HttpMethod.Get);
+        await arm.DidNotReceive().GetEnterprisePolicySystemIdAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task UnlinkAsync_WhenStatusFails_ReturnsNullWithoutUnlinking()
+    {
+        var captured = new List<HttpRequestMessage>();
+        using var handler = new CapturingHttpMessageHandler(r => captured.Add(r));
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { error = "forbidden" })),
+        });
+        var svc = CreateService(handler);
+
+        var result = await svc.UnlinkAsync(TenantId);
+
+        result.Should().BeNull();
+        captured.Should().HaveCount(1);
+    }
+
+    /// <summary>
+    /// The policy was deleted from Azure while still linked, or the caller's Azure session cannot
+    /// read it. There is no stored copy on the platform to fall back to, so this has to be a clear
+    /// client-side failure rather than a bodyless request the platform would reject anyway.
+    /// </summary>
+    [Fact]
+    public async Task UnlinkAsync_WhenSystemIdCannotBeResolved_ReturnsNullWithoutUnlinking()
+    {
+        var captured = new List<HttpRequestMessage>();
+        using var handler = new CapturingHttpMessageHandler(r => captured.Add(r));
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked", policyArmId: PolicyArmId));
+        var svc = CreateService(handler, FakeArm(systemId: null));
+
+        var result = await svc.UnlinkAsync(TenantId);
+
+        result.Should().BeNull();
+        captured.Should().HaveCount(1, because: "the unlink must not be sent without a systemId");
+        captured[0].Method.Should().Be(HttpMethod.Get);
     }
 
     [Fact]
     public async Task UnlinkAsync_WhenPlatformFails_ReturnsNull()
     {
         using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(StatusResponse(HttpStatusCode.OK, "Linked", policyArmId: PolicyArmId));
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Conflict)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new { error = "no stored policy" })),
+            Content = new StringContent(JsonSerializer.Serialize(new { error = "policy mismatch" })),
         });
         var svc = CreateService(handler);
 

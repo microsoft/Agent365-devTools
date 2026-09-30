@@ -90,8 +90,35 @@ public class VNetLinkService : IVNetLinkService
         string tenantId,
         CancellationToken cancellationToken = default)
     {
+        // The platform keeps no copy of the systemId, so there is nothing to fall back on: resolve it
+        // here or fail loudly. Disable-SubnetInjection does the same two reads — the environment for
+        // the ARM id, then ARM for the systemId — just on the other side of the wire.
+        var status = await GetStatusAsync(tenantId, operationId: null, cancellationToken);
+        if (status is null)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(status.PolicyArmId))
+        {
+            _logger.LogInformation("No virtual network policy is linked to your Agent 365 environment.");
+            return status;
+        }
+
+        _logger.LogInformation("Reading enterprise policy from Azure...");
+        var policySystemId = await _armApiService.GetEnterprisePolicySystemIdAsync(status.PolicyArmId, tenantId, cancellationToken);
+        if (string.IsNullOrWhiteSpace(policySystemId))
+        {
+            // Naming the policy matters here: the usual cause is that it was deleted from Azure while
+            // still linked, and the admin cannot act on that without knowing which one.
+            _logger.LogError(
+                "Could not resolve the systemId of the linked policy '{PolicyArmId}'. It may have been deleted, or your Azure session may not have access to it.",
+                status.PolicyArmId);
+            return null;
+        }
+
+        var request = new VNetUnlinkRequest { PolicySystemId = policySystemId };
+
         _logger.LogInformation("Removing the virtual network link from your Agent 365 environment...");
-        return await SendAsync(HttpMethod.Post, UnlinkPath, payload: null, "unlink virtual network", tenantId, cancellationToken);
+        return await SendAsync(HttpMethod.Post, UnlinkPath, request, "unlink virtual network", tenantId, cancellationToken);
     }
 
     /// <inheritdoc />

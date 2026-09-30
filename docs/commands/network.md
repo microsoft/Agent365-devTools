@@ -61,8 +61,11 @@ Linking the policy that is already linked is a no-op and succeeds without `--swa
 a365 network vnet unlink [--tenant-id <guid>] [--wait] [--yes]
 ```
 
-Unlink needs no policy id — the platform remembers which policy it linked. It prompts before
-removing the link; pass `--yes` in automation.
+Unlink needs no policy id from you, but it does need your Azure session: it reads which policy is
+linked, resolves that policy in Azure to get the identifier the platform requires, then unlinks. If
+the policy has been deleted from Azure, unlink fails and names it — use the PowerShell
+`Disable-SubnetInjection` module instead. It prompts before removing the link; pass `--yes` in
+automation.
 
 ### `status`
 
