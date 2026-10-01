@@ -20,6 +20,13 @@ public static class HttpClientFactory
     /// Optional correlation ID for request tracing. If null, empty, or whitespace,
     /// a new GUID will be generated automatically.
     /// </param>
+    /// <param name="handler">
+    /// Optional message handler. It stays owned by whoever supplied it: the returned client does
+    /// not dispose it, so one handler can back several clients. Callers that build a client per
+    /// request from a handler they hold as a field depend on this — the default
+    /// <see cref="HttpClient"/> ownership would let the first client's disposal take the shared
+    /// handler down and fail every later request with <see cref="ObjectDisposedException"/>.
+    /// </param>
     /// <returns>A configured HttpClient instance with the correlation ID applied.</returns>
     public static HttpClient CreateAuthenticatedClient(
         string? authToken = null,
@@ -28,7 +35,7 @@ public static class HttpClientFactory
         HttpMessageHandler? handler = null)
     {
         var client = handler != null
-            ? new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(2) }
+            ? new HttpClient(handler, disposeHandler: false) { Timeout = TimeSpan.FromMinutes(2) }
             : new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
 
         if (!string.IsNullOrWhiteSpace(authToken))

@@ -29,8 +29,12 @@ public class ArmApiServiceTests
     private static IAuthenticationService FakeAuth()
     {
         var mock = Substitute.For<IAuthenticationService>();
+
+        // The 8th parameter is the CancellationToken. Without a matcher the setup is pinned to
+        // ct == default, so any call carrying a real token misses it and the service reports a
+        // failed token acquisition instead of doing the work under test.
         mock.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult("fake-arm-token"));
         return mock;
     }
@@ -299,6 +303,350 @@ public class ArmApiServiceTests
         {
             Content = new StringContent(body)
         };
+    }
+
+    // ──────────────────────── GetEnterprisePolicySystemIdAsync ────────────────────────
+
+    private const string PolicyArmId =
+        "/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg-test/providers/Microsoft.PowerPlatform/enterprisePolicies/policy-1";
+
+    private const string PolicySystemId =
+        "/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000";
+
+    private static HttpResponseMessage PolicyResponse(string body) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(body) };
+
+    [Theory]
+    // Userinfo trick: `management.azure.com` becomes the username and the real host is the attacker's.
+    [InlineData("@evil.example/x")]
+    [InlineData("evil.example/x")]
+    [InlineData("//evil.example/x")]
+    [InlineData("https://evil.example/x")]
+    [InlineData("/subscriptions/not-a-guid/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/acct")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p?x=1")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p#frag")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p/../../x")]
+    // Dot segments normalize the request path into a different resource before it is sent.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/../providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/./providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/..")]
+    // .NET's $ matches before a trailing newline, and [^/?#]+ would have absorbed the newline
+    // anyway, so segments exclude whitespace and the anchor is \z.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p\n")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p ")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/r g/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    // Percent-encoded dot segments. Uri unescapes before normalizing, so these would climb the
+    // path after the regex had already passed them. An allowlist that excludes '%' is what stops
+    // them -- no Uri.AbsolutePath check is reachable, which is why these live in the reject list.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/%2e%2e/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/%2e%2e")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg%2Fx/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    // Backslashes are path separators to Uri on Windows and climb the same way.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg\\..\\..\\x/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    // 36 characters, but not a GUID: the old [0-9a-f-]{36} accepted this.
+    [InlineData("/subscriptions/------------------------------------/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenArmIdIsNotAnEnterprisePolicyPath_RejectsWithoutCalling(
+        string policyArmId)
+    {
+        using var handler = new TestHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(policyArmId, TenantId);
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(
+            0,
+            because: "the ARM bearer token is a default header, so a redirected host would receive it");
+    }
+
+    [Theory]
+    // ARM ids are case-insensitive, and the portal, the CLI and ARM itself all emit different
+    // casings of the same id. Rejecting any of them would fail a perfectly valid --policy-arm-id.
+    [InlineData("/subscriptions/8D1E5B21-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.PowerPlatform/enterprisePolicies/p")]
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourcegroups/rg/providers/microsoft.powerplatform/enterprisepolicies/p")]
+    [InlineData("/SUBSCRIPTIONS/8D1E5B21-0000-0000-0000-000000000000/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.POWERPLATFORM/ENTERPRISEPOLICIES/P")]
+    // ARM resource names allow dots, hyphens, underscores and parentheses.
+    [InlineData("/subscriptions/8d1e5b21-0000-0000-0000-000000000000/resourceGroups/rg-prod.01_(east)/providers/Microsoft.PowerPlatform/enterprisePolicies/policy.v2_(new)")]
+    public async Task GetEnterprisePolicySystemIdAsync_AcceptsAnyCasingOfTheArmId(string policyArmId)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(policyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId);
+        handler.RequestCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_When200_ReturnsSystemId()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId, because: "the systemId is the only value BAP accepts for a link");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_RequestsTheArmPolicyResource()
+    {
+        HttpRequestMessage? captured = null;
+        using var handler = new CapturingHttpMessageHandler(r => captured = r);
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        captured.Should().NotBeNull();
+        captured!.Method.Should().Be(HttpMethod.Get);
+        captured.RequestUri!.ToString().Should().Be(
+            $"https://management.azure.com{PolicyArmId}?api-version=2020-10-30");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenStableApiVersionRejected_RetriesWithPreview()
+    {
+        var urls = new List<string>();
+        using var handler = new CapturingHttpMessageHandler(r => urls.Add(r.RequestUri!.ToString()));
+        handler.QueueResponse(ApiVersionRejection("NoRegisteredProviderFound"));
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId);
+        urls.Should().HaveCount(2);
+        urls[0].Should().EndWith("api-version=2020-10-30");
+        urls[1].Should().EndWith("api-version=2020-10-30-preview");
+    }
+
+    [Theory]
+    [InlineData("NoRegisteredProviderFound")]
+    [InlineData("InvalidApiVersionParameter")]
+    [InlineData("UnsupportedApiVersion")]
+    [InlineData("unsupportedapiversion")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenApiVersionCodeReturned_TriesTheNextVersion(string code)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(ApiVersionRejection(code));
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind = "NetworkInjection", properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId);
+        handler.RequestCount.Should().Be(2);
+    }
+
+    [Theory]
+    // A 400 about the request itself. Retrying the next api-version buries the real reason and
+    // ends the loop in "Azure rejected every supported api-version".
+    [InlineData("{\"error\":{\"code\":\"InvalidResourceType\",\"message\":\"No such resource type.\"}}")]
+    [InlineData("{\"error\":{\"code\":\"InvalidSubscriptionId\",\"message\":\"Bad subscription.\"}}")]
+    // A non-JSON 400 came from something in front of ARM, and is equally not an api-version miss.
+    [InlineData("")]
+    [InlineData("<html>gateway error</html>")]
+    // Well-formed JSON with no recognisable error envelope.
+    [InlineData("{}")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenBadRequestIsNotAboutTheApiVersion_StopsImmediately(
+        string body)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(body) });
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(
+            1,
+            because: "the next api-version would return the same 400 and hide the real reason");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenEveryApiVersionRejected_ReturnsNull()
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(ApiVersionRejection("NoRegisteredProviderFound"));
+        handler.QueueResponse(ApiVersionRejection("NoRegisteredProviderFound"));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "there is no api-version left to try");
+        handler.RequestCount.Should().Be(2);
+    }
+
+    private static HttpResponseMessage ApiVersionRejection(string code) =>
+        new(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                error = new { code, message = "The api-version is not supported." },
+            })),
+        };
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenNonSuccess_ReturnsNullWithoutRetrying(HttpStatusCode status)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(new HttpResponseMessage(status) { Content = new StringContent("") });
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "a rejected or missing policy is not an api-version problem");
+    }
+
+    [Theory]
+    [InlineData("{\"kind\":\"NetworkInjection\"}")]
+    [InlineData("{\"kind\":\"NetworkInjection\",\"properties\":{}}")]
+    [InlineData("{\"kind\":\"NetworkInjection\",\"properties\":{\"systemId\":\"\"}}")]
+    [InlineData("{\"kind\":\"NetworkInjection\",\"properties\":{\"systemId\":\"   \"}}")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenSystemIdMissing_ReturnsNull(string body)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(body));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "a policy without a systemId is not yet usable for linking");
+    }
+
+    [Theory]
+    // Every enterprise policy kind carries a systemId, so a wrong-kind policy reads back perfectly
+    // well. Without the kind check it would reach BAP and return an upstream rejection naming
+    // nothing the admin can act on. Enable-SubnetInjection makes the same check for the same reason.
+    [InlineData("Encryption")]
+    [InlineData("Identity")]
+    [InlineData("networkinjectionx")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenPolicyIsNotNetworkInjection_ReturnsNull(string kind)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind, properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "only a NetworkInjection policy can be linked as a virtual network");
+    }
+
+    [Theory]
+    [InlineData("{\"properties\":{\"systemId\":\"/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000\"}}")]
+    [InlineData("{\"kind\":null,\"properties\":{\"systemId\":\"/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000\"}}")]
+    [InlineData("{\"kind\":\"\",\"properties\":{\"systemId\":\"/regions/unitedstates/providers/Microsoft.PowerPlatform/enterprisePolicies/1b2c8a4e-0000-0000-0000-000000000000\"}}")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenKindAbsent_ReturnsNull(string body)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(body));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull(because: "an unstated kind is not proof the policy is a subnet injection policy");
+    }
+
+    [Theory]
+    [InlineData("networkinjection")]
+    [InlineData("NETWORKINJECTION")]
+    [InlineData("NetworkInjection")]
+    public async Task GetEnterprisePolicySystemIdAsync_AcceptsAnyCasingOfKind(string kind)
+    {
+        using var handler = new TestHttpMessageHandler();
+        handler.QueueResponse(PolicyResponse(
+            JsonSerializer.Serialize(new { kind, properties = new { systemId = PolicySystemId } })));
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().Be(PolicySystemId, because: "ARM does not guarantee the casing it echoes back");
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenCallerCancels_PropagatesRatherThanReportingNoPolicy()
+    {
+        // RetryHelper rethrows cancellation on purpose. Folding it into the broad catch would
+        // report Ctrl+C as "could not read the policy" and let link carry on as if the policy
+        // simply did not exist.
+        using var handler = new SlowHttpMessageHandler(TimeSpan.FromSeconds(30));
+        var svc = CreateService(handler);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        var act = async () => await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Holds each request open until the request's own token is cancelled, so a test can observe
+    /// what the service does with a cancellation raised mid-call.
+    /// </summary>
+    private sealed class SlowHttpMessageHandler(TimeSpan delay) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(delay, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
+        }
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenHttpThrows_ReturnsNull()
+    {
+        using var handler = new ThrowingHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenPolicyArmIdBlank_Throws(string? policyArmId)
+    {
+        using var handler = new TestHttpMessageHandler();
+        var svc = CreateService(handler);
+
+        var act = async () => await svc.GetEnterprisePolicySystemIdAsync(policyArmId!, TenantId);
+
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task GetEnterprisePolicySystemIdAsync_WhenTokenUnavailable_ReturnsNullWithoutCallingArm()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var auth = Substitute.For<IAuthenticationService>();
+        auth.GetAccessTokenAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>())
+            .Returns(Task.FromResult(string.Empty));
+        var svc = new ArmApiService(NullLogger<ArmApiService>.Instance, auth, handler,
+            retryHelper: new RetryHelper(NullLogger.Instance, maxRetries: 1, baseDelaySeconds: 0));
+
+        var result = await svc.GetEnterprisePolicySystemIdAsync(PolicyArmId, TenantId);
+
+        result.Should().BeNull();
+        handler.RequestCount.Should().Be(0, because: "without a token there is nothing worth sending");
     }
 }
 
