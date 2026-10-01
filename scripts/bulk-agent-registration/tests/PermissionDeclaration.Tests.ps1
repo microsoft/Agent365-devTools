@@ -140,8 +140,20 @@ function Invoke-A365DeclarationScenario {
     }
 
     function Invoke-Graph {
-        param($Method, $Uri, $Body, [switch] $TolerateNotFound, [switch] $TolerateConflict)
-        $State.Calls.Add([pscustomobject]@{ Method = $Method; Uri = $Uri; Body = $Body })
+        param(
+            $Method,
+            $Uri,
+            $Body,
+            [switch] $TolerateNotFound,
+            [switch] $TolerateConflict,
+            [switch] $RetryOnNotFound
+        )
+        $State.Calls.Add([pscustomobject]@{
+                Method = $Method
+                Uri = $Uri
+                Body = $Body
+                RetryOnNotFound = [bool]$RetryOnNotFound
+            })
         if ($Method -eq 'GET') {
             switch -Exact ($Uri) {
                 "/servicePrincipals(appId='$graphAppId')?`$select=id,appRoles,oauth2PermissionScopes" { return $State.Graph }
@@ -163,6 +175,9 @@ function Invoke-A365DeclarationScenario {
                 }
             }
             if ($State.MissingApplication -and $Uri.StartsWith('/applications?$filter=')) { return @{ value = @() } }
+        }
+        if ($Method -eq 'POST' -and $Uri -eq '/applications') {
+            return [pscustomobject]@{ id = 'app-object'; appId = 'automation-app'; displayName = 'Test automation' }
         }
         if ($Method -eq 'PATCH' -and $Uri -eq '/applications/app-object') {
             if ($State.PatchFails) { throw 'Mock declaration PATCH failed.' }
@@ -694,6 +709,39 @@ Test-Case 'Declining declarations does not change independent grant semantics or
     Assert-True ($run.Console -match 'Application roles granted:')
     Assert-True ($run.Console -match 'Some selected permissions are not declared')
     Assert-False ($run.Console -match 'without adding permissions manually')
+}
+
+Test-Case 'New application declaration reads and writes retry directory replication 404 responses' {
+    $state = New-A365DeclarationFixture
+    $state.MissingApplication = $true
+    Invoke-A365DeclarationScenario -State $state | Out-Null
+
+    $declarationRead = @($state.Calls | Where-Object {
+            $_.Method -eq 'GET' -and
+            $_.Uri -eq '/applications/app-object?$select=requiredResourceAccess'
+        })
+    Assert-Count $declarationRead 1
+    Assert-True $declarationRead[0].RetryOnNotFound 'The immediate post-create declaration read must tolerate replication lag.'
+
+    $declarationWrites = @($state.Calls | Where-Object {
+            $_.Method -eq 'PATCH' -and $_.Uri -eq '/applications/app-object'
+        })
+    Assert-Count $declarationWrites 1
+    Assert-True $declarationWrites[0].RetryOnNotFound 'The immediate post-create declaration write must tolerate replication lag.'
+}
+
+Test-Case 'Existing application declaration reconciliation does not use creation-only retries' {
+    $state = New-A365DeclarationFixture
+    Invoke-A365DeclarationScenario -State $state | Out-Null
+
+    $declarationCalls = @($state.Calls | Where-Object {
+            $_.Uri -eq '/applications/app-object?$select=requiredResourceAccess' -or
+            ($_.Method -eq 'PATCH' -and $_.Uri -eq '/applications/app-object')
+        })
+    Assert-Count $declarationCalls 2
+    foreach ($call in $declarationCalls) {
+        Assert-False $call.RetryOnNotFound 'Existing objects must preserve the normal not-found behavior.'
+    }
 }
 
 Test-Case 'Native WhatIf preserves new application and service principal early returns without fabricating summaries' {

@@ -1170,6 +1170,7 @@ if ($Scenario -in 'AgentIdentity', 'All') {
 Write-Step 3 'Creating the application registration'
 
 $application = $null
+$applicationCreated = $false
 if ($AppId) {
     $application = Invoke-Graph -Method GET -Uri "/applications(appId='$AppId')?`$select=id,appId,displayName" -TolerateNotFound
     if (-not $application) { throw "No application found with appId '$AppId'." }
@@ -1197,6 +1198,7 @@ else {
     }
     if ($PSCmdlet.ShouldProcess($DisplayName, 'POST /applications')) {
         $application = Invoke-Graph -Method POST -Uri '/applications' -Body $body
+        $applicationCreated = $true
         Write-Host "  Created application '$DisplayName' (appId $($application.appId))" -ForegroundColor Green
     }
     else {
@@ -1207,9 +1209,11 @@ else {
 
 $applicationObjectId = [string]$application.id
 $applicationAppId    = [string]$application.appId
+$replicationRetry = @{}
+if ($applicationCreated) { $replicationRetry.RetryOnNotFound = $true }
 
 # Declare permissions even with -SkipGrant so an administrator can consent from the portal.
-$current = Invoke-Graph -Method GET -Uri "/applications/$applicationObjectId`?`$select=requiredResourceAccess"
+$current = Invoke-Graph -Method GET -Uri "/applications/$applicationObjectId`?`$select=requiredResourceAccess" @replicationRetry
 $existingAccess = @()
 if (Test-HasProperty $current 'requiredResourceAccess') { $existingAccess = @($current.requiredResourceAccess) }
 
@@ -1227,7 +1231,7 @@ if ($permissionMerge.Changed) {
     $changeDescription = "+$($permissionMerge.RolesAdded.Count) application permission(s), +$($permissionMerge.ScopesAdded.Count) delegated scope(s), remove $($permissionMerge.DuplicatesRemoved) duplicate declaration(s)"
     if (Test-PermissionDeclarationApproval -Command $PSCmdlet -Target $DisplayName `
             -Action "PATCH requiredResourceAccess ($changeDescription)") {
-        Invoke-Graph -Method PATCH -Uri "/applications/$applicationObjectId" -Body $payload | Out-Null
+        Invoke-Graph -Method PATCH -Uri "/applications/$applicationObjectId" -Body $payload @replicationRetry | Out-Null
         $effectiveAccess = $permissionMerge.RequiredResourceAccess
         $rolesAddedToRequest = $permissionMerge.RolesAdded
         $scopesAddedToRequest = $permissionMerge.ScopesAdded
