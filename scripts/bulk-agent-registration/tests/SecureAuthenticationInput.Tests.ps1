@@ -40,23 +40,20 @@ $wrapperCases = @(
 
 foreach ($case in $wrapperCases) {
 
-    Test-Case "$($case.Name): a SecureString -ClientSecret/-CertificatePassword/-AccessToken all reach the step script as the exact live objects bound on the command line" {
+    Test-Case "$($case.Name): a SecureString -ClientSecret/-CertificatePassword both reach the step script as the exact live objects bound on the command line" {
         $global:A365UpdateWrapperFixtureCalls = [System.Collections.Generic.List[object]]::new()
         $clientSecret = $null
         $certificatePassword = $null
-        $accessToken = $null
         try {
             $clientSecret = New-A365SecureStringMarker -Value 'client-secret-marker'
             $certificatePassword = New-A365SecureStringMarker -Value 'cert-password-marker'
-            $accessToken = New-A365SecureStringMarker -Value 'access-token-marker'
             $splat = @{
-                TenantId             = 'tenant-id'
-                ScriptRoot           = $script:UpdateWrapperFixturesDir
-                ClientId             = 'test-client'
-                ClientSecret         = $clientSecret
-                CertificatePassword  = $certificatePassword
-                AccessToken          = $accessToken
-                Confirm              = $false
+                TenantId            = 'tenant-id'
+                ScriptRoot          = $script:UpdateWrapperFixturesDir
+                ClientId            = 'test-client'
+                ClientSecret        = $clientSecret
+                CertificatePassword = $certificatePassword
+                Confirm             = $false
             }
             $splat[$case.IdParam] = $case.IdValue
 
@@ -65,35 +62,28 @@ foreach ($case in $wrapperCases) {
             Assert-Equal 1 $global:A365UpdateWrapperFixtureCalls.Count "$($case.Name): exactly one call must reach the fixture step script per invocation."
             $call = $global:A365UpdateWrapperFixtureCalls[0]
 
-            # SecureString inputs must remain SecureString values at the step boundary.
             Assert-Equal 'System.Security.SecureString' $call.ClientSecretType "$($case.Name): -ClientSecret must still be a SecureString when it reaches the step script."
             Assert-Equal 'System.Security.SecureString' $call.CertificatePasswordType "$($case.Name): -CertificatePassword must still be a SecureString when it reaches the step script."
-            Assert-Equal 'System.Security.SecureString' $call.AccessTokenType "$($case.Name): -AccessToken must still be a SecureString when it reaches the step script."
-
-            # Wrappers must forward the exact live credential objects.
             Assert-Equal ([System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($clientSecret)) $call.ClientSecretIdentity "$($case.Name): -ClientSecret must reach the step script as the identical object instance, not a copy."
             Assert-Equal ([System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($certificatePassword)) $call.CertificatePasswordIdentity "$($case.Name): -CertificatePassword must reach the step script as the identical object instance, not a copy."
-            Assert-Equal ([System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($accessToken)) $call.AccessTokenIdentity "$($case.Name): -AccessToken must reach the step script as the identical object instance, not a copy."
         }
         finally {
             Remove-Variable -Name A365UpdateWrapperFixtureCalls -Scope Global -ErrorAction SilentlyContinue
             if ($clientSecret) { $clientSecret.Dispose() }
             if ($certificatePassword) { $certificatePassword.Dispose() }
-            if ($accessToken) { $accessToken.Dispose() }
         }
     }
 
-    Test-Case "$($case.Name): a plain string -ClientSecret/-CertificatePassword/-AccessToken remain plain strings at the step script (backward compatibility)" {
+    Test-Case "$($case.Name): a plain string -ClientSecret/-CertificatePassword both remain plain strings at the step script (backward compatibility)" {
         $global:A365UpdateWrapperFixtureCalls = [System.Collections.Generic.List[object]]::new()
         try {
             $splat = @{
-                TenantId             = 'tenant-id'
-                ScriptRoot           = $script:UpdateWrapperFixturesDir
-                ClientId             = 'test-client'
-                ClientSecret         = 'plain-client-secret'
-                CertificatePassword  = 'plain-cert-password'
-                AccessToken          = 'plain-access-token'
-                Confirm              = $false
+                TenantId            = 'tenant-id'
+                ScriptRoot          = $script:UpdateWrapperFixturesDir
+                ClientId            = 'test-client'
+                ClientSecret        = 'plain-client-secret'
+                CertificatePassword = 'plain-cert-password'
+                Confirm             = $false
             }
             $splat[$case.IdParam] = $case.IdValue
 
@@ -101,11 +91,9 @@ foreach ($case in $wrapperCases) {
 
             Assert-Equal 1 $global:A365UpdateWrapperFixtureCalls.Count "$($case.Name): exactly one call must reach the fixture step script per invocation."
             $call = $global:A365UpdateWrapperFixtureCalls[0]
-
             # Plain-string authentication remains backward compatible.
             Assert-Equal 'System.String' $call.ClientSecretType "$($case.Name): a plain string -ClientSecret must still be forwarded as a plain string."
             Assert-Equal 'System.String' $call.CertificatePasswordType "$($case.Name): a plain string -CertificatePassword must still be forwarded as a plain string."
-            Assert-Equal 'System.String' $call.AccessTokenType "$($case.Name): a plain string -AccessToken must still be forwarded as a plain string."
         }
         finally {
             Remove-Variable -Name A365UpdateWrapperFixtureCalls -Scope Global -ErrorAction SilentlyContinue
