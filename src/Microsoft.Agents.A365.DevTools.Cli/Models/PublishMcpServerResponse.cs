@@ -48,6 +48,22 @@ public class PublishMcpServerResponse
     public string? PublicClientsAppId { get; set; }
 
     /// <summary>
+    /// Redirect URI the platform assigns to the A365 proxy connector for custom servers. When
+    /// present, the CLI writes the tc/non-tc redirect URI list onto the A365 proxy Entra app it
+    /// created. Emitted PascalCase by the platform, same as <see cref="McpServerAppId"/>.
+    /// </summary>
+    [JsonPropertyName("A365ProxyRedirectUri")]
+    public string? A365ProxyRedirectUri { get; set; }
+
+    /// <summary>
+    /// Id of the Power Platform connector the platform created for the custom server, when proxy
+    /// credentials were supplied. Surfaced for logging/parity; empty when connector creation was
+    /// skipped.
+    /// </summary>
+    [JsonPropertyName("A365ProxyConnectorId")]
+    public string? A365ProxyConnectorId { get; set; }
+
+    /// <summary>
     /// Whether the operation was successful.
     /// </summary>
     [JsonIgnore]

@@ -19,7 +19,9 @@ internal record RawPublishArgs(
     string? DisplayName,
     string? PublisherName,
     bool Yes,
-    bool DryRun);
+    bool DryRun,
+    string? ServiceTreeId = null,
+    int? SecretLifetimeMonths = null);
 
 /// <summary>
 /// Orchestrates first-party MCP server publish in one CLI command. The shape mirrors
@@ -68,12 +70,24 @@ internal class PublishCommandExecutor
         // When true, skip the interactive "Proceed with publish? (y/N)" confirmation. Set via
         // --yes / -y. Required for non-interactive contexts (CI scripts, automation).
         public required bool Yes { get; init; }
+
+        // ServiceTree ID stamped onto the Entra apps created here. Required in Microsoft corporate
+        // tenants; null elsewhere. Applied to both the A365 proxy and Public Clients apps.
+        public string? ServiceTreeId { get; init; }
+
+        // Optional client-secret lifetime (months) for the A365 proxy app's secret. Null uses Graph's
+        // default; a smaller value avoids the appManagementPolicies cap failing publish in strict tenants.
+        public int? SecretLifetimeMonths { get; init; }
     }
 
     internal sealed record EntraAppSet(
         string? PublicClientsClientId,
         string? PublicClientsObjectId,
-        string PublicClientsAppName);
+        string PublicClientsAppName,
+        string A365AppClientId,
+        string A365AppSecret,
+        string A365AppObjectId,
+        string A365AppName);
 
     internal async Task<bool> ExecuteAsync(RawPublishArgs args, CancellationToken ct = default)
     {
@@ -84,8 +98,9 @@ internal class PublishCommandExecutor
 
         if (input.DryRun)
         {
-            _logger.LogInformation("[DRY RUN] Would create Entra app '{PublicClients}' in tenant", $"{input.ServerName}-PublicClients");
-            _logger.LogInformation("[DRY RUN] Would call publish endpoint and back-fill PPMI scope on the created app");
+            _logger.LogInformation("[DRY RUN] Would create Entra apps '{PublicClients}' and '{A365Proxy}' in tenant", $"{input.ServerName}-PublicClients", $"{input.ServerName}-A365Proxy");
+            _logger.LogInformation("[DRY RUN] Would call the publish endpoint and forward the A365 proxy app credentials so the platform can create the Power Platform connector for custom (non-Dataverse) servers");
+            _logger.LogInformation("[DRY RUN] Would back-fill the PPMI scope on the created apps, add the McpServer API permission and connector redirect URI to the A365 proxy app, and delete the proxy app when the publish response shows no connector was created");
             return true;
         }
 
@@ -131,6 +146,8 @@ internal class PublishCommandExecutor
             DisplayName = input.DisplayName,
             PublicClientsAppId = apps.PublicClientsClientId,
             PublisherName = input.PublisherName,
+            A365ProxyClientId = apps.A365AppClientId,
+            A365ProxyClientSecret = apps.A365AppSecret,
         };
 
         PublishMcpServerResponse? publishResponse;
@@ -183,6 +200,13 @@ internal class PublishCommandExecutor
 
         try
         {
+            // Reject an out-of-range secret lifetime before prompting or creating apps; register enforces the same 1-24 bound.
+            if (args.SecretLifetimeMonths is { } lifetime && (lifetime < 1 || lifetime > 24))
+            {
+                _logger.LogError("--secret-lifetime-months must be between 1 and 24 (Graph's maximum is ~2 years). Got: {Value}", lifetime);
+                return null;
+            }
+
             var environmentId = args.EnvironmentId;
             if (string.IsNullOrWhiteSpace(environmentId))
             {
@@ -276,6 +300,8 @@ internal class PublishCommandExecutor
                 PublisherName = string.IsNullOrWhiteSpace(publisherName) ? null : publisherName,
                 Yes = args.Yes,
                 DryRun = args.DryRun,
+                ServiceTreeId = string.IsNullOrWhiteSpace(args.ServiceTreeId) ? null : args.ServiceTreeId,
+                SecretLifetimeMonths = args.SecretLifetimeMonths,
             };
         }
         catch (ArgumentException ex)
@@ -298,6 +324,10 @@ internal class PublishCommandExecutor
         DevelopMcpCommand.WriteLabel("  Alias:          "); Console.WriteLine(input.Alias);
         DevelopMcpCommand.WriteLabel("  Display Name:   "); Console.WriteLine(input.DisplayName);
         DevelopMcpCommand.WriteLabel("  Publisher:      "); Console.WriteLine(input.PublisherName ?? "(none — platform will reject if this is a custom server)");
+        if (input.SecretLifetimeMonths is { } lifetime)
+        {
+            DevelopMcpCommand.WriteLabel("  Secret Lifetime: "); Console.WriteLine($"{lifetime} month(s)");
+        }
         Console.WriteLine();
     }
 
@@ -318,13 +348,40 @@ internal class PublishCommandExecutor
     {
         var provisioner = new EntraAppProvisioner(_logger, _graphApiService!, _retryHelper);
 
-        var publicClients = await provisioner.CreatePublicClientsAppAsync(
-            input.ServerName, tenantId, serviceTreeId: null, warnings, ct);
+        // Confidential A365 proxy app + secret. Required for custom (non-Dataverse) servers: the
+        // platform creates the Power Platform connector only when its credentials are supplied.
+        var a365ProxyApp = await provisioner.CreateProxyAppAsync(
+            input.ServerName, tenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy",
+            serviceTreeId: input.ServiceTreeId, lifetimeMonths: input.SecretLifetimeMonths, ct: ct);
+        if (a365ProxyApp is null) return null;
 
-        return new EntraAppSet(
-            PublicClientsClientId: publicClients.ClientId,
-            PublicClientsObjectId: publicClients.ObjectId,
-            PublicClientsAppName: publicClients.AppName);
+        // If Public Clients creation throws after the proxy app exists, the proxy app (with its
+        // secret) is orphaned — RollbackEntraAppsAsync only runs once we have a full EntraAppSet and
+        // the platform call fails. Clean it up here so a Graph error / throttling / cancellation
+        // doesn't leak a credential. Use CancellationToken.None for the compensating delete so a
+        // caller Ctrl+C still removes the orphan.
+        try
+        {
+            var publicClients = await provisioner.CreatePublicClientsAppAsync(
+                input.ServerName, tenantId, serviceTreeId: input.ServiceTreeId, warnings, ct);
+
+            return new EntraAppSet(
+                PublicClientsClientId: publicClients.ClientId,
+                PublicClientsObjectId: publicClients.ObjectId,
+                PublicClientsAppName: publicClients.AppName,
+                A365AppClientId: a365ProxyApp.ClientId,
+                A365AppSecret: a365ProxyApp.Secret,
+                A365AppObjectId: a365ProxyApp.ObjectId,
+                A365AppName: a365ProxyApp.AppName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("Failed to create the Public Clients Entra app after the A365 proxy app was created; deleting the orphaned proxy app '{A365Proxy}'.", a365ProxyApp.AppName);
+            _logger.LogDebug("Exception details: {Exception}", ex.ToString());
+            await TryDeleteEntraAppAsync(tenantId, a365ProxyApp.ObjectId, a365ProxyApp.ClientId, a365ProxyApp.AppName, CancellationToken.None);
+            if (ex is OperationCanceledException && ct.IsCancellationRequested) throw;
+            return null;
+        }
     }
 
     // Best-effort compensating delete for the Entra apps created in CreateEntraAppsAsync, run when
@@ -335,40 +392,46 @@ internal class PublishCommandExecutor
     {
         if (_graphApiService is null)
         {
-            _logger.LogWarning("Graph API service is unavailable; cannot roll back Entra app '{PublicClients}'. Delete it manually in the Azure portal.", apps.PublicClientsAppName);
+            _logger.LogWarning("Graph API service is unavailable; cannot roll back Entra apps '{PublicClients}' and '{A365Proxy}'. Delete them manually in the Azure portal.", apps.PublicClientsAppName, apps.A365AppName);
             return;
         }
 
         _logger.LogInformation("Rolling back Entra app registrations created for failed publish...");
 
-        if (!string.IsNullOrWhiteSpace(apps.PublicClientsObjectId))
+        await TryDeleteEntraAppAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsClientId, apps.PublicClientsAppName, ct);
+        await TryDeleteEntraAppAsync(tenantId, apps.A365AppObjectId, apps.A365AppClientId, apps.A365AppName, ct);
+    }
+
+    // Best-effort compensating delete for a single Entra app. No-op when the object id is unknown or
+    // Graph is unavailable. Failures are logged with both clientId and objectId so the user can clean
+    // up manually; the delete never throws.
+    private async Task TryDeleteEntraAppAsync(string tenantId, string? objectId, string? clientId, string appName, CancellationToken ct)
+    {
+        if (_graphApiService is null || string.IsNullOrWhiteSpace(objectId))
         {
-            await DeleteOneAsync(apps.PublicClientsObjectId, apps.PublicClientsClientId, apps.PublicClientsAppName, ct);
+            return;
         }
 
-        async Task DeleteOneAsync(string objectId, string? clientId, string appName, CancellationToken cancellationToken)
+        try
         {
-            try
+            var deleted = await _graphApiService.DeleteEntraAppAsync(tenantId, objectId, ct);
+            if (deleted)
             {
-                var deleted = await _graphApiService!.DeleteEntraAppAsync(tenantId, objectId, cancellationToken);
-                if (deleted)
-                {
-                    _logger.LogInformation("Rolled back Entra app '{AppName}' (objectId {ObjectId})", appName, objectId);
-                }
-                else
-                {
-                    _logger.LogError(
-                        "Failed to roll back Entra app '{AppName}' (clientId {ClientId}, objectId {ObjectId}). Delete it manually in the Azure portal.",
-                        appName, clientId ?? "<unknown>", objectId);
-                }
+                _logger.LogInformation("Rolled back Entra app '{AppName}' (objectId {ObjectId})", appName, objectId);
             }
-            catch (Exception ex)
+            else
             {
                 _logger.LogError(
-                    ex,
-                    "Exception rolling back Entra app '{AppName}' (clientId {ClientId}, objectId {ObjectId}). Delete it manually in the Azure portal.",
+                    "Failed to roll back Entra app '{AppName}' (clientId {ClientId}, objectId {ObjectId}). Delete it manually in the Azure portal.",
                     appName, clientId ?? "<unknown>", objectId);
             }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Exception rolling back Entra app '{AppName}' (clientId {ClientId}, objectId {ObjectId}). Delete it manually in the Azure portal.",
+                appName, clientId ?? "<unknown>", objectId);
         }
     }
 
@@ -382,6 +445,19 @@ internal class PublishCommandExecutor
     {
         var tasks = new List<Task>();
         var concurrentWarnings = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+        // The proxy app + secret are forwarded on every publish because the CLI can't classify the
+        // server (custom vs 1p/Dataverse) before the platform does. Only custom servers actually get
+        // a Power Platform connector; the platform signals that by returning a connector id and/or a
+        // redirect URI. When neither is present the proxy app is unused, so delete it here rather than
+        // leave an unused credential in the tenant (the Public Clients app and its PPMI grant remain).
+        var connectorCreated = !string.IsNullOrWhiteSpace(response.A365ProxyConnectorId)
+            || !string.IsNullOrWhiteSpace(response.A365ProxyRedirectUri);
+        if (!connectorCreated)
+        {
+            _logger.LogInformation("Publish returned no A365 proxy connector for '{ServerName}' (first-party / Dataverse server); removing the unused A365 proxy app '{A365Proxy}'.", input.ServerName, apps.A365AppName);
+            await TryDeleteEntraAppAsync(tenantId, apps.A365AppObjectId, apps.A365AppClientId, apps.A365AppName, ct);
+        }
 
         // Grant required-resource-access on the just-created Public Clients Entra app.
         // The platform resolves the right resource per server type (Custom: managedidentityid; app-based
@@ -418,6 +494,16 @@ internal class PublishCommandExecutor
 
         if (resourceScopeId.HasValue)
         {
+            // The platform wires the A365 proxy connector with the proxy app as its OAuth client and
+            // McpServerAppId as the resource, so the proxy app must hold this required-resource-access
+            // grant or Entra rejects the token request (AADSTS650057). Grant it on the proxy app only
+            // when a connector was created (otherwise the proxy app was just deleted above); always
+            // grant it on the Public Clients app, mirroring register.
+            if (connectorCreated)
+            {
+                tasks.Add(AddRequiredResourceAccessAsync(tenantId, apps.A365AppObjectId, apps.A365AppName, resourceAppId!, resourceScopeId.Value, concurrentWarnings, ct));
+            }
+
             if (apps.PublicClientsObjectId != null)
             {
                 tasks.Add(AddRequiredResourceAccessAsync(tenantId, apps.PublicClientsObjectId, apps.PublicClientsAppName, resourceAppId!, resourceScopeId.Value, concurrentWarnings, ct));
@@ -430,10 +516,63 @@ internal class PublishCommandExecutor
             concurrentWarnings.Add(msg);
         }
 
+        // Custom (non-Dataverse) servers get a Power Platform connector whose redirect URI the
+        // platform returns here. Write it onto the A365 proxy app so the connector's OAuth flow works.
+        // Only relevant when a connector was created; first-party servers get no connector (and the
+        // proxy app was already removed), so no redirect URI is expected and none is warned about.
+        if (connectorCreated)
+        {
+            var a365RedirectUri = response.A365ProxyRedirectUri;
+            if (!string.IsNullOrWhiteSpace(a365RedirectUri))
+            {
+                tasks.Add(UpdateA365RedirectUrisAsync(tenantId, apps, a365RedirectUri, concurrentWarnings, ct));
+            }
+            else
+            {
+                var msg = "A365 Proxy connector was created but publish returned no redirect URI. Redirect URI configuration skipped.";
+                _logger.LogWarning(msg);
+                concurrentWarnings.Add(msg);
+            }
+        }
+
         await Task.WhenAll(tasks);
 
         foreach (var w in concurrentWarnings)
             warnings.Add(w);
+    }
+
+    private async Task UpdateA365RedirectUrisAsync(
+        string tenantId, EntraAppSet apps, string a365RedirectUri,
+        System.Collections.Concurrent.ConcurrentBag<string> concurrentWarnings,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var a365TcUri = DevelopMcpCommand.AddTcPrefix(a365RedirectUri);
+            var a365NonTcUri = DevelopMcpCommand.RemoveTcPrefix(a365RedirectUri);
+            var a365Uris = DevelopMcpCommand.BuildRedirectUriList(a365RedirectUri, a365TcUri, a365NonTcUri);
+            _logger.LogDebug("Updating redirect URIs on '{AppName}' ({ObjectId})", apps.A365AppName, apps.A365AppObjectId);
+            var success = await _retryHelper.ExecuteWithRetryAsync(
+                async retryCt => await _graphApiService!.UpdateAppRedirectUrisAsync(tenantId, apps.A365AppObjectId, a365Uris, retryCt),
+                result => !result,
+                cancellationToken: ct);
+            if (!success)
+            {
+                var msg = $"Failed to update redirect URIs on A365 Proxy app '{apps.A365AppName}' after retries.";
+                _logger.LogError(msg);
+                concurrentWarnings.Add(msg);
+            }
+            else
+            {
+                _logger.LogInformation("Updated redirect URIs on '{AppName}'", apps.A365AppName);
+            }
+        }
+        catch (Exception ex)
+        {
+            var msg = $"Failed to update redirect URIs on A365 Proxy app: {ex.Message}";
+            _logger.LogError(msg);
+            concurrentWarnings.Add(msg);
+        }
     }
 
     private async Task AddRequiredResourceAccessAsync(
