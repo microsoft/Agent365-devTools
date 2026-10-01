@@ -17,8 +17,7 @@
          permissions and delegated scopes on it.
       3. Creates (or reuses) its service principal - the app role grants attach to the SP, not the
          application.
-      4. Adds credentials: a client secret, a certificate, and/or a federated identity credential
-         for workload identity federation (GitHub Actions, Azure DevOps, Kubernetes).
+      4. Adds credentials: a client secret and/or a certificate credential.
       5. Unless -SkipGrant, grants each app role via POST
          /servicePrincipals/{graphSpId}/appRoleAssignedTo, which is admin consent. Already-granted
          roles are skipped, so re-running is safe.
@@ -84,12 +83,6 @@
 .PARAMETER CertificatePath
     Path to a .cer/.crt public certificate file to upload as a credential.
 
-.PARAMETER FederatedCredential
-    One or more hashtables describing federated identity credentials, so the app can be used from
-    GitHub Actions or Azure DevOps with no stored secret at all. Keys: Name (required),
-    Issuer (required), Subject (required), Audience (defaults to api://AzureADTokenExchange),
-    Description.
-
 .PARAMETER AddRegistrationDelegatedScopes
     Adds AgentRegistration.ReadWrite.All and AgentInstance.ReadWrite.All as delegated scopes on the
     application, for use as the client app of an interactive registration run. Defaults to on for
@@ -116,11 +109,17 @@
     Thumbprint of the certificate used to AUTHENTICATE this script (distinct from
     -CertificateThumbprint, which is the credential being added to the new app).
 
-.PARAMETER UseManagedIdentity
-    Authenticate with the host's managed identity.
+.PARAMETER AuthCertificate
+    X509Certificate2 object used to authenticate this script.
 
-.PARAMETER AccessToken
-    A pre-acquired Graph access token, as a SecureString or a plain string.
+.PARAMETER AuthCertificatePath
+    Path to a PFX certificate used to authenticate this script.
+
+.PARAMETER AuthCertificatePassword
+    Password for -AuthCertificatePath, as a SecureString or plain string.
+
+.PARAMETER UseManagedIdentity
+    Authenticate with the host's SYSTEM-assigned managed identity.
 
 .PARAMETER Interactive
     Sign in as a user. This is the normal choice for a one-time bootstrap.
@@ -142,8 +141,7 @@
 
 .PARAMETER KeyVaultAccessToken
     A bearer token for https://vault.azure.net, needed only when one cannot be derived from
-    the Graph credential: -AccessToken (audience-bound, cannot be exchanged), or -Interactive
-    without a signed-in Azure session.
+    the Graph credential, such as -Interactive without a signed-in Azure session.
 
 .EXAMPLE
     # Bootstrap the whole pipeline with a client secret.
@@ -154,13 +152,6 @@
     # Certificate-based, blueprint permissions only.
     .\New-A365AutomationApp.ps1 -TenantId contoso.onmicrosoft.com -Interactive `
         -Scenario Blueprint -CertificateThumbprint A1B2C3D4E5F60718293A4B5C6D7E8F9012345678
-
-.EXAMPLE
-    # Secretless CI from GitHub Actions.
-    .\New-A365AutomationApp.ps1 -TenantId contoso.onmicrosoft.com -Interactive -FederatedCredential @(
-        @{ Name='github-main'; Issuer='https://token.actions.githubusercontent.com'
-           Subject='repo:contoso/agents:ref:refs/heads/main' }
-    )
 
 .EXAMPLE
     # See what would change without touching the tenant.
@@ -192,7 +183,6 @@ param(
     [ValidateRange(1, 24)][int] $SecretValidityMonths = 6,
     [string] $CertificateThumbprint,
     [string] $CertificatePath,
-    [hashtable[]] $FederatedCredential = @(),
 
     [bool]   $AddRegistrationDelegatedScopes = $true,
     [switch] $SkipGrant,
@@ -207,8 +197,10 @@ param(
     [string]       $ClientId,
     [object]       $ClientSecret,
     [string]       $AuthCertificateThumbprint,
+    [System.Security.Cryptography.X509Certificates.X509Certificate2] $AuthCertificate,
+    [string]       $AuthCertificatePath,
+    [object]       $AuthCertificatePassword,
     [switch]       $UseManagedIdentity,
-    [object]       $AccessToken,
     [switch]       $Interactive
 )
 
@@ -613,9 +605,9 @@ function Get-KeyVaultToken {
       Obtains a token for the Key Vault data plane, using the SAME credential the caller
       gave for Graph wherever that is possible.
 
-      The one case that cannot work is -AccessToken: a Graph access token is issued for the
-      Graph audience and the vault rejects it outright, and there is no way to exchange one
-      for the other. That mode therefore requires -KeyVaultAccessToken.
+      Graph and Key Vault use different token audiences. Interactive Graph sign-in yields a
+      Graph-audience token only, so minting the vault token requires an Azure sign-in context
+      or an explicit -KeyVaultAccessToken.
     #>
     param(
         [Parameter(Mandatory)][string] $TenantId,
@@ -708,9 +700,6 @@ function Get-KeyVaultToken {
                 catch { Write-Verbose "Az.Accounts token acquisition failed: $($_.Exception.Message)" }
             }
             throw 'Interactive Graph sign-in cannot mint a Key Vault token: Connect-MgGraph issues Graph-audience tokens only. Sign in to Azure first ("az login" or "Connect-AzAccount"), or pass -KeyVaultAccessToken.'
-        }
-        'AccessToken' {
-            throw '-AccessToken supplies a Microsoft Graph token, which the Key Vault data plane rejects (verified: HTTP 401). A token is audience-bound and cannot be exchanged. Pass -KeyVaultAccessToken with a token for https://vault.azure.net, or authenticate with -ClientSecret / -Certificate / -UseManagedIdentity so one can be obtained for you.'
         }
         default {
             throw "Cannot obtain a Key Vault token for authentication mode '$AuthMode'. Pass -KeyVaultAccessToken."
@@ -858,8 +847,10 @@ function Connect-GraphSession {
         [string]       $ClientId,
         [object]       $ClientSecret,
         [string]       $CertificateThumbprint,
+        [System.Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,
+        [string]       $CertificatePath,
+        [object]       $CertificatePassword,
         [switch]       $UseManagedIdentity,
-        [object]       $AccessToken,
         [switch]       $Interactive,
         [string[]]     $DelegatedScope = @()
     )
@@ -882,7 +873,6 @@ finally {
     # Accept plain strings as well as SecureStrings, and warn about the trade-off once.
     $secretWasPlainText = $ClientSecret -is [string]
     $ClientSecret = ConvertTo-SecureStringValue -Value $ClientSecret -Name 'ClientSecret'
-    $AccessToken  = ConvertTo-SecureStringValue -Value $AccessToken  -Name 'AccessToken'
 
     # Keeps the secret out of command lines, shell history and transcripts.
     if ((-not $ClientSecret) -and $env:A365_CLIENT_SECRET) {
@@ -893,18 +883,42 @@ finally {
         Write-Warning 'A plain-text -ClientSecret was passed on the command line, where it is visible to shell history and transcripts. Prefer $env:A365_CLIENT_SECRET or a SecureString.'
     }
 
+    $certificateSources = @(
+        [bool]$CertificateThumbprint,
+        ($null -ne $Certificate),
+        [bool]$CertificatePath
+    ) | Where-Object { $_ }
+    if ($certificateSources.Count -gt 1) {
+        throw 'Supply exactly one certificate source: -AuthCertificateThumbprint, -AuthCertificate, or -AuthCertificatePath.'
+    }
+    if ($CertificatePassword -and (-not $CertificatePath)) {
+        throw '-AuthCertificatePassword can be used only with -AuthCertificatePath.'
+    }
+
+    $loadedCertificate = $Certificate
+    if ($CertificatePath) {
+        if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
+            throw "Authentication certificate file not found: $CertificatePath"
+        }
+        $password = ConvertTo-SecureStringValue -Value $CertificatePassword -Name 'AuthCertificatePassword'
+        $loadedCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            $CertificatePath,
+            $password,
+            [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+        )
+    }
+
     $modes = @()
     if ($Interactive)           { $modes += 'Interactive' }
-    if ($AccessToken)           { $modes += 'AccessToken' }
     if ($UseManagedIdentity)    { $modes += 'ManagedIdentity' }
-    if ($CertificateThumbprint) { $modes += 'Certificate' }
+    if ($certificateSources.Count -eq 1) { $modes += 'Certificate' }
     if ($ClientSecret)          { $modes += 'ClientSecret' }
 
     if ($modes.Count -gt 1) {
-        throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one of -ClientSecret, -AuthCertificateThumbprint, -UseManagedIdentity, -AccessToken or -Interactive."
+        throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one of -ClientSecret, a certificate source, -UseManagedIdentity or -Interactive."
     }
     if ($modes.Count -eq 0) {
-        throw 'No authentication method was specified. This script is normally a one-time bootstrap, so -Interactive is the usual choice. For unattended use pass -ClientId with -ClientSecret or -AuthCertificateThumbprint, or use -UseManagedIdentity / -AccessToken.'
+        throw 'No authentication method was specified. This script is normally a one-time bootstrap, so -Interactive is the usual choice. For unattended use pass -ClientId with -ClientSecret or a certificate source, or use -UseManagedIdentity.'
     }
 
     $mode = $modes[0]
@@ -915,9 +929,18 @@ finally {
     $connect = @{ NoWelcome = $true; ErrorAction = 'Stop' }
     switch ($mode) {
         'ClientSecret'    { $connect.TenantId = $TenantId; $connect.ClientSecretCredential = [pscredential]::new($ClientId, $ClientSecret) }
-        'Certificate'     { $connect.TenantId = $TenantId; $connect.ClientId = $ClientId; $connect.CertificateThumbprint = $CertificateThumbprint }
-        'ManagedIdentity' { $connect.Identity = $true; if ($ClientId) { $connect.ClientId = $ClientId } }
-        'AccessToken'     { $connect.AccessToken = $AccessToken }
+        'Certificate'     {
+            $connect.TenantId = $TenantId
+            $connect.ClientId = $ClientId
+            if ($CertificateThumbprint) { $connect.CertificateThumbprint = $CertificateThumbprint }
+            else                        { $connect.Certificate = $loadedCertificate }
+        }
+        'ManagedIdentity' {
+            $connect.Identity = $true
+            if ($ClientId) {
+                throw '-UseManagedIdentity supports only the system-assigned managed identity; do not pass -ClientId.'
+            }
+        }
         'Interactive'     {
             $connect.TenantId = $TenantId
             if ($ClientId)                   { $connect.ClientId = $ClientId }
@@ -945,15 +968,15 @@ finally {
     else            { Write-Host "  Connected as $ctxAccount in tenant $ctxTenant [delegated, $mode]" -ForegroundColor Green }
 
     # The Key Vault token is a SECOND token and has to be minted from the same credential.
-    # This script binds certificates by thumbprint only, so resolve the certificate from the
-    # store for that case; a miss is not fatal here because only a Key Vault write needs it.
+    # Resolve thumbprint credentials for Key Vault token acquisition; object/PFX credentials are
+    # already available as $loadedCertificate.
     $ctxCertificate = if ($CertificateThumbprint) {
         @(
             "Cert:\CurrentUser\My\$CertificateThumbprint",
             "Cert:\LocalMachine\My\$CertificateThumbprint"
         ) | ForEach-Object { Get-Item -LiteralPath $_ -ErrorAction SilentlyContinue } |
           Select-Object -First 1
-    } else { $null }
+    } else { $loadedCertificate }
 
     [pscustomobject]@{
         Mode = $mode; IsAppOnly = $isAppOnly; AuthType = $authType
@@ -1040,6 +1063,23 @@ $script:RegistrationDelegatedScopes = @(
     'User.ReadBasic.All'                # GET  /users/{upn} -> owner object ids from -Owner
 )
 
+# New-A365AgentUser.ps1 can run interactively (delegated), so these scopes are declared on the
+# automation app for the user-create/update/manager/license and per-identity consent operations.
+$script:AgentUserDelegatedScopes = @(
+    'User.Read'
+    'User.Read.All'
+    'User.ReadWrite.All'
+    'Directory.Read.All'
+    'Organization.Read.All'
+    'Application.Read.All'
+    'AgentIdentity.Read.All'
+    'AgentIdentity.ReadWrite.All'
+    'AgentIdUser.ReadWrite.All'
+    'LicenseAssignment.ReadWrite.All'
+    'DelegatedPermissionGrant.ReadWrite.All'
+    'AppRoleAssignment.ReadWrite.All'
+)
+
 # Custom security attributes are gated separately from every other directory permission, and the
 # gate applies to BOTH call shapes. New-A365AgentIdentity.ps1 asks for these as delegated scopes
 # whenever -CustomSecurityAttribute is used, so an interactive run using this app as its client
@@ -1061,8 +1101,10 @@ $connectArgs = @{
 if ($PSBoundParameters.ContainsKey('ClientId'))                  { $connectArgs.ClientId              = $ClientId }
 if ($PSBoundParameters.ContainsKey('ClientSecret'))              { $connectArgs.ClientSecret          = $ClientSecret }
 if ($PSBoundParameters.ContainsKey('AuthCertificateThumbprint')) { $connectArgs.CertificateThumbprint = $AuthCertificateThumbprint }
+if ($PSBoundParameters.ContainsKey('AuthCertificate'))           { $connectArgs.Certificate           = $AuthCertificate }
+if ($PSBoundParameters.ContainsKey('AuthCertificatePath'))       { $connectArgs.CertificatePath       = $AuthCertificatePath }
+if ($PSBoundParameters.ContainsKey('AuthCertificatePassword'))   { $connectArgs.CertificatePassword   = $AuthCertificatePassword }
 if ($PSBoundParameters.ContainsKey('UseManagedIdentity'))        { $connectArgs.UseManagedIdentity    = $UseManagedIdentity }
-if ($PSBoundParameters.ContainsKey('AccessToken'))               { $connectArgs.AccessToken           = $AccessToken }
 if ($PSBoundParameters.ContainsKey('Interactive'))               { $connectArgs.Interactive           = $Interactive }
 
 $ctx = Connect-GraphSession @connectArgs
@@ -1145,6 +1187,22 @@ if ($wantRegistrationScopes) {
     }
 }
 
+if ($Scenario -in 'AgentUser', 'All') {
+    $agentUserScopeAdded = 0
+    foreach ($name in $script:AgentUserDelegatedScopes) {
+        if (-not $scopeIdByName.ContainsKey($name)) {
+            Write-Warning "Delegated scope '$name' is not published in this tenant; skipping it. Interactive agent-user provisioning will not work without it."
+            continue
+        }
+        if (@($delegatedToRequest | Where-Object { $_.Name -eq $name }).Count -gt 0) { continue }
+        $delegatedToRequest += [pscustomobject]@{ Name = $name; Id = $scopeIdByName[$name] }
+        $agentUserScopeAdded++
+    }
+    if ($agentUserScopeAdded -gt 0) {
+        Write-Host "  Will request $agentUserScopeAdded delegated scope(s) for interactive agent-user provisioning." -ForegroundColor Gray
+    }
+}
+
 # The custom security attribute scopes ride with the AgentIdentity scenario, because that is the
 # phase that assigns them. Declared for the delegated case as well as the application case: an
 # interactive run gets its access from the scope, not from the app role.
@@ -1192,9 +1250,10 @@ if ($application) {
 }
 else {
     $body = @{
-        displayName    = $DisplayName
-        signInAudience = 'AzureADMyOrg'
-        notes          = 'Runs the Agent 365 Graph provisioning scripts unattended.'
+        displayName            = $DisplayName
+        signInAudience         = 'AzureADMyOrg'
+        notes                  = 'Runs the Agent 365 Graph provisioning scripts unattended.'
+        isFallbackPublicClient = ($delegatedToRequest.Count -gt 0)
     }
     if ($PSCmdlet.ShouldProcess($DisplayName, 'POST /applications')) {
         $application = Invoke-Graph -Method POST -Uri '/applications' -Body $body
@@ -1213,9 +1272,17 @@ $replicationRetry = @{}
 if ($applicationCreated) { $replicationRetry.RetryOnNotFound = $true }
 
 # Declare permissions even with -SkipGrant so an administrator can consent from the portal.
-$current = Invoke-Graph -Method GET -Uri "/applications/$applicationObjectId`?`$select=requiredResourceAccess" @replicationRetry
+$current = Invoke-Graph -Method GET -Uri "/applications/$applicationObjectId`?`$select=requiredResourceAccess,isFallbackPublicClient" @replicationRetry
 $existingAccess = @()
 if (Test-HasProperty $current 'requiredResourceAccess') { $existingAccess = @($current.requiredResourceAccess) }
+
+if ($delegatedToRequest.Count -gt 0 -and
+    ((-not (Test-HasProperty $current 'isFallbackPublicClient')) -or (-not $current.isFallbackPublicClient))) {
+    if ($PSCmdlet.ShouldProcess($DisplayName, 'PATCH isFallbackPublicClient (enable interactive public-client flows)')) {
+        Invoke-Graph -Method PATCH -Uri "/applications/$applicationObjectId" -Body @{ isFallbackPublicClient = $true } @replicationRetry | Out-Null
+        Write-Host '  Enabled public-client flows for interactive delegated authentication.' -ForegroundColor Green
+    }
+}
 
 $permissionMerge = Merge-GraphRequiredResourceAccess -ExistingAccess $existingAccess `
     -ResourceAppId $script:MicrosoftGraphAppId -ApplicationRoles $resolved `
@@ -1363,41 +1430,8 @@ if ($CertificateThumbprint -or $CertificatePath) {
     }
 }
 
-foreach ($fic in $FederatedCredential) {
-    foreach ($required in 'Name', 'Issuer', 'Subject') {
-        if (-not $fic.ContainsKey($required) -or [string]::IsNullOrWhiteSpace([string]$fic[$required])) {
-            throw "-FederatedCredential entries require a non-empty '$required' key."
-        }
-    }
-    $ficName = [string]$fic['Name']
-
-    $existing = Invoke-Graph -Method GET -Uri "/applications/$applicationObjectId/federatedIdentityCredentials" -TolerateNotFound
-    $present = $false
-    if ($existing -and (Test-HasProperty $existing 'value')) {
-        $present = @($existing.value | Where-Object { [string]$_.name -eq $ficName }).Count -gt 0
-    }
-
-    if ($present) {
-        Write-Host "  Federated credential '$ficName' already exists." -ForegroundColor Gray
-        continue
-    }
-
-    $body = @{
-        name      = $ficName
-        issuer    = [string]$fic['Issuer']
-        subject   = [string]$fic['Subject']
-        audiences = @(if ($fic.ContainsKey('Audience')) { [string]$fic['Audience'] } else { 'api://AzureADTokenExchange' })
-    }
-    if ($fic.ContainsKey('Description')) { $body['description'] = [string]$fic['Description'] }
-
-    if ($PSCmdlet.ShouldProcess($ficName, 'POST /applications/{id}/federatedIdentityCredentials')) {
-        Invoke-Graph -Method POST -Uri "/applications/$applicationObjectId/federatedIdentityCredentials" -Body $body | Out-Null
-        Write-Host "  Federated credential '$ficName' created." -ForegroundColor Green
-    }
-}
-
-if (-not ($NewClientSecret -or $CertificateThumbprint -or $CertificatePath -or $FederatedCredential.Count)) {
-    Write-Warning 'No credential was added. The application cannot authenticate until you add one (-NewClientSecret, -CertificateThumbprint/-CertificatePath or -FederatedCredential).'
+if (-not ($NewClientSecret -or $CertificateThumbprint -or $CertificatePath)) {
+    Write-Warning 'No credential was added. The application cannot authenticate until you add one (-NewClientSecret, -CertificateThumbprint/-CertificatePath).'
 }
 
 # ---------------------------------------------------------------------------

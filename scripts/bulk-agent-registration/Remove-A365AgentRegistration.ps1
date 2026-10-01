@@ -63,8 +63,8 @@
     Suppress confirmation prompts. Required for unattended runs.
 
 .PARAMETER TenantId
-    Directory (tenant) id. Optional for -Interactive / -UseDeviceCode; required for application
-    authentication.
+    Directory (tenant) id. Optional for -Interactive / -UseManagedIdentity; required for client secret
+    and certificate authentication.
 
 .PARAMETER Interactive
     Sign in as a user (delegated auth). Recommended for ad-hoc runs, and often required: the
@@ -72,17 +72,9 @@
     Mutually exclusive with other authentication modes; -ClientId may select the app
     registration used for sign-in.
 
-.PARAMETER UseDeviceCode
-    Sign in as a user via the device code flow, for hosts that cannot complete a browser
-    redirect. Falls back to a reduced delegated scope set if the Agent 365 preview scopes are
-    not enabled in the tenant.
-
-.PARAMETER UseExistingConnection
-    Reuse an already-established Connect-MgGraph session instead of connecting again.
-
 .PARAMETER ClientId
-    Application (client) ID to authenticate as. Required with -ClientSecret or
-    -CertificateThumbprint.
+    Application (client) ID to authenticate as. Required with -ClientSecret or certificate
+    authentication.
 
 .PARAMETER ClientSecret
     Client secret, as a SecureString or a plain string. Requires -ClientId and -TenantId.
@@ -91,8 +83,17 @@
     Thumbprint of a certificate to authenticate -ClientId with. Requires -ClientId and
     -TenantId.
 
-.PARAMETER AccessToken
-    A pre-acquired Graph access token, as a SecureString or a plain string.
+.PARAMETER Certificate
+    An X509Certificate2 to authenticate -ClientId with. Requires -ClientId and -TenantId.
+
+.PARAMETER CertificatePath
+    Path to a .pfx file to authenticate -ClientId with. Requires -ClientId and -TenantId.
+
+.PARAMETER CertificatePassword
+    Password for -CertificatePath, as a SecureString or plain string.
+
+.PARAMETER UseManagedIdentity
+    Authenticate with the host's system-assigned managed identity.
 
 .PARAMETER LogPath
     Write a timestamped log of this run. A path that names an existing directory (or ends in
@@ -151,13 +152,13 @@ param(
 
     [string]   $TenantId,
     [switch]   $Interactive,
-    [switch]   $UseDeviceCode,
-    [switch]   $UseExistingConnection,
     [string]   $ClientId,
     [object]   $ClientSecret,
     [string]   $CertificateThumbprint,
-    [object]   $AccessToken,
-
+    [System.Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,
+    [string]   $CertificatePath,
+    [object]   $CertificatePassword,
+    [switch]   $UseManagedIdentity,
     # =====================================================================
     # LOGGING
     # =====================================================================
@@ -522,64 +523,6 @@ function Get-Value {
         if ($null -ne $value) { return $value }
     }
     return $Default
-}
-
-function Get-JwtPayload {
-    <#
-    .SYNOPSIS
-        Best-effort decode of a JWT payload. Never validates the signature.
-
-    .DESCRIPTION
-        Used only to describe the token the caller supplied - which application it belongs to and
-        whether it is app-only. Get-MgContext cannot answer either question for a raw -AccessToken:
-        it reports AuthType 'Delegated' for every token handed to it, including client-credentials
-        tokens that have no user at all. Mislabelling an app-only run as delegated sends the
-        permission advice down the wrong branch, so the token itself is the authority here.
-    #>
-    param([string] $Token)
-
-    if ([string]::IsNullOrWhiteSpace($Token)) { return $null }
-    $parts = $Token.Split('.')
-    if ($parts.Count -lt 2) { return $null }
-
-    try {
-        $payload = $parts[1].Replace('-', '+').Replace('_', '/')
-        # base64url drops the padding; restore it before decoding.
-        switch ($payload.Length % 4) {
-            2 { $payload += '==' }
-            3 { $payload += '=' }
-            1 { return $null }
-        }
-        return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
-    }
-    catch {
-        return $null
-    }
-}
-
-function Test-JwtIsAppOnly {
-    <#
-    .SYNOPSIS
-        Returns $true / $false when the token says so, $null when it cannot be determined.
-    #>
-    param($Claims)
-
-    if ($null -eq $Claims) { return $null }
-
-    # idtyp is the explicit answer when Entra emits it.
-    $idtyp = [string](Get-Value $Claims 'idtyp' '')
-    if ($idtyp -eq 'app')  { return $true }
-    if ($idtyp -eq 'user') { return $false }
-
-    # Otherwise: a delegated token always carries scopes; an app-only token carries roles and no
-    # user identity. Check for a user first, since a delegated token can carry roles too.
-    foreach ($userClaim in 'upn', 'unique_name', 'preferred_username') {
-        if (-not [string]::IsNullOrWhiteSpace([string](Get-Value $Claims $userClaim ''))) { return $false }
-    }
-    if (-not [string]::IsNullOrWhiteSpace([string](Get-Value $Claims 'scp' ''))) { return $false }
-    if ($null -ne (Get-Value $Claims 'roles' $null)) { return $true }
-
-    return $null
 }
 
 function Get-GraphErrorInfo {
@@ -1052,21 +995,31 @@ else {
 }
 
 $ClientSecret = ConvertTo-SecureStringValue -Value $ClientSecret -Name 'ClientSecret'
-$AccessToken  = ConvertTo-SecureStringValue -Value $AccessToken  -Name 'AccessToken'
+$CertificatePassword = ConvertTo-SecureStringValue -Value $CertificatePassword -Name 'CertificatePassword'
+
+$certificateSourceCount = @(
+    [bool]$CertificateThumbprint,
+    ($null -ne $Certificate),
+    [bool]$CertificatePath
+).Where({ $_ }).Count
+if ($certificateSourceCount -gt 1) {
+    throw 'Supply exactly one certificate source: -CertificateThumbprint, -Certificate, or -CertificatePath.'
+}
+if ($CertificatePassword -and (-not $CertificatePath)) {
+    throw '-CertificatePassword can be used only with -CertificatePath.'
+}
 
 $modes = @()
-if ($UseExistingConnection) { $modes += 'ExistingConnection' }
 if ($Interactive)           { $modes += 'Interactive' }
-if ($UseDeviceCode)         { $modes += 'DeviceCode' }
-if ($AccessToken)           { $modes += 'AccessToken' }
-if ($CertificateThumbprint) { $modes += 'Certificate' }
+if ($UseManagedIdentity)    { $modes += 'ManagedIdentity' }
+if ($CertificateThumbprint -or $Certificate -or $CertificatePath) { $modes += 'Certificate' }
 if ($ClientSecret)          { $modes += 'ClientSecret' }
 
 if ($modes.Count -gt 1) {
     throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one."
 }
 if ($modes.Count -eq 0) {
-    throw 'No authentication method specified. Pass -Interactive (recommended), -UseDeviceCode, -UseExistingConnection, or -ClientId with -ClientSecret / -CertificateThumbprint.'
+    throw 'No authentication method specified. Pass -Interactive (recommended), -UseManagedIdentity, or -ClientId with -ClientSecret / -CertificateThumbprint / -Certificate / -CertificatePath.'
 }
 $mode = $modes[0]
 
@@ -1075,31 +1028,45 @@ if ($mode -in @('ClientSecret', 'Certificate')) {
     if (-not $TenantId) { throw "-TenantId is required for $mode authentication." }
 }
 
-if ($mode -ne 'ExistingConnection') {
-    $connect = @{ NoWelcome = $true; ErrorAction = 'Stop' }
+$connect = @{ NoWelcome = $true; ErrorAction = 'Stop' }
     switch ($mode) {
         'Interactive' {
             if ($TenantId) { $connect.TenantId = $TenantId }
             if ($ClientId) { $connect.ClientId = $ClientId }
         }
-        'DeviceCode' {
-            $connect.UseDeviceCode = $true
-            if ($TenantId) { $connect.TenantId = $TenantId }
-            if ($ClientId) { $connect.ClientId = $ClientId }
-        }
-        'AccessToken'  { $connect.AccessToken = $AccessToken }
         'ClientSecret' {
             $connect.TenantId               = $TenantId
             $connect.ClientSecretCredential = [pscredential]::new($ClientId, $ClientSecret)
         }
-        'Certificate'  {
-            $connect.TenantId              = $TenantId
-            $connect.ClientId              = $ClientId
-            $connect.CertificateThumbprint = $CertificateThumbprint
+                'Certificate'  {
+            $connect.TenantId = $TenantId
+            $connect.ClientId = $ClientId
+            if ($Certificate) {
+                $connect.Certificate = $Certificate
+            }
+            elseif ($CertificatePath) {
+                if (-not (Test-Path -LiteralPath $CertificatePath)) {
+                    throw "Certificate file not found: $CertificatePath"
+                }
+                $pfx = (Resolve-Path -LiteralPath $CertificatePath).ProviderPath
+                $connect.Certificate = if ($CertificatePassword) {
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword)
+                }
+                else {
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx)
+                }
+            }
+            else {
+                $connect.CertificateThumbprint = $CertificateThumbprint
+            }
+        }
+        'ManagedIdentity' {
+            if ($ClientId) { throw '-ClientId cannot be used with -UseManagedIdentity. Only system-assigned managed identity is supported.' }
+            $connect.Identity = $true
         }
     }
 
-    if ($mode -in @('Interactive', 'DeviceCode')) {
+    if ($mode -eq 'Interactive') {
         $connected = $false
         for ($setIndex = 0; $setIndex -lt $delegatedScopeSets.Count; $setIndex++) {
             $connect.Scopes = $delegatedScopeSets[$setIndex]
@@ -1119,11 +1086,10 @@ if ($mode -ne 'ExistingConnection') {
     else {
         Connect-MgGraph @connect
     }
-}
 
 $mg = Get-MgContext
 if (-not $mg) {
-    throw 'Connect-MgGraph did not establish a Graph context. If you used -Interactive from a non-interactive host, the browser flow cannot complete - use -UseDeviceCode instead.'
+    throw 'Connect-MgGraph did not establish a Graph context. If you used -Interactive from a non-interactive host, the browser flow cannot complete - use an interactive host or run with app-only authentication.'
 }
 
 $authType  = [string](Get-Value $mg 'AuthType' '')
@@ -1131,29 +1097,6 @@ $isAppOnly = ($authType -eq 'AppOnly')
 $ctxTenant = [string](Get-Value $mg 'TenantId' $TenantId)
 $callerId  = [string](Get-Value $mg 'ClientId' '')
 $script:CallerAppId = $callerId
-
-# A raw -AccessToken is always reported as 'Delegated' by Get-MgContext, even for a
-# client-credentials token with no user. Ask the token instead.
-if ($mode -eq 'AccessToken') {
-    $tokenPlain = ''
-    try {
-        $tokenPlain = [Net.NetworkCredential]::new('', $AccessToken).Password
-    }
-    catch {
-        $tokenPlain = ''
-    }
-    $claims    = Get-JwtPayload -Token $tokenPlain
-    $fromToken = Test-JwtIsAppOnly -Claims $claims
-    if ($null -ne $fromToken) { $isAppOnly = [bool]$fromToken }
-    if ([string]::IsNullOrWhiteSpace($callerId) -and $null -ne $claims) {
-        $callerId = [string](Get-Value $claims 'appid' ([string](Get-Value $claims 'azp' '')))
-        $script:CallerAppId = $callerId
-    }
-    if ($null -ne $claims) {
-        $tokenTenant = [string](Get-Value $claims 'tid' '')
-        if (-not [string]::IsNullOrWhiteSpace($tokenTenant)) { $ctxTenant = $tokenTenant }
-    }
-}
 
 if ($isAppOnly) {
     $who = if ([string]::IsNullOrWhiteSpace($callerId)) { '(unknown application)' } else { $callerId }

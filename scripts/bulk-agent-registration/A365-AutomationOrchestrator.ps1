@@ -245,8 +245,6 @@
     -AgentUserPrincipalName is rejected here: the UPN cannot be changed after creation, and
     the account is identified by -UpdateAgentUser itself.
 
-    Like -NewAgentUser this requires app-only authentication.
-
     Cannot be combined with -NewAgentUser.
 
 .PARAMETER UpdateAgentRegistration
@@ -436,7 +434,7 @@
 
 .PARAMETER KeyVaultAccessToken
     A bearer token for https://vault.azure.net, needed only when one cannot be derived from
-    the Graph credential - with -AccessToken, or -Interactive without a signed-in Azure
+    the Graph credential - for example with -Interactive without a signed-in Azure
     session.
 .PARAMETER BlueprintManagedIdentityPrincipalId
     Principal id of a managed identity to federate to the blueprint, so the agent can get
@@ -519,9 +517,8 @@
     forwarded to the step script as its -AgentIdentityId, the service principal OBJECT ID,
     and lands in the create call as identityParentId.
 
-    -NewAgentUser requires app-only authentication: New-A365AgentUser.ps1 is
-    client-credentials only and has no -Interactive mode, so the combination is rejected up
-    front rather than failing after the earlier phases have run.
+    New-A365AgentUser.ps1 supports both app-only credentials and interactive delegated
+    authentication. Delegated runs require the documented Graph scopes and directory roles.
 
 .PARAMETER AgentUserDisplayName
     Display name for the agent user. Optional: when omitted, New-A365AgentUser.ps1 defaults
@@ -585,8 +582,8 @@
     plaintext. Off by default: a report file is easy to commit, sync or forward by accident, and
     Graph only ever returns this value once.
 
-    The credentials used to AUTHENTICATE this run (-ClientSecret, -CertificatePassword,
-    -AccessToken) are redacted even with this switch. They are already known to whoever started
+    The credentials used to AUTHENTICATE this run (-ClientSecret, -CertificatePassword) are
+    redacted even with this switch. They are already known to whoever started
     the run, and they are usually far longer-lived than the secret being reported.
 
     On Windows the report file is created with an ACL granting only the current user when this
@@ -616,9 +613,6 @@
 
 .PARAMETER UseManagedIdentity
     Authenticate with the host's managed identity.
-
-.PARAMETER AccessToken
-    A pre-acquired Graph access token, as a SecureString or a plain string.
 
 .PARAMETER Interactive
     Sign in as a user.
@@ -746,8 +740,7 @@
         -AgentUserUsageLocation US -AgentUserAssignLicense `
         -AgentUserLicenseSkuPartNumber Microsoft_365_Copilot
 
-    All four scenarios. -NewAgentUser needs app-only auth, because New-A365AgentUser.ps1
-    is client-credentials only.
+    All four scenarios.
 
     Note there is no identity parameter here: the agent user is bound to the agent identity
     this run creates, which the pipeline forwards automatically.
@@ -993,7 +986,6 @@ param(
     [string]       $CertificatePath,
     [object]       $CertificatePassword,
     [switch]       $UseManagedIdentity,
-    [object]       $AccessToken,
     [switch]       $Interactive,
     [switch]       $SkipPermissionCheck,
 
@@ -2104,40 +2096,47 @@ if ($updAgentUser) {
 # unattended run cannot silently stall on a sign-in prompt.
 $authModes = @()
 if ($Interactive)        { $authModes += 'Interactive' }
-if ($AccessToken)        { $authModes += 'AccessToken' }
 if ($UseManagedIdentity) { $authModes += 'ManagedIdentity' }
 if ($CertificateThumbprint -or $Certificate -or $CertificatePath) { $authModes += 'Certificate' }
 if ($ClientSecret -or $env:A365_CLIENT_SECRET) { $authModes += 'ClientSecret' }
 
 if ($authModes.Count -eq 0) {
-    throw 'No authentication method was specified. To run as an application pass -ClientId with -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath (or use -UseManagedIdentity / -AccessToken). To sign in as a user pass -Interactive.'
+    throw 'No authentication method was specified. To run as an application pass -ClientId with -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath (or use -UseManagedIdentity). To sign in as a user pass -Interactive.'
 }
 if ($authModes.Count -gt 1) {
     throw "Conflicting authentication options ($($authModes -join ', ')). Supply exactly one."
 }
+$certificateSourceCount = @(
+    [bool]$CertificateThumbprint,
+    ($null -ne $Certificate),
+    [bool]$CertificatePath
+).Where({ $_ }).Count
+if ($certificateSourceCount -gt 1) {
+    throw 'Supply exactly one certificate source: -CertificateThumbprint, -Certificate, or -CertificatePath.'
+}
+if ($CertificatePassword -and (-not $CertificatePath)) {
+    throw '-CertificatePassword can be used only with -CertificatePath.'
+}
+if (($authModes[0] -in @('ClientSecret', 'Certificate')) -and [string]::IsNullOrWhiteSpace($ClientId)) {
+    throw "-ClientId is required for $($authModes[0]) authentication."
+}
+if ($UseManagedIdentity -and (-not [string]::IsNullOrWhiteSpace($ClientId))) {
+    throw '-UseManagedIdentity supports only the system-assigned managed identity; do not pass -ClientId.'
+}
+if ($Interactive -and ($phaseAgentUser -or $rmAgentUser) -and [string]::IsNullOrWhiteSpace($ClientId)) {
+    throw '-ClientId is required for interactive AgentUser operations because the caller-controlled public client must be authorized for the AgentUser preview scopes.'
+}
 $authMode  = $authModes[0]
 $isAppOnly = $authMode -in @('ClientSecret', 'Certificate', 'ManagedIdentity')
-
-# New-A365AgentUser.ps1 is client-credentials only: it has no -Interactive and no
-# -SkipPermissionCheck parameter. Reject the impossible combination now rather than letting
-# phases 1-4 create objects and then failing on a parameter that does not exist.
-if (($runAgentUser -or $updAgentUser) -and -not $isAppOnly) {
-    $auSwitch = if ($runAgentUser) { '-NewAgentUser' } else { '-UpdateAgentUser' }
-    throw "$auSwitch requires app-only authentication, but this run authenticates as '$authMode'. " +
-          'New-A365AgentUser.ps1 supports client secret, certificate and managed identity only. ' +
-          'Re-run with -ClientId plus -ClientSecret / -CertificateThumbprint / -UseManagedIdentity, ' +
-          'and use -AgentRegistrationAuth Interactive if the registry step needs a signed-in user.'
-}
 
 # Shared auth splat, forwarded verbatim to each step.
 $authSplat = @{}
 foreach ($k in 'ClientId', 'ClientSecret', 'CertificateThumbprint', 'Certificate', 'CertificatePath',
-               'CertificatePassword', 'UseManagedIdentity', 'AccessToken', 'Interactive', 'SkipPermissionCheck') {
+               'CertificatePassword', 'UseManagedIdentity', 'Interactive', 'SkipPermissionCheck') {
     if ($PSBoundParameters.ContainsKey($k)) { $authSplat[$k] = $PSBoundParameters[$k] }
 }
 
-# Step 4 authenticates separately when asked. The registry APIs read ownerIds/createdBy from
-# /me, so an app-only token often cannot drive them at all.
+# Step 4 can authenticate separately when a delegated registration phase is preferred.
 $registrationAuthSplat = $authSplat
 if ($AgentRegistrationAuth -eq 'Interactive') {
     $registrationAuthSplat = @{ Interactive = $true }
@@ -2145,23 +2144,18 @@ if ($AgentRegistrationAuth -eq 'Interactive') {
     if ($SkipPermissionCheck) { $registrationAuthSplat.SkipPermissionCheck = $true }
 }
 
-# Phase 3 takes the same credentials minus the two parameters its script does not declare.
-# Splatting an undeclared parameter is a hard bind error, so filter rather than forward.
+# Phase 3 supports the same authentication methods but has no permission-check bypass.
 $agentUserAuthSplat = @{}
 foreach ($k in $authSplat.Keys) {
-    if ($k -in @('Interactive', 'SkipPermissionCheck')) { continue }
+    if ($k -eq 'SkipPermissionCheck') { continue }
     $agentUserAuthSplat[$k] = $authSplat[$k]
 }
 
-# The removal scripts declare a narrower auth surface again: no -Certificate, -CertificatePath,
-# -CertificatePassword, -UseManagedIdentity or -SkipPermissionCheck. Forward only what they
-# accept, for the same reason - an undeclared parameter is a hard bind error, and it would
-# surface only once a destructive phase had already started.
+# Removal scripts use the same credential surface but do not expose permission-check bypass.
 $removalAuthSplat = @{}
 foreach ($k in $authSplat.Keys) {
-    if ($k -in @('ClientId', 'ClientSecret', 'CertificateThumbprint', 'AccessToken', 'Interactive')) {
-        $removalAuthSplat[$k] = $authSplat[$k]
-    }
+    if ($k -eq 'SkipPermissionCheck') { continue }
+    $removalAuthSplat[$k] = $authSplat[$k]
 }
 
 # Every phase merges one of these splats into its argument hash, so adding the log settings

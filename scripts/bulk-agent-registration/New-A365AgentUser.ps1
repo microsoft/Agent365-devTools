@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Creates a Microsoft Agent 365 Agent User (and optionally an Agent Identity) using only
-    Microsoft Graph REST API calls, authenticating app-only (application permissions).
+    Microsoft Graph REST API calls, authenticating with app-only or interactive delegated Graph access.
 
 .DESCRIPTION
     Replicates the Graph API calls the Agent 365 CLI ("a365 setup createinstance") performs,
@@ -17,33 +17,25 @@
 
     Licensing is opt-in: no license is assigned unless -AssignLicense is specified.
 
-    Authentication is application-only (client credentials). Supported methods:
+    Supported authentication methods:
       1.  Client secret                      -ClientSecret
       2.  Certificate from cert store        -CertificateThumbprint [-CertificateStoreLocation]
       3.  Certificate from PFX file          -CertificatePath [-CertificatePassword]
       4.  Certificate object                 -Certificate
       5.  Managed identity (system-assigned) -UseManagedIdentity
-      6.  Managed identity (user-assigned)   -UseManagedIdentity -ManagedIdentityClientId
-      7.  Workload identity federation       -FederatedTokenFile  (AKS / Kubernetes)
-      8.  Federated client assertion         -ClientAssertion     (GitHub OIDC, any OIDC IdP)
-      9.  Azure CLI service principal token  -UseAzureCli
-      10. Azure PowerShell (Az) token        -UseAzPowerShell
-      11. Pre-acquired raw token             -AccessToken
+      6.  Interactive delegated sign-in      -Interactive
 
-    When no auth parameter is supplied, the script auto-detects, in order: AZURE_CLIENT_SECRET,
-    AZURE_CLIENT_CERTIFICATE_PATH, AZURE_FEDERATED_TOKEN_FILE, GitHub Actions OIDC, then IMDS
-    managed identity. This makes the script drop-in compatible with standard Azure SDK
-    environment-variable conventions.
+    When no auth parameter is supplied, the script auto-detects, in order:
+    AZURE_CLIENT_SECRET, AZURE_CLIENT_CERTIFICATE_PATH, then IMDS managed identity.
 
 .PARAMETER TenantId
     Directory (tenant) ID or verified domain. Required for client secret, certificate and
-    federated-credential auth; optional for -AccessToken (read from the token's 'tid'
-    claim), managed identity, -UseAzureCli and -UseAzPowerShell.
+    interactive delegated authentication; optional for managed identity.
 
 .PARAMETER ClientId
-    Application (client) ID authenticating to Graph. Required for client secret, certificate,
-    federated token, client assertion, and GitHub OIDC authentication. Managed identity,
-    Azure CLI, Az PowerShell, and access-token authentication do not require it.
+    Application (client) ID authenticating to Graph. Required for client secret and
+    certificate authentication. Also required for interactive delegated authentication so a
+    caller-controlled public client can request the AgentUser preview scopes.
 
 .PARAMETER ClientSecret
     Client secret, as a SecureString or a plain string. Auto-detected from
@@ -67,29 +59,14 @@
     An already-loaded X509Certificate2 to authenticate with.
 
 .PARAMETER UseManagedIdentity
-    Authenticate with the host's managed identity (system-assigned, or user-assigned with
-    -ManagedIdentityClientId). Supports the App Service/Container Apps/Functions
+    Authenticate with the host's system-assigned managed identity. Supports the
+    App Service/Container Apps/Functions
     IDENTITY_ENDPOINT protocol and Azure VM/VMSS IMDS.
 
-.PARAMETER ManagedIdentityClientId
-    Client id of a user-assigned managed identity, used with -UseManagedIdentity.
-
-.PARAMETER FederatedTokenFile
-    Path to a workload-identity federation token file (AKS/Kubernetes), exchanged for a
-    Graph token via client assertion. Auto-detected from $env:AZURE_FEDERATED_TOKEN_FILE.
-
-.PARAMETER ClientAssertion
-    A pre-built JWT client assertion (e.g. from a GitHub OIDC or other OIDC identity
-    provider) to authenticate -ClientId with.
-
-.PARAMETER UseAzureCli
-    Obtain a Graph token from the signed-in Azure CLI ('az account get-access-token').
-
-.PARAMETER UseAzPowerShell
-    Obtain a Graph token from the signed-in Az PowerShell session (Get-AzAccessToken).
-
-.PARAMETER AccessToken
-    A pre-acquired Microsoft Graph access token, as a SecureString or a plain string.
+.PARAMETER Interactive
+    Uses interactive delegated sign-in and requests delegated Graph scopes needed for
+    agent-user creation/update, manager assignment, licensing, and optional permission
+    configuration.
 
 .PARAMETER Environment
     Azure cloud: 'AzurePublic' (default), 'AzureUSGovernment' or 'AzureChina'. Selects the
@@ -329,8 +306,8 @@
         -UserPrincipalName 'aria@contoso.com' -DisplayName 'Aria'
 
 .EXAMPLE
-    # Workload identity federation inside AKS, US Government cloud
-    .\New-A365AgentUser.ps1 -TenantId $tid -ClientId $cid -FederatedTokenFile $env:AZURE_FEDERATED_TOKEN_FILE `
+    # Interactive delegated sign-in, US Government cloud
+    .\New-A365AgentUser.ps1 -TenantId $tid -ClientId $interactiveClientId -Interactive `
         -Environment AzureUSGovernment -BlueprintAppId $bp -AgentIdentityDisplayName 'Aria Identity' `
         -UserPrincipalName 'aria@contoso.us' -DisplayName 'Aria'
 
@@ -380,8 +357,8 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
     # ---------- Tenant / application ----------
-    # Required for confidential-client flows (secret, certificate, federated credential, assertion).
-    # Optional for -AccessToken (read from the token's 'tid' claim), managed identity, az CLI and Az PowerShell.
+    # Required for confidential-client flows (secret, certificate) and interactive delegated auth.
+    # Optional for managed identity.
     [Parameter()]
     [string] $TenantId,
 
@@ -397,12 +374,7 @@ param(
     [Parameter()] [object] $CertificatePassword,                # string or SecureString
     [Parameter()] [System.Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,
     [Parameter()] [switch] $UseManagedIdentity,
-    [Parameter()] [string] $ManagedIdentityClientId,
-    [Parameter()] [string] $FederatedTokenFile,
-    [Parameter()] [string] $ClientAssertion,
-    [Parameter()] [switch] $UseAzureCli,
-    [Parameter()] [switch] $UseAzPowerShell,
-    [Parameter()] [object] $AccessToken,                        # string or SecureString
+    [Parameter()] [switch] $Interactive,
 
     # ---------- Cloud ----------
     [Parameter()]
@@ -1007,31 +979,12 @@ function Get-TokenEndpoint {
     return "$($script:Authority)/$($script:TenantId)/oauth2/v2.0/token"
 }
 
-function Get-TokenTenantClaim {
-    # Extracts the 'tid' claim so -AccessToken callers do not have to repeat the tenant id.
-    param([string] $Token)
-    try {
-        $parts = $Token.Split('.')
-        if ($parts.Count -lt 2) { return $null }
-        $p = $parts[1].Replace('-', '+').Replace('_', '/')
-        switch ($p.Length % 4) { 2 { $p += '==' } 3 { $p += '=' } }
-        $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p)) | ConvertFrom-Json
-        if ($claims.PSObject.Properties.Name -contains 'tid') { return $claims.tid }
-    } catch { Write-Verbose "Could not read the 'tid' claim from the supplied access token." }
-    return $null
-}
-
 function Assert-TenantRequirement {
     <#
         Confidential-client flows must target a specific tenant authority. The other flows either
         carry the tenant inside the token or inherit it from the ambient sign-in context.
     #>
-    $tenantRequired = @('ClientSecret', 'CertificateThumbprint', 'CertificatePath', 'Certificate',
-                        'FederatedTokenFile', 'ClientAssertion', 'GitHubOidc')
-
-    if ($script:AuthMethod -eq 'AccessToken' -and [string]::IsNullOrWhiteSpace($script:TenantId)) {
-        $script:TenantId = Get-TokenTenantClaim (ConvertTo-PlainText $AccessToken)
-    }
+    $tenantRequired = @('ClientSecret', 'CertificateThumbprint', 'CertificatePath', 'Certificate', 'Interactive')
 
     if ($script:AuthMethod -in $tenantRequired -and [string]::IsNullOrWhiteSpace($script:TenantId)) {
         throw "-TenantId is required for the '$($script:AuthMethod)' authentication method."
@@ -1043,17 +996,17 @@ function Resolve-AuthMethod {
         Determines which credential type to use. Explicit parameters win; otherwise fall back to
         the standard Azure SDK environment variables so the script works unchanged in CI.
     #>
+    if ($CertificatePassword -and (-not $CertificatePath) -and (-not $env:AZURE_CLIENT_CERTIFICATE_PATH)) {
+        throw '-CertificatePassword can be used only with -CertificatePath or AZURE_CLIENT_CERTIFICATE_PATH.'
+    }
+
     $explicit = @()
     if ($ClientSecret)                        { $explicit += 'ClientSecret' }
     if ($CertificateThumbprint)               { $explicit += 'CertificateThumbprint' }
     if ($CertificatePath)                     { $explicit += 'CertificatePath' }
     if ($Certificate)                         { $explicit += 'Certificate' }
     if ($UseManagedIdentity)                  { $explicit += 'ManagedIdentity' }
-    if ($FederatedTokenFile)                  { $explicit += 'FederatedTokenFile' }
-    if ($ClientAssertion)                     { $explicit += 'ClientAssertion' }
-    if ($UseAzureCli)                         { $explicit += 'AzureCli' }
-    if ($UseAzPowerShell)                     { $explicit += 'AzPowerShell' }
-    if ($AccessToken)                         { $explicit += 'AccessToken' }
+    if ($Interactive)                         { $explicit += 'Interactive' }
 
     if ($explicit.Count -gt 1) {
         throw "Specify exactly one authentication method. Found: $($explicit -join ', ')."
@@ -1063,8 +1016,6 @@ function Resolve-AuthMethod {
     # Auto-detect from environment (Azure SDK conventions).
     if ($env:AZURE_CLIENT_SECRET)           { $script:ClientSecret = $env:AZURE_CLIENT_SECRET;            return 'ClientSecret' }
     if ($env:AZURE_CLIENT_CERTIFICATE_PATH) { $script:CertificatePath = $env:AZURE_CLIENT_CERTIFICATE_PATH; return 'CertificatePath' }
-    if ($env:AZURE_FEDERATED_TOKEN_FILE)    { $script:FederatedTokenFile = $env:AZURE_FEDERATED_TOKEN_FILE; return 'FederatedTokenFile' }
-    if ($env:ACTIONS_ID_TOKEN_REQUEST_URL -and $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN) { return 'GitHubOidc' }
     if ($env:IDENTITY_ENDPOINT -or $env:MSI_ENDPOINT)                               { return 'ManagedIdentity' }
 
     throw @'
@@ -1073,11 +1024,9 @@ No authentication method supplied and none could be auto-detected.
 Provide one of:
   -ClientSecret <secret>            -CertificateThumbprint <thumbprint>
   -CertificatePath <pfx>            -Certificate <X509Certificate2>
-  -UseManagedIdentity               -FederatedTokenFile <path>
-  -ClientAssertion <jwt>            -UseAzureCli
-  -UseAzPowerShell                  -AccessToken <token>
+  -UseManagedIdentity               -Interactive
 
-Or set AZURE_CLIENT_SECRET / AZURE_CLIENT_CERTIFICATE_PATH / AZURE_FEDERATED_TOKEN_FILE.
+Or set AZURE_CLIENT_SECRET / AZURE_CLIENT_CERTIFICATE_PATH.
 '@
 }
 
@@ -1173,21 +1122,21 @@ function Get-ManagedIdentityToken {
         the Azure VM / VMSS IMDS protocol.
     #>
     $resource = $script:Graph
+    if ($ClientId -and $script:AuthMethod -eq 'ManagedIdentity') {
+        throw '-UseManagedIdentity supports only the system-assigned managed identity; do not pass -ClientId.'
+    }
 
     if ($env:IDENTITY_ENDPOINT -and $env:IDENTITY_HEADER) {
         $uri = "$($env:IDENTITY_ENDPOINT)?api-version=2019-08-01&resource=$([uri]::EscapeDataString($resource))"
-        if ($ManagedIdentityClientId) { $uri += "&client_id=$([uri]::EscapeDataString($ManagedIdentityClientId))" }
         $headers = @{ 'X-IDENTITY-HEADER' = $env:IDENTITY_HEADER }
         $r = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -ErrorAction Stop
     }
     elseif ($env:MSI_ENDPOINT -and $env:MSI_SECRET) {
         $uri = "$($env:MSI_ENDPOINT)?api-version=2017-09-01&resource=$([uri]::EscapeDataString($resource))"
-        if ($ManagedIdentityClientId) { $uri += "&clientid=$([uri]::EscapeDataString($ManagedIdentityClientId))" }
         $r = Invoke-RestMethod -Method Get -Uri $uri -Headers @{ Secret = $env:MSI_SECRET } -ErrorAction Stop
     }
     else {
         $uri = "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=$([uri]::EscapeDataString($resource))"
-        if ($ManagedIdentityClientId) { $uri += "&client_id=$([uri]::EscapeDataString($ManagedIdentityClientId))" }
         $r = Invoke-RestMethod -Method Get -Uri $uri -Headers @{ Metadata = 'true' } -TimeoutSec 10 -ErrorAction Stop
     }
 
@@ -1199,36 +1148,75 @@ function Get-ManagedIdentityToken {
     return $r.access_token, $expires
 }
 
-function Get-GitHubOidcAssertion {
-    $uri = "$($env:ACTIONS_ID_TOKEN_REQUEST_URL)&audience=api://AzureADTokenExchange"
-    $headers = @{ Authorization = "Bearer $($env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)" }
-    $r = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -ErrorAction Stop
-    return $r.value
-}
-
-function Get-AzureCliToken {
-    $az = Get-Command az -ErrorAction SilentlyContinue
-    if (-not $az) { throw "Azure CLI ('az') was not found on PATH. Install it or choose a different authentication method." }
-    $azArgs = @('account', 'get-access-token', '--resource', $script:Graph, '--output', 'json')
-    if (-not [string]::IsNullOrWhiteSpace($script:TenantId)) { $azArgs += @('--tenant', $script:TenantId) }
-    $raw = & az @azArgs 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "az account get-access-token failed: $raw" }
-    $parsed = ($raw | Out-String) | ConvertFrom-Json
-    $expires = try { [DateTimeOffset]::Parse($parsed.expiresOn) } catch { [DateTimeOffset]::UtcNow.AddMinutes(55) }
-    return $parsed.accessToken, $expires
-}
-
-function Get-AzPowerShellToken {
-    if (-not (Get-Command Get-AzAccessToken -ErrorAction SilentlyContinue)) {
-        throw "Get-AzAccessToken was not found. Install the Az.Accounts module or choose a different authentication method."
+function Get-InteractiveDelegatedScopes {
+    $scopes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($scope in @(
+            'User.Read',
+            'User.Read.All',
+            'User.ReadWrite.All',
+            'Directory.Read.All',
+            'Organization.Read.All',
+            'Application.Read.All',
+            'AgentIdentity.Read.All',
+            'AgentIdentity.ReadWrite.All',
+            'AgentIdUser.ReadWrite.All',
+            'LicenseAssignment.ReadWrite.All',
+            'DelegatedPermissionGrant.ReadWrite.All',
+            'AppRoleAssignment.ReadWrite.All')) {
+        $null = $scopes.Add($scope)
     }
-    $azParams = @{ ResourceUrl = $script:Graph; ErrorAction = 'Stop' }
-    if (-not [string]::IsNullOrWhiteSpace($script:TenantId)) { $azParams['TenantId'] = $script:TenantId }
-    $t = Get-AzAccessToken @azParams
-    # Az 14+ returns the token as a SecureString.
-    $token = ConvertTo-PlainText $t.Token
-    $expires = try { [DateTimeOffset] $t.ExpiresOn } catch { [DateTimeOffset]::UtcNow.AddMinutes(55) }
-    return $token, $expires
+
+    if ($ConfigurePermissions) {
+        $null = $scopes.Add('Application.ReadWrite.All')
+    }
+
+    return @($scopes)
+}
+
+function Get-InteractiveToken {
+    $client = if ([string]::IsNullOrWhiteSpace($ClientId)) { '04b07795-8ddb-461a-bbee-02f9e1bf7b46' } else { $ClientId }
+    $scopes = Get-InteractiveDelegatedScopes
+    $deviceCodeResponse = Invoke-RestMethod -Method Post -Uri "$($script:Authority)/$($script:TenantId)/oauth2/v2.0/devicecode" -Body @{
+        client_id = $client
+        scope     = ($scopes -join ' ')
+    } -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop
+
+    Write-Host ''
+    Write-Host $deviceCodeResponse.message -ForegroundColor Yellow
+    Write-Host ''
+
+    $expiresOn = [DateTimeOffset]::UtcNow.AddSeconds([int]$deviceCodeResponse.expires_in)
+    $interval = [Math]::Max([int]$deviceCodeResponse.interval, 5)
+
+    while ([DateTimeOffset]::UtcNow -lt $expiresOn) {
+        Start-Sleep -Seconds $interval
+        try {
+            $tokenResponse = Invoke-RestMethod -Method Post -Uri "$($script:Authority)/$($script:TenantId)/oauth2/v2.0/token" -Body @{
+                grant_type  = 'urn:ietf:params:oauth:grant-type:device_code'
+                client_id   = $client
+                device_code = $deviceCodeResponse.device_code
+            } -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop
+            return $tokenResponse.access_token, [DateTimeOffset]::UtcNow.AddSeconds([int]$tokenResponse.expires_in)
+        }
+        catch {
+            $status = Get-ErrorStatusCode $_
+            $raw = Get-ErrorResponseBody $_
+            $err = $null
+            if ($raw) {
+                try { $err = $raw | ConvertFrom-Json } catch { }
+            }
+            $code = if ($err -and $err.error) { [string]$err.error } else { '' }
+            if ($status -eq 400 -and ($code -in @('authorization_pending', 'slow_down'))) {
+                if ($code -eq 'slow_down') { $interval += 5 }
+                continue
+            }
+
+            $msg = if ($err -and $err.error_description) { [string]$err.error_description } else { $_.Exception.Message }
+            throw "Interactive delegated sign-in failed: $msg"
+        }
+    }
+
+    throw 'Interactive delegated sign-in timed out before authorization completed.'
 }
 
 function Get-GraphToken {
@@ -1242,8 +1230,7 @@ function Get-GraphToken {
         return $script:CachedToken
     }
 
-    $needsClientId = @('ClientSecret', 'CertificateThumbprint', 'CertificatePath', 'Certificate',
-                       'FederatedTokenFile', 'ClientAssertion', 'GitHubOidc')
+    $needsClientId = @('ClientSecret', 'CertificateThumbprint', 'CertificatePath', 'Certificate', 'Interactive')
     if ($script:AuthMethod -in $needsClientId -and [string]::IsNullOrWhiteSpace($ClientId)) {
         throw "-ClientId is required for the '$($script:AuthMethod)' authentication method."
     }
@@ -1268,29 +1255,8 @@ function Get-GraphToken {
                 client_assertion      = (New-ClientAssertionJwt -Cert $cert)
             }
         }
-        { $_ -in 'FederatedTokenFile', 'ClientAssertion', 'GitHubOidc' } {
-            $assertion = switch ($script:AuthMethod) {
-                'FederatedTokenFile' {
-                    if (-not (Test-Path -LiteralPath $FederatedTokenFile)) {
-                        throw "Federated token file not found: $FederatedTokenFile"
-                    }
-                    (Get-Content -LiteralPath $FederatedTokenFile -Raw).Trim()
-                }
-                'ClientAssertion' { $ClientAssertion }
-                'GitHubOidc'      { Get-GitHubOidcAssertion }
-            }
-            $token, $exp = Invoke-TokenEndpoint @{
-                client_id             = $ClientId
-                scope                 = $script:GraphScope
-                grant_type            = 'client_credentials'
-                client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
-                client_assertion      = $assertion
-            }
-        }
         'ManagedIdentity' { $token, $exp = Get-ManagedIdentityToken }
-        'AzureCli'        { $token, $exp = Get-AzureCliToken }
-        'AzPowerShell'    { $token, $exp = Get-AzPowerShellToken }
-        'AccessToken'     { $token = ConvertTo-PlainText $AccessToken; $exp = [DateTimeOffset]::UtcNow.AddMinutes(55) }
+        'Interactive'     { $token, $exp = Get-InteractiveToken }
         default           { throw "Unsupported authentication method '$($script:AuthMethod)'." }
     }
 
@@ -1330,13 +1296,14 @@ function Show-TokenIdentity {
         $script:TokenIsDelegated = [bool]$scp
 
         if ($scp) {
+            Write-Detail "Authorization model: delegated scopes + signed-in user's directory roles."
             # A delegated token from an admin user is the RECOMMENDED way to bootstrap
             # -ConfigurePermissions, because the app has no permissions of its own yet.
             if ($ConfigurePermissions) {
                 Write-Detail "Delegated token detected; permissions will be configured as the signed-in user." ([ConsoleColor]::DarkCyan)
             }
             else {
-                Write-Warning "The token is delegated ('scp'), not application-only. Agent provisioning calls expect an app-only token; they will run as the signed-in user and may be denied."
+                Write-Detail "Delegated token detected. Authorization now depends on both delegated scopes ('scp') and the signed-in user's directory roles." ([ConsoleColor]::DarkCyan)
             }
         }
         elseif ($roles.Count -eq 0) {
@@ -1346,9 +1313,8 @@ This app-only token carries no application permissions ('roles' claim is absent)
 configure permissions either - the first Graph call will be denied.
 
 Bootstrap it one of these ways instead:
-  1. Sign in as an admin USER and use that delegated token (simplest):
-       az login --tenant <tenant> --allow-no-subscriptions
-       .\New-A365AgentUser.ps1 -UseAzureCli -ConfigurePermissions -ConfigureAppId $appId
+  1. Sign in as an admin USER and use interactive delegated auth:
+       .\New-A365AgentUser.ps1 -TenantId <tenant> -ClientId <interactiveClientId> -Interactive -ConfigurePermissions -ConfigureAppId $appId
   2. Have an admin consent Application.ReadWrite.All + AppRoleAssignment.ReadWrite.All to this
      app once in the Entra portal, then re-run app-only.
 "@
@@ -1356,6 +1322,9 @@ Bootstrap it one of these ways instead:
             else {
                 Write-Warning "The token contains no 'roles' claim. Graph calls will likely fail with 403. Grant this app permissions first (see -ConfigurePermissions)."
             }
+        }
+        else {
+            Write-Detail "Authorization model: application roles only. Signed-in user directory roles are not evaluated for app-only tokens."
         }
         $script:TokenRoles = $roles
     } catch {
@@ -1521,8 +1490,7 @@ privileged.
 Use ONE of the following:
 
   1. Delegated admin user (simplest - no pre-existing app permissions required):
-       az login --tenant $($script:TenantId) --allow-no-subscriptions
-       .\New-A365AgentUser.ps1 -UseAzureCli -ConfigurePermissions -ConfigureAppId $AppId
+       .\New-A365AgentUser.ps1 -TenantId $($script:TenantId) -ClientId <interactiveClientId> -Interactive -ConfigurePermissions -ConfigureAppId $AppId
      The signed-in account must hold Application Administrator, Cloud Application Administrator
      or Global Administrator.
 
@@ -2501,6 +2469,8 @@ $script:CachedToken = $null
 $script:CachedTokenExpiry = [DateTimeOffset]::MinValue
 $script:TokenRoles = @()
 $script:TokenIsDelegated = $false
+$script:TenantId = $TenantId
+$script:ClientId = $ClientId
 
 try {
     Resolve-CloudEndpoints
@@ -2556,7 +2526,7 @@ try {
     $script:AuthMethod = Resolve-AuthMethod
     Assert-TenantRequirement
 
-    Write-Step 'Authenticating to Microsoft Graph (application-only)'
+    Write-Step 'Authenticating to Microsoft Graph'
     Write-Detail "Cloud        : $Environment"
     Write-Detail "Graph        : $($script:Graph)"
     Write-Detail "Authority    : $($script:Authority)"

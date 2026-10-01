@@ -47,7 +47,7 @@
     AUTHENTICATION
     Same model as New-A365AgentBlueprint.ps1 and New-A365AgentIdentity.ps1: pick exactly one of
     -ClientSecret, -CertificateThumbprint/-Certificate/-CertificatePath, -UseManagedIdentity,
-    -AccessToken or -Interactive. There is no implicit fallback, so an unattended run can never
+    or -Interactive. There is no implicit fallback, so an unattended run can never
     stall on a sign-in prompt.
 
     APPLICATION (APP-ONLY) PERMISSIONS ARE SUPPORTED.
@@ -177,10 +177,7 @@
     Password for -CertificatePath, as a SecureString or a plain string.
 
 .PARAMETER UseManagedIdentity
-    Authenticate with the host's managed identity. Pass -ClientId for a user-assigned identity.
-
-.PARAMETER AccessToken
-    A pre-acquired Graph access token, as a SecureString or a plain string.
+    Authenticate with the host's SYSTEM-assigned managed identity.
 
 .PARAMETER Interactive
     Sign in as a user. Pair with -ClientId for an app that has the preview scopes consented.
@@ -330,7 +327,6 @@ param(
     [string]       $CertificatePath,
     [object]       $CertificatePassword,
     [switch]       $UseManagedIdentity,
-    [object]       $AccessToken,
     [switch]       $Interactive,
     [switch]       $SkipPermissionCheck,
 
@@ -1095,47 +1091,6 @@ function ConvertTo-SecureStringValue {
     return $secure
 }
 
-# Reads the appid (v1 tokens) or azp (v2 tokens) claim out of a JWT access token. Returns '' for
-# anything that is not a readable JWT - this is a best-effort convenience, never a security check,
-# and the signature is deliberately NOT validated because the token is one we already hold.
-function Get-JwtAppId {
-    [OutputType([string])]
-    param([object] $Token)
-
-    if ($null -eq $Token) { return '' }
-
-    $raw = ''
-    if ($Token -is [securestring]) {
-        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Token)
-        try   { $raw = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-        finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-    }
-    else { $raw = [string]$Token }
-
-    if ([string]::IsNullOrWhiteSpace($raw)) { return '' }
-
-    $parts = $raw.Split('.')
-    if ($parts.Count -lt 2) { return '' }
-
-    try {
-        $segment = $parts[1].Replace('-', '+').Replace('_', '/')
-        switch ($segment.Length % 4) {
-            2 { $segment += '==' }
-            3 { $segment += '=' }
-            1 { return '' }
-        }
-        $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($segment)) | ConvertFrom-Json
-        foreach ($name in 'appid', 'azp') {
-            if ((Test-HasProperty $claims $name) -and $claims.$name) { return [string]$claims.$name }
-        }
-    }
-    catch {
-        Write-Verbose "Could not decode the access token to read its appid claim: $($_.Exception.Message)"
-    }
-
-    return ''
-}
-
 function Connect-GraphSession {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -1148,7 +1103,6 @@ function Connect-GraphSession {
         [string]       $CertificatePath,
         [object]       $CertificatePassword,
         [switch]       $UseManagedIdentity,
-        [object]       $AccessToken,
         [switch]       $Interactive,
         [string[]]     $DelegatedScope  = @(),
         [string[]]     $RequiredAppRole = @(),
@@ -1173,7 +1127,6 @@ finally {
     # Accept plain strings as well as SecureStrings, and warn about the trade-off once.
     $secretWasPlainText = $ClientSecret -is [string]
     $ClientSecret = ConvertTo-SecureStringValue -Value $ClientSecret -Name 'ClientSecret'
-    $AccessToken  = ConvertTo-SecureStringValue -Value $AccessToken  -Name 'AccessToken'
     $CertificatePassword = ConvertTo-SecureStringValue -Value $CertificatePassword -Name 'CertificatePassword'
 
     # Keeps the secret out of command lines, shell history and transcripts.
@@ -1185,19 +1138,30 @@ finally {
         Write-Warning 'A plain-text -ClientSecret was passed on the command line, where it is visible to shell history and transcripts. Prefer $env:A365_CLIENT_SECRET or a SecureString.'
     }
 
+    $certificateSourceCount = @(
+        [bool]$CertificateThumbprint,
+        ($null -ne $Certificate),
+        [bool]$CertificatePath
+    ).Where({ $_ }).Count
+    if ($certificateSourceCount -gt 1) {
+        throw 'Supply exactly one certificate source: -CertificateThumbprint, -Certificate, or -CertificatePath.'
+    }
+    if ($CertificatePassword -and (-not $CertificatePath)) {
+        throw '-CertificatePassword can be used only with -CertificatePath.'
+    }
+
     $modes = @()
     if ($Interactive)        { $modes += 'Interactive' }
-    if ($AccessToken)        { $modes += 'AccessToken' }
     if ($UseManagedIdentity) { $modes += 'ManagedIdentity' }
     if ($CertificateThumbprint -or $Certificate -or $CertificatePath) { $modes += 'Certificate' }
     if ($ClientSecret)       { $modes += 'ClientSecret' }
 
     if ($modes.Count -gt 1) {
-        throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one of -ClientSecret, -CertificateThumbprint/-Certificate/-CertificatePath, -UseManagedIdentity, -AccessToken or -Interactive."
+        throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one of -ClientSecret, -CertificateThumbprint/-Certificate/-CertificatePath, -UseManagedIdentity or -Interactive."
     }
     if ($modes.Count -eq 0) {
         $lead = if ($ClientId) { '-ClientId was supplied without a credential.' } else { 'No authentication method was specified.' }
-        throw "$lead To run as an application pass -ClientId with -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath (or use -UseManagedIdentity / -AccessToken). To sign in as a user pass -Interactive."
+        throw "$lead To run as an application pass -ClientId with -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath (or use -UseManagedIdentity). To sign in as a user pass -Interactive."
     }
 
     $mode = $modes[0]
@@ -1235,10 +1199,9 @@ finally {
         }
         'ManagedIdentity' {
             $connect.Identity = $true
-            if ($ClientId) { $connect.ClientId = $ClientId }   # user-assigned identity
-        }
-        'AccessToken' {
-            $connect.AccessToken = $AccessToken
+            if ($ClientId) {
+                throw '-UseManagedIdentity supports only the system-assigned managed identity; do not pass -ClientId.'
+            }
         }
         'Interactive' {
             $connect.TenantId = $TenantId
@@ -1265,13 +1228,8 @@ finally {
     }
 
     # The caller's own appId is the default for managedByAppId, so resolve it as reliably as
-    # possible. Get-MgContext reports it for every mode except a raw -AccessToken, where the token's
-    # own appid/azp claim is the only source.
+    # possible from the Graph context.
     $script:CallerAppId = $ctxClient
-    if ([string]::IsNullOrWhiteSpace($script:CallerAppId) -and $mode -eq 'AccessToken') {
-        $script:CallerAppId = Get-JwtAppId -Token $AccessToken
-        if ($script:CallerAppId) { $ctxClient = $script:CallerAppId }
-    }
     if ([string]::IsNullOrWhiteSpace($script:CallerAppId)) {
         Write-Warning 'Could not determine the calling application id; managedByAppId will be omitted unless -ManagedByAppId is supplied.'
     }
@@ -1570,7 +1528,7 @@ $connectArgs = @{
 }
 foreach ($name in 'ClientId', 'ClientSecret', 'CertificateThumbprint', 'Certificate',
                   'CertificatePath', 'CertificatePassword', 'UseManagedIdentity',
-                  'AccessToken', 'Interactive') {
+                  'Interactive') {
     if ($PSBoundParameters.ContainsKey($name)) { $connectArgs[$name] = $PSBoundParameters[$name] }
 }
 

@@ -51,24 +51,17 @@
     writes console output only.
 
 .PARAMETER TenantId
-    Directory (tenant) id. Optional for -Interactive / -UseDeviceCode; required for application
-    authentication.
+    Directory (tenant) id. Required for interactive, client secret, and certificate
+    authentication; optional for managed identity.
 
 .PARAMETER Interactive
     Sign in as a user (delegated auth). Mutually exclusive with other authentication modes;
-    -ClientId may select the app registration used for sign-in.
-
-.PARAMETER UseDeviceCode
-    Sign in as a user via the device code flow, for hosts that cannot complete a browser
-    redirect. Falls back to a reduced delegated scope set if the Agent 365 preview scopes are
-    not enabled in the tenant.
-
-.PARAMETER UseExistingConnection
-    Reuse an already-established Connect-MgGraph session instead of connecting again.
+    requires -ClientId for a caller-controlled public client authorized for AgentUser preview
+    scopes.
 
 .PARAMETER ClientId
-    Application (client) ID to authenticate as. Required with -ClientSecret or
-    -CertificateThumbprint.
+    Application (client) ID to authenticate as. Required with -Interactive, -ClientSecret, or
+    certificate authentication.
 
 .PARAMETER ClientSecret
     Client secret, as a SecureString or a plain string. Requires -ClientId and -TenantId.
@@ -77,8 +70,17 @@
     Thumbprint of a certificate to authenticate -ClientId with. Requires -ClientId and
     -TenantId.
 
-.PARAMETER AccessToken
-    A pre-acquired Graph access token, as a SecureString or a plain string.
+.PARAMETER Certificate
+    An X509Certificate2 to authenticate -ClientId with. Requires -ClientId and -TenantId.
+
+.PARAMETER CertificatePath
+    Path to a .pfx file to authenticate -ClientId with. Requires -ClientId and -TenantId.
+
+.PARAMETER CertificatePassword
+    Password for -CertificatePath, as a SecureString or plain string.
+
+.PARAMETER UseManagedIdentity
+    Authenticate with the host's system-assigned managed identity.
 
 .PARAMETER LogPath
     Write a timestamped log of this run. A path that names an existing directory (or ends in
@@ -95,12 +97,13 @@
 
 .EXAMPLE
     .\Remove-A365AgentUser.ps1 -AgentUserId a2a52f41-a150-4cce-98ad-462ac636c478 `
-        -Interactive -InspectOnly
+        -TenantId $tenantId -ClientId $interactiveClientId -Interactive -InspectOnly
 
     Report what would be deleted, and delete nothing.
 
 .EXAMPLE
-    .\Remove-A365AgentUser.ps1 -AgentUserId $id -Permanent -Force -Interactive
+    .\Remove-A365AgentUser.ps1 -AgentUserId $id -TenantId $tenantId `
+        -ClientId $interactiveClientId -Interactive -Permanent -Force
 
     Delete the agent user and purge it from deleted items. IRREVERSIBLE, and frees the UPN.
 
@@ -130,13 +133,13 @@ param(
 
     [string]   $TenantId,
     [switch]   $Interactive,
-    [switch]   $UseDeviceCode,
-    [switch]   $UseExistingConnection,
     [string]   $ClientId,
     [object]   $ClientSecret,
     [string]   $CertificateThumbprint,
-    [object]   $AccessToken,
-
+    [System.Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,
+    [string]   $CertificatePath,
+    [object]   $CertificatePassword,
+    [switch]   $UseManagedIdentity,
     # =====================================================================
     # LOGGING
     # =====================================================================
@@ -685,58 +688,88 @@ $delegatedScopeSets = @(
 )
 
 $ClientSecret = ConvertTo-SecureStringValue -Value $ClientSecret -Name 'ClientSecret'
-$AccessToken  = ConvertTo-SecureStringValue -Value $AccessToken  -Name 'AccessToken'
+$CertificatePassword = ConvertTo-SecureStringValue -Value $CertificatePassword -Name 'CertificatePassword'
+
+$certificateSourceCount = @(
+    [bool]$CertificateThumbprint,
+    ($null -ne $Certificate),
+    [bool]$CertificatePath
+).Where({ $_ }).Count
+if ($certificateSourceCount -gt 1) {
+    throw 'Supply exactly one certificate source: -CertificateThumbprint, -Certificate, or -CertificatePath.'
+}
+if ($CertificatePassword -and (-not $CertificatePath)) {
+    throw '-CertificatePassword can be used only with -CertificatePath.'
+}
 
 $modes = @()
-if ($UseExistingConnection) { $modes += 'ExistingConnection' }
 if ($Interactive)           { $modes += 'Interactive' }
-if ($UseDeviceCode)         { $modes += 'DeviceCode' }
-if ($AccessToken)           { $modes += 'AccessToken' }
-if ($CertificateThumbprint) { $modes += 'Certificate' }
+if ($UseManagedIdentity)    { $modes += 'ManagedIdentity' }
+if ($CertificateThumbprint -or $Certificate -or $CertificatePath) { $modes += 'Certificate' }
 if ($ClientSecret)          { $modes += 'ClientSecret' }
 
 if ($modes.Count -gt 1) {
     throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one."
 }
 if ($modes.Count -eq 0) {
-    throw 'No authentication method specified. Pass -Interactive (recommended), -UseDeviceCode, -UseExistingConnection, or -ClientId with -ClientSecret / -CertificateThumbprint.'
+    throw 'No authentication method specified. Pass -Interactive (recommended), -UseManagedIdentity, or -ClientId with -ClientSecret / -CertificateThumbprint / -Certificate / -CertificatePath.'
 }
 $mode = $modes[0]
 
+if ($mode -eq 'Interactive' -and [string]::IsNullOrWhiteSpace($ClientId)) {
+    throw '-ClientId is required for interactive AgentUser removal because the caller-controlled public client must be authorized for the AgentUser preview scopes.'
+}
+if ($mode -eq 'Interactive' -and [string]::IsNullOrWhiteSpace($TenantId)) {
+    throw '-TenantId is required for interactive AgentUser removal.'
+}
 if ($mode -in @('ClientSecret', 'Certificate')) {
     if (-not $ClientId) { throw "-ClientId is required for $mode authentication." }
     if (-not $TenantId) { throw "-TenantId is required for $mode authentication." }
 }
 
-if ($mode -ne 'ExistingConnection') {
-    $connect = @{ NoWelcome = $true; ErrorAction = 'Stop' }
+$connect = @{ NoWelcome = $true; ErrorAction = 'Stop' }
     switch ($mode) {
         'Interactive' {
             if ($TenantId) { $connect.TenantId = $TenantId }
             if ($ClientId) { $connect.ClientId = $ClientId }
         }
-        'DeviceCode' {
-            $connect.UseDeviceCode = $true
-            if ($TenantId) { $connect.TenantId = $TenantId }
-            if ($ClientId) { $connect.ClientId = $ClientId }
-        }
-        'AccessToken'  { $connect.AccessToken = $AccessToken }
         'ClientSecret' {
             $connect.TenantId               = $TenantId
             $connect.ClientSecretCredential = [pscredential]::new($ClientId, $ClientSecret)
         }
-        'Certificate'  {
-            $connect.TenantId              = $TenantId
-            $connect.ClientId              = $ClientId
-            $connect.CertificateThumbprint = $CertificateThumbprint
+                'Certificate'  {
+            $connect.TenantId = $TenantId
+            $connect.ClientId = $ClientId
+            if ($Certificate) {
+                $connect.Certificate = $Certificate
+            }
+            elseif ($CertificatePath) {
+                if (-not (Test-Path -LiteralPath $CertificatePath)) {
+                    throw "Certificate file not found: $CertificatePath"
+                }
+                $pfx = (Resolve-Path -LiteralPath $CertificatePath).ProviderPath
+                $connect.Certificate = if ($CertificatePassword) {
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword)
+                }
+                else {
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx)
+                }
+            }
+            else {
+                $connect.CertificateThumbprint = $CertificateThumbprint
+            }
+        }
+        'ManagedIdentity' {
+            if ($ClientId) { throw '-ClientId cannot be used with -UseManagedIdentity. Only system-assigned managed identity is supported.' }
+            $connect.Identity = $true
         }
     }
 
-    if ($mode -in @('Interactive', 'DeviceCode')) {
+    if ($mode -eq 'Interactive') {
         # The Agent 365 delegated scopes are preview and do not exist in every tenant. Entra rejects
         # the WHOLE scope string with AADSTS70011 if any single scope is unknown, so fall back to a
         # universally valid set rather than failing outright. Scope validation happens before a
-        # device code is issued, so a failed attempt does not burn a code.
+        # interactive prompt is shown, so a failed attempt does not burn a code.
         $connected = $false
         for ($setIndex = 0; $setIndex -lt $delegatedScopeSets.Count; $setIndex++) {
             $connect.Scopes = $delegatedScopeSets[$setIndex]
@@ -756,11 +789,10 @@ if ($mode -ne 'ExistingConnection') {
     else {
         Connect-MgGraph @connect
     }
-}
 
 $mg = Get-MgContext
 if (-not $mg) {
-    throw 'Connect-MgGraph did not establish a Graph context. If you used -Interactive from a non-interactive host, the browser flow cannot complete - use -UseDeviceCode instead.'
+    throw 'Connect-MgGraph did not establish a Graph context. If you used -Interactive from a non-interactive host, the browser flow cannot complete - use an interactive host or run with app-only authentication.'
 }
 
 $authType    = [string](Get-Value $mg 'AuthType' '')
