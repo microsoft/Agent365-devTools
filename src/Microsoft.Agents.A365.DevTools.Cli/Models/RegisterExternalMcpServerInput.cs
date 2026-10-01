@@ -73,6 +73,13 @@ public class RegisterExternalMcpServerInput
     public int? SecretLifetimeMonths { get; set; }
 
     /// <summary>
+    /// Whether the remote MCP server is reachable publicly or only inside the environment's VNet:
+    /// "public" or "private". Defaults to "private" when omitted. Overridden by --connectivity.
+    /// </summary>
+    [JsonPropertyName("connectivity")]
+    public string? Connectivity { get; set; }
+
+    /// <summary>
     /// External OAuth configuration (required when authType is ExternalOAuth)
     /// </summary>
     [JsonPropertyName("externalOAuth")]
