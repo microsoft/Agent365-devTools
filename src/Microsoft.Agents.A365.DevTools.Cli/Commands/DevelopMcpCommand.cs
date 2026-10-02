@@ -37,6 +37,7 @@ public static class DevelopMcpCommand
         // Add subcommands
         developMcpCommand.AddCommand(CreateListEnvironmentsSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateListServersSubcommand(logger, toolingService));
+        developMcpCommand.AddCommand(CreateListPublishedServersSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreatePublishSubcommand(logger, toolingService, graphApiService));
         developMcpCommand.AddCommand(CreateUnpublishSubcommand(logger, toolingService));
         developMcpCommand.AddCommand(CreateRegisterExternalMcpServerSubcommand(logger, toolingService, graphApiService));
@@ -351,6 +352,77 @@ public static class DevelopMcpCommand
             logger.LogInformation("Listed {Count} MCP server(s) in environment {EnvId}", servers.Length, envId);
 
         }, envIdOption, dryRunOption, verboseOption);
+
+        return command;
+    }
+
+    /// <summary>
+    /// Creates the list-published-servers subcommand
+    /// </summary>
+    private static Command CreateListPublishedServersSubcommand(
+        ILogger logger,
+        IAgent365ToolingService toolingService)
+    {
+        var command = new Command("list-published-servers", "List MCP servers published to tenant scope from all accessible Dataverse environments");
+
+        var dryRunOption = new Option<bool>(
+            name: "--dry-run",
+            description: "Show what would be done without executing"
+        );
+        command.AddOption(dryRunOption);
+
+        // Verbose is handled globally in Program.cs (sets LogLevel.Debug); declared here so the parser accepts -v.
+        command.AddOption(new Option<bool>(["--verbose", "-v"], description: "Enable verbose logging"));
+
+        command.SetHandler(async (context) =>
+        {
+            logger.LogInformation("Starting list-published-servers operation...");
+
+            if (context.ParseResult.GetValueForOption(dryRunOption))
+            {
+                logger.LogInformation("[DRY RUN] Would read config from a365.config.json");
+                logger.LogInformation("[DRY RUN] Would query MCP servers published to tenant scope across all accessible Dataverse environments");
+                logger.LogInformation("[DRY RUN] Would display list of published MCP servers");
+                return;
+            }
+
+            var serversResponse = await toolingService.ListPublishedServersAsync(context.GetCancellationToken());
+
+            if (serversResponse == null)
+            {
+                logger.LogError("Failed to list published MCP servers");
+                context.ExitCode = 1;
+                return;
+            }
+
+            var servers = serversResponse.GetServers();
+
+            if (servers.Length == 0)
+            {
+                logger.LogInformation("No published MCP servers found");
+                return;
+            }
+
+            logger.LogInformation("Published MCP Servers:");
+            logger.LogInformation("======================");
+
+            foreach (var server in servers)
+            {
+                logger.LogInformation("{DisplayName}", server.DisplayName ?? server.McpServerName ?? "Unknown");
+                logger.LogInformation("   Name: {Name}", server.McpServerName ?? "Unknown");
+                logger.LogInformation("   URL: {Url}", server.Url ?? "Unknown");
+                logger.LogInformation("   Status: {Status}", server.Status ?? "Unknown");
+                logger.LogInformation("   Source Environment: {SourceEnvironmentName}", server.SourceEnvironmentName ?? "Unknown");
+                logger.LogInformation("   Source Environment ID: {SourceEnvironmentId}", server.SourceEnvironmentId ?? "Unknown");
+                logger.LogInformation("   Source Server Name: {SourceServerName}", server.SourceServerName ?? "Unknown");
+
+                if (!string.IsNullOrWhiteSpace(server.Description))
+                {
+                    logger.LogInformation("   Description: {Description}", server.Description);
+                }
+            }
+            logger.LogInformation("Listed {Count} published MCP server(s)", servers.Length);
+        });
 
         return command;
     }
