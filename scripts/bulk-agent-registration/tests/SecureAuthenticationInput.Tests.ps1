@@ -224,4 +224,59 @@ Test-Case 'Get-AppOnlyGraphToken rejects an explicit null -ClientSecret before a
     }
 }
 
+$script:AutomationAppScriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..' 'New-A365AutomationApp.ps1')).ProviderPath
+$automationAuthSource = Get-A365ExtractedFunctionSource -Path $script:AutomationAppScriptPath `
+    -FunctionName @('Connect-GraphSession', 'ConvertTo-SecureStringValue', 'Test-HasProperty')
+. ([scriptblock]::Create($automationAuthSource))
+
+Test-Case 'Connect-GraphSession accepts interactive authentication without a certificate source' {
+    $previousEnvironmentSecret = $env:A365_CLIENT_SECRET
+    $global:A365ConnectMgGraphCalled = $false
+    try {
+        $env:A365_CLIENT_SECRET = $null
+
+        function Get-Module {
+            [CmdletBinding()]
+            param([switch] $ListAvailable, [string] $Name)
+            [pscustomobject]@{ Name = $Name }
+        }
+        function Import-Module {
+            [CmdletBinding()]
+            param([Parameter(Position = 0)] $Name)
+        }
+        function Connect-MgGraph {
+            [CmdletBinding()]
+            param(
+                [switch] $NoWelcome,
+                [string] $TenantId,
+                [string] $ClientId,
+                [string[]] $Scopes,
+                [pscredential] $ClientSecretCredential,
+                [object] $Certificate,
+                [string] $CertificateThumbprint,
+                [switch] $Identity
+            )
+            $global:A365ConnectMgGraphCalled = $true
+        }
+        function Get-MgContext {
+            [pscustomobject]@{
+                TenantId = 'tenant-id'
+                Account = 'operator@contoso.com'
+                AuthType = 'Delegated'
+            }
+        }
+
+        $context = Connect-GraphSession -TenantId 'tenant-id' -Interactive
+
+        Assert-True $global:A365ConnectMgGraphCalled 'Interactive authentication without a certificate must reach Connect-MgGraph.'
+        Assert-Equal 'Interactive' $context.Mode 'Interactive authentication must remain selected when no certificate source is supplied.'
+        Assert-False $context.IsAppOnly 'Interactive authentication must produce a delegated context.'
+    }
+    finally {
+        $env:A365_CLIENT_SECRET = $previousEnvironmentSecret
+        Remove-Item -Path Function:\Get-Module, Function:\Import-Module, Function:\Connect-MgGraph, Function:\Get-MgContext -ErrorAction SilentlyContinue
+        Remove-Variable -Name A365ConnectMgGraphCalled -Scope Global -ErrorAction SilentlyContinue
+    }
+}
+
 Get-A365TestResults

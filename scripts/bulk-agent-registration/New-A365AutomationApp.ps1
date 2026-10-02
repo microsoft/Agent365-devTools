@@ -884,10 +884,12 @@ finally {
     }
 
     $certificateSources = @(
-        [bool]$CertificateThumbprint,
-        ($null -ne $Certificate),
-        [bool]$CertificatePath
-    ) | Where-Object { $_ }
+        @(
+            [bool]$CertificateThumbprint,
+            ($null -ne $Certificate),
+            [bool]$CertificatePath
+        ) | Where-Object { $_ }
+    )
     if ($certificateSources.Count -gt 1) {
         throw 'Supply exactly one certificate source: -AuthCertificateThumbprint, -AuthCertificate, or -AuthCertificatePath.'
     }
