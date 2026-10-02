@@ -42,13 +42,16 @@ public class DevelopMcpCommandTests
         var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
 
         // Assert
-        command.Subcommands.Should().HaveCount(5);
+        command.Subcommands.Should().HaveCount(6,
+            because: "list-published-servers is registered alongside the five base subcommands; " +
+                     "evaluate and grant-agents-access register only when their services are supplied");
 
         var subcommandNames = command.Subcommands.Select(sc => sc.Name).ToList();
         subcommandNames.Should().Contain(new[]
         {
             "list-environments",
             "list-servers",
+            "list-published-servers",
             "publish",
             "unpublish",
             "register-external-mcp-server"
@@ -98,6 +101,33 @@ public class DevelopMcpCommandTests
         envOption.Should().NotBeNull();
         envOption!.Aliases.Should().Contain("-e");
         envOption.Aliases.Should().Contain("--environment-id");
+
+        // Verify verbose option
+        var verboseOption = options.FirstOrDefault(o => o.Name == "verbose");
+        verboseOption.Should().NotBeNull();
+        verboseOption!.Aliases.Should().Contain("-v");
+        verboseOption!.Aliases.Should().Contain("--verbose");
+    }
+
+    [Fact]
+    public void ListPublishedServersSubcommand_HasCorrectOptionsAndAliases()
+    {
+        // Act
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
+        var subcommand = command.Subcommands.First(sc => sc.Name == "list-published-servers");
+
+        // Assert
+        subcommand.Description.Should().Be("List MCP servers published to tenant scope from all accessible Dataverse environments");
+
+        var options = subcommand.Options.ToList();
+        options.Should().HaveCount(2); // dry-run, verbose (plus help automatically)
+        options.Should().NotContain(o => o.Name == "environment-id",
+            because: "the endpoint returns servers from every environment the caller can access, so there is no environment to select");
+
+        // Verify dry-run option
+        var dryRunOption = options.FirstOrDefault(o => o.Name == "dry-run");
+        dryRunOption.Should().NotBeNull();
+        dryRunOption!.Aliases.Should().Contain("--dry-run");
 
         // Verify verbose option
         var verboseOption = options.FirstOrDefault(o => o.Name == "verbose");

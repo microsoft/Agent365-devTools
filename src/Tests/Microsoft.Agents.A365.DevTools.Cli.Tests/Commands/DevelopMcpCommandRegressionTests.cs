@@ -40,6 +40,7 @@ public class DevelopMcpCommandRegressionTests
         {
             new[] { "list-environments", "--dry-run" },
             new[] { "list-servers", "-e", "test-env", "--dry-run" },
+            new[] { "list-published-servers", "--dry-run" },
             new[] { "publish", "-e", "test-env", "-s", "test-server", "--dry-run" },
             new[] { "unpublish", "-e", "test-env", "-s", "test-server", "--dry-run" }
         };
@@ -53,6 +54,7 @@ public class DevelopMcpCommandRegressionTests
         // Verify no service methods were called
         await _mockToolingService.DidNotReceive().ListEnvironmentsAsync();
         await _mockToolingService.DidNotReceive().ListServersAsync(Arg.Any<string>());
+        await _mockToolingService.DidNotReceive().ListPublishedServersAsync(Arg.Any<CancellationToken>());
         await _mockToolingService.DidNotReceive().PublishServerAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<PublishMcpServerRequest>());
         await _mockToolingService.DidNotReceive().UnpublishServerAsync(Arg.Any<string>(), Arg.Any<string>());
     }
@@ -349,6 +351,125 @@ public class DevelopMcpCommandRegressionTests
         // Assert
         result.Should().Be(0);
         await _mockToolingService.Received(1).UnpublishServerAsync(testEnvId, testServerName);
+    }
+
+    [Fact]
+    public async Task ListPublishedServersCommand_PrintsEveryServerInResponseOrder()
+    {
+        // Arrange
+        var logger = new CapturingLogger();
+        var toolingService = Substitute.For<IAgent365ToolingService>();
+        toolingService.ListPublishedServersAsync(Arg.Any<CancellationToken>()).Returns(new PublishedMcpServersResponse
+        {
+            Count = 2,
+            Servers = new[]
+            {
+                new PublishedMcpServer
+                {
+                    McpServerName = "zeta-alias",
+                    DisplayName = "Zeta Server",
+                    Description = "Zeta description",
+                    Url = "https://tenant.example/agents/zeta-alias",
+                    Status = "Approved",
+                    SourceEnvironmentId = "env-zeta-id",
+                    SourceEnvironmentName = "Zeta Environment",
+                    SourceServerName = "msdyn_Zeta"
+                },
+                new PublishedMcpServer
+                {
+                    McpServerName = "alpha-alias",
+                    DisplayName = "alpha-alias",
+                    Description = null,
+                    Url = "https://tenant.example/agents/alpha-alias",
+                    Status = "PendingApproval",
+                    SourceEnvironmentId = "env-alpha-id",
+                    SourceEnvironmentName = "Alpha Environment",
+                    SourceServerName = "msdyn_Alpha"
+                }
+            }
+        });
+        var command = DevelopMcpCommand.CreateCommand(logger, toolingService);
+
+        // Act
+        var result = await command.InvokeAsync(new[] { "list-published-servers" });
+
+        // Assert
+        result.Should().Be(0);
+        logger.Messages.Should().ContainInOrder(
+            new[]
+            {
+                "Zeta Server",
+                "   Name: zeta-alias",
+                "   URL: https://tenant.example/agents/zeta-alias",
+                "   Status: Approved",
+                "   Source Environment: Zeta Environment",
+                "   Source Environment ID: env-zeta-id",
+                "   Source Server Name: msdyn_Zeta",
+                "   Description: Zeta description",
+                "alpha-alias",
+                "   Name: alpha-alias",
+                "   URL: https://tenant.example/agents/alpha-alias",
+                "   Status: PendingApproval",
+                "   Source Environment: Alpha Environment",
+                "   Source Environment ID: env-alpha-id",
+                "   Source Server Name: msdyn_Alpha",
+                "Listed 2 published MCP server(s)"
+            },
+            because: "every field, including the name when it equals the display name, must be shown for each server in the order the platform returned them");
+        logger.Messages.Should().ContainSingle(m => m.Contains("Description:"),
+            because: "description is nullable and is printed only when the server has one");
+    }
+
+    [Fact]
+    public async Task ListPublishedServersCommand_NoServers_ReportsNoneAndExitsZero()
+    {
+        // Arrange
+        var logger = new CapturingLogger();
+        var toolingService = Substitute.For<IAgent365ToolingService>();
+        toolingService.ListPublishedServersAsync(Arg.Any<CancellationToken>()).Returns(new PublishedMcpServersResponse());
+        var command = DevelopMcpCommand.CreateCommand(logger, toolingService);
+
+        // Act
+        var result = await command.InvokeAsync(new[] { "list-published-servers" });
+
+        // Assert
+        result.Should().Be(0, because: "a tenant with no published servers is a valid state, not a failure");
+        logger.Messages.Should().Contain("No published MCP servers found");
+    }
+
+    [Fact]
+    public async Task ListPublishedServersCommand_ServiceFailure_LogsErrorAndExitsOne()
+    {
+        // Arrange
+        var logger = new CapturingLogger();
+        var toolingService = Substitute.For<IAgent365ToolingService>();
+        toolingService.ListPublishedServersAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<PublishedMcpServersResponse?>(null));
+        var command = DevelopMcpCommand.CreateCommand(logger, toolingService);
+
+        // Act
+        var result = await command.InvokeAsync(new[] { "list-published-servers" });
+
+        // Assert
+        result.Should().Be(1,
+            because: "the service returns null on auth, scope, or server errors, and scripts must be able to detect the failure");
+        logger.Errors.Should().Contain("Failed to list published MCP servers");
+    }
+
+    private sealed class CapturingLogger : ILogger
+    {
+        private readonly List<(LogLevel Level, string Message)> _entries = [];
+
+        public IEnumerable<string> Messages => _entries.Select(e => e.Message);
+
+        public IEnumerable<string> Errors => _entries.Where(e => e.Level == LogLevel.Error).Select(e => e.Message);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => _entries.Add((logLevel, formatter(state, exception)));
     }
 
     [Fact]
