@@ -172,4 +172,24 @@ public class SetupHelpersAdminConsentInstructionsTests
         specs.Should().Contain(s => s.ResourceName == "Power Platform API" && s.PermissionType == "Delegated",
             because: "Power Platform API ConnectivityConnections.Read is a delegated scope");
     }
+
+    [Theory]
+    [InlineData("Delegated", true, false)]
+    [InlineData("Application", false, true)]
+    [InlineData("Both", true, true)]
+    public void GetNonDwAdminConsentSpecs_DefenderMatchesAuthMode(
+        string modeName,
+        bool expectDelegated,
+        bool expectApplication)
+    {
+        var mode = Enum.Parse<DefenderPermissionMode>(modeName);
+        var specs = SetupHelpers.GetNonDwAdminConsentSpecs("prod", mode);
+
+        specs.Any(s => s.ResourceName == "Defender API" && s.PermissionType == "Delegated")
+            .Should().Be(expectDelegated,
+                because: $"{mode} mode must include the delegated Defender permission only when OBO is enabled");
+        specs.Any(s => s.ResourceName == "Defender API" && s.PermissionType == "Application")
+            .Should().Be(expectApplication,
+                because: $"{mode} mode must include the Defender app role only when S2S is enabled");
+    }
 }

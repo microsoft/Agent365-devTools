@@ -36,6 +36,16 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null, bool skipObservabilityPermissions = false)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
+        var selectedAuthMode = authMode ?? config.AuthMode;
+        var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
+            ? "obo"
+            : selectedAuthMode.Trim().ToLowerInvariant();
+        var defenderPermissionMode = effectiveMode switch
+        {
+            "s2s" => DefenderPermissionMode.Application,
+            "both" => DefenderPermissionMode.Both,
+            _ => DefenderPermissionMode.Delegated,
+        };
         var observabilityPermissionsEffectivelySkipped =
             skipObservabilityPermissions && !SetupHelpers.CustomPermissionsRequestObservability(config);
         // Dry-run S2S work comes only from fixed specs today; MCP and custom specs carry delegated scopes.
@@ -43,7 +53,8 @@ internal static class NonDwBlueprintSetupOrchestrator
             setInheritable: true,
             isM365,
             config.Environment,
-            includeObservability: !skipObservabilityPermissions)
+            includeObservability: !skipObservabilityPermissions,
+            defenderPermissionMode)
             .Any(s => s.AppRoleScopes is { Length: > 0 });
         // --messaging-endpoint flag (if supplied) wins over the init-only config value for the plan.
         var plannedEndpoint = !string.IsNullOrWhiteSpace(messagingEndpointOverride)
@@ -128,10 +139,6 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // 3. Inheritable Permissions — the non-DW spec set is stamped on the blueprint so MAC and
         //    dependent systems can see it. The same set is applied to the agent identity SP in step 5.
-        var selectedAuthMode = authMode ?? config.AuthMode;
-        var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
-            ? "obo"
-            : selectedAuthMode.Trim().ToLowerInvariant();
         logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for {Resources} (Global Administrator required; consent URL printed if absent)",
             skipObservabilityPermissions
                 ? "Defender API, Power Platform API, and custom permissions"
@@ -283,6 +290,11 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
         ctx.Results.IsNonDwBlueprintFlow = true;
+        ctx.Results.EffectiveAuthMode = ctx.IsBothMode
+            ? Models.AuthMode.Both
+            : ctx.IsS2sMode
+                ? Models.AuthMode.S2s
+                : Models.AuthMode.Obo;
         ctx.Results.ObservabilityPermissionsSkipped = ctx.ObservabilityPermissionsEffectivelySkipped;
         ctx.Results.TenantId = ctx.Config.TenantId;
         // Bootstrap already printed the "Running..." banner before auth steps; skip here to avoid duplication.
@@ -723,8 +735,8 @@ internal static class NonDwBlueprintSetupOrchestrator
         List<ResourcePermissionSpec> specs)
     {
         var hasS2sSpecs = specs.Any(s => s.AppRoleScopes is { Length: > 0 });
-        // Blueprint agents no longer request OtelWrite, the only app role setup requested, so this
-        // step usually has nothing to grant. Record that so the summary does not report a delegated grant.
+        // Record whether the selected auth mode produced any application permissions so the
+        // summary can distinguish "no S2S work" from a failed grant.
         ctx.Results.NoS2SAppRolesToGrant = !hasS2sSpecs;
         if (hasS2sSpecs && AgentIdentityInheritsBlueprintAppRoles(ctx.Results))
         {

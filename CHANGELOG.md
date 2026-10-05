@@ -139,6 +139,7 @@ Agents provisioned before this release need `RealtimeProtection.Evaluate.All` gr
 
 ### Changed
 
+- Defender permissions now follow the blueprint agent authentication mode: delegated for `obo`, application for `s2s`, and both for `both`; AI Teammate setup continues to request both permission types (#485).
 - `a365 setup all` no longer requests Observability API permissions for blueprint agents; registered agents that export telemetry through the app-only S2S endpoint need no admin consent (#501).
 - Hardened token storage: the CLI no longer writes access tokens to a plaintext file — they live only in the OS-protected MSAL cache (DPAPI/Keychain/owner-only file). Any legacy plaintext cache is removed automatically; sign-in prompts are unchanged.
 - `develop-mcp register-external-mcp-server` now sets `exit code 1` on failure paths (validation errors, tenant detection failure, Graph unavailable, Entra app creation failure, MCP-Platform AddMcpServer failure). Previously these paths logged an error and exited `0`, which made the command's success/failure status undetectable from scripts and CI. Successful dry-run and user-initiated cancellation at the y/N prompt continue to exit `0`.

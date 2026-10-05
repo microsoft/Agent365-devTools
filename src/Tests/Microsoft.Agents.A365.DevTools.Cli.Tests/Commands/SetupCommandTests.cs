@@ -731,14 +731,16 @@ public class SetupCommandTests
     }
 
     /// <summary>
-    /// The S2S endpoint authorizes registered agents without OtelWrite whatever the auth mode (validated live), so
-    /// s2s and both — from the flag or from a365.config.json — must not request Observability API permissions either.
+    /// The S2S endpoint authorizes registered agents without OtelWrite, while Defender still requires
+    /// its application role for s2s and both modes.
     /// </summary>
     [Theory]
     [InlineData("--authmode s2s", null)]
     [InlineData("--authmode both", null)]
     [InlineData("", "both")]
-    public async Task SetupAll_BlueprintAgent_AppRoleAuthModes_OmitObservabilityApi(string args, string? configAuthMode)
+    public async Task SetupAll_BlueprintAgent_AppRoleAuthModes_OmitObservabilityAndKeepDefenderAppRole(
+        string args,
+        string? configAuthMode)
     {
         var config = new Agent365Config
         {
@@ -771,7 +773,9 @@ public class SetupCommandTests
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint Permission Grants") && o.ToString()!.Contains("no S2S app roles to grant")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint Permission Grants") &&
+                                o.ToString()!.Contains("S2S app roles") &&
+                                !o.ToString()!.Contains("no S2S app roles to grant")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
