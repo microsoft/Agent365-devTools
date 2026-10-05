@@ -361,30 +361,21 @@ public class DevelopMcpCommandRegressionTests
         var toolingService = Substitute.For<IAgent365ToolingService>();
         toolingService.ListPublishedServersAsync(Arg.Any<CancellationToken>()).Returns(new PublishedMcpServersResponse
         {
-            Count = 2,
             Servers = new[]
             {
                 new PublishedMcpServer
                 {
                     McpServerName = "zeta-alias",
-                    DisplayName = "Zeta Server",
-                    Description = "Zeta description",
-                    Url = "https://tenant.example/agents/zeta-alias",
                     Status = "Approved",
-                    SourceEnvironmentId = "env-zeta-id",
-                    SourceEnvironmentName = "Zeta Environment",
-                    SourceServerName = "msdyn_Zeta"
+                    SourceMcpServerName = "msdyn_Zeta",
+                    SourceEnvironmentId = "env-zeta-id"
                 },
                 new PublishedMcpServer
                 {
                     McpServerName = "alpha-alias",
-                    DisplayName = "alpha-alias",
-                    Description = null,
-                    Url = "https://tenant.example/agents/alpha-alias",
                     Status = "PendingApproval",
-                    SourceEnvironmentId = "env-alpha-id",
-                    SourceEnvironmentName = "Alpha Environment",
-                    SourceServerName = "msdyn_Alpha"
+                    SourceMcpServerName = "msdyn_Alpha",
+                    SourceEnvironmentId = "env-alpha-id"
                 }
             }
         });
@@ -398,26 +389,46 @@ public class DevelopMcpCommandRegressionTests
         logger.Messages.Should().ContainInOrder(
             new[]
             {
-                "Zeta Server",
-                "   Name: zeta-alias",
-                "   URL: https://tenant.example/agents/zeta-alias",
+                "zeta-alias",
                 "   Status: Approved",
-                "   Source Environment: Zeta Environment",
+                "   Source MCP Server Name: msdyn_Zeta",
                 "   Source Environment ID: env-zeta-id",
-                "   Source Server Name: msdyn_Zeta",
-                "   Description: Zeta description",
                 "alpha-alias",
-                "   Name: alpha-alias",
-                "   URL: https://tenant.example/agents/alpha-alias",
                 "   Status: PendingApproval",
-                "   Source Environment: Alpha Environment",
+                "   Source MCP Server Name: msdyn_Alpha",
                 "   Source Environment ID: env-alpha-id",
-                "   Source Server Name: msdyn_Alpha",
                 "Listed 2 published MCP server(s)"
             },
-            because: "every field, including the name when it equals the display name, must be shown for each server in the order the platform returned them");
-        logger.Messages.Should().ContainSingle(m => m.Contains("Description:"),
-            because: "description is nullable and is printed only when the server has one");
+            because: "every field must be shown for each server in the order the platform returned them");
+    }
+
+    [Fact]
+    public async Task ListPublishedServersCommand_MissingFields_PrintsUnknown()
+    {
+        // Arrange
+        var logger = new CapturingLogger();
+        var toolingService = Substitute.For<IAgent365ToolingService>();
+        toolingService.ListPublishedServersAsync(Arg.Any<CancellationToken>()).Returns(new PublishedMcpServersResponse
+        {
+            Servers = new[] { new PublishedMcpServer() }
+        });
+        var command = DevelopMcpCommand.CreateCommand(logger, toolingService);
+
+        // Act
+        var result = await command.InvokeAsync(new[] { "list-published-servers" });
+
+        // Assert
+        result.Should().Be(0);
+        logger.Messages.Should().ContainInOrder(
+            new[]
+            {
+                "Unknown",
+                "   Status: Unknown",
+                "   Source MCP Server Name: Unknown",
+                "   Source Environment ID: Unknown",
+                "Listed 1 published MCP server(s)"
+            },
+            because: "a field the platform omits must print as Unknown rather than a blank line");
     }
 
     [Fact]

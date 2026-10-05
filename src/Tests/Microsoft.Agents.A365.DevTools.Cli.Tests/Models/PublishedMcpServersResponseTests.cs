@@ -16,27 +16,18 @@ public class PublishedMcpServersResponseTests
         // Arrange
         const string json = """
             {
-              "count": 2,
               "servers": [
                 {
                   "mcpServerName": "zeta-alias",
-                  "displayName": "Zeta Server",
-                  "description": null,
-                  "url": "https://tenant.example/agents/zeta-alias",
                   "status": "Blocked",
-                  "sourceEnvironmentId": "env-zeta-id",
-                  "sourceEnvironmentName": "Zeta Environment",
-                  "sourceServerName": "msdyn_Zeta"
+                  "sourceMcpServerName": "msdyn_Zeta",
+                  "sourceEnvironmentId": "env-zeta-id"
                 },
                 {
                   "mcpServerName": "alpha-alias",
-                  "displayName": "Alpha Server",
-                  "description": "Alpha description",
-                  "url": "https://tenant.example/agents/alpha-alias",
                   "status": "PendingApproval",
-                  "sourceEnvironmentId": "env-alpha-id",
-                  "sourceEnvironmentName": "Alpha Environment",
-                  "sourceServerName": "msdyn_Alpha"
+                  "sourceMcpServerName": "msdyn_Alpha",
+                  "sourceEnvironmentId": "env-alpha-id"
                 }
               ]
             }
@@ -48,31 +39,22 @@ public class PublishedMcpServersResponseTests
 
         // Assert
         response.Should().NotBeNull();
-        response!.Count.Should().Be(2);
-        response.GetServers().Should().BeEquivalentTo(
+        response!.GetServers().Should().BeEquivalentTo(
             new[]
             {
                 new PublishedMcpServer
                 {
                     McpServerName = "zeta-alias",
-                    DisplayName = "Zeta Server",
-                    Description = null,
-                    Url = "https://tenant.example/agents/zeta-alias",
                     Status = "Blocked",
-                    SourceEnvironmentId = "env-zeta-id",
-                    SourceEnvironmentName = "Zeta Environment",
-                    SourceServerName = "msdyn_Zeta"
+                    SourceMcpServerName = "msdyn_Zeta",
+                    SourceEnvironmentId = "env-zeta-id"
                 },
                 new PublishedMcpServer
                 {
                     McpServerName = "alpha-alias",
-                    DisplayName = "Alpha Server",
-                    Description = "Alpha description",
-                    Url = "https://tenant.example/agents/alpha-alias",
                     Status = "PendingApproval",
-                    SourceEnvironmentId = "env-alpha-id",
-                    SourceEnvironmentName = "Alpha Environment",
-                    SourceServerName = "msdyn_Alpha"
+                    SourceMcpServerName = "msdyn_Alpha",
+                    SourceEnvironmentId = "env-alpha-id"
                 }
             },
             options => options.WithStrictOrdering(),
@@ -84,7 +66,7 @@ public class PublishedMcpServersResponseTests
     {
         // Act
         var response = JsonDeserializationHelper.DeserializeWithDoubleSerialization<PublishedMcpServersResponse>(
-            """{"count":0,"servers":null}""", NullLogger.Instance);
+            """{"servers":null}""", NullLogger.Instance);
 
         // Assert
         response.Should().NotBeNull();

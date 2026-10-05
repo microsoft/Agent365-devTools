@@ -408,18 +408,10 @@ public static class DevelopMcpCommand
 
             foreach (var server in servers)
             {
-                logger.LogInformation("{DisplayName}", server.DisplayName ?? server.McpServerName ?? "Unknown");
-                logger.LogInformation("   Name: {Name}", server.McpServerName ?? "Unknown");
-                logger.LogInformation("   URL: {Url}", server.Url ?? "Unknown");
+                logger.LogInformation("{McpServerName}", server.McpServerName ?? "Unknown");
                 logger.LogInformation("   Status: {Status}", server.Status ?? "Unknown");
-                logger.LogInformation("   Source Environment: {SourceEnvironmentName}", server.SourceEnvironmentName ?? "Unknown");
+                logger.LogInformation("   Source MCP Server Name: {SourceMcpServerName}", server.SourceMcpServerName ?? "Unknown");
                 logger.LogInformation("   Source Environment ID: {SourceEnvironmentId}", server.SourceEnvironmentId ?? "Unknown");
-                logger.LogInformation("   Source Server Name: {SourceServerName}", server.SourceServerName ?? "Unknown");
-
-                if (!string.IsNullOrWhiteSpace(server.Description))
-                {
-                    logger.LogInformation("   Description: {Description}", server.Description);
-                }
             }
             logger.LogInformation("Listed {Count} published MCP server(s)", servers.Length);
         });
