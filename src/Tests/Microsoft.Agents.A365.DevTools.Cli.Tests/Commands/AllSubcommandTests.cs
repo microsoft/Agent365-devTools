@@ -412,8 +412,13 @@ public class AllSubcommandTests : IDisposable
 
         specs.Any(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId).Should().Be(!skipObservabilityPermissions,
             because: "the spec list drives inheritable permissions, app role grants, and admin consent, so skipping Observability permissions must remove Observability API from it");
-        specs.Any(s => s.AppRoleScopes is { Length: > 0 }).Should().Be(!skipObservabilityPermissions,
-            because: "OtelWrite is the only app role setup requests, so skipping it must leave no app role grant that needs a Global Administrator");
+        specs.Any(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId &&
+                       s.AppRoleScopes is { Length: > 0 }).Should().Be(!skipObservabilityPermissions,
+            because: "skipping Observability permissions must remove the OtelWrite app role without affecting application roles required by other resources");
+        specs.Should().Contain(s => s.ResourceAppId == ConfigConstants.DefenderApiAppId &&
+                                    s.AppRoleScopes != null &&
+                                    s.AppRoleScopes.Contains(ConfigConstants.DefenderApiRealtimeProtectionScope),
+            because: "Defender independently requires RealtimeProtection.Evaluate.All as an application permission");
         specs.Should().Contain(s => s.ResourceAppId == PowerPlatformConstants.PowerPlatformApiResourceAppId,
             because: "skipping Observability API must not drop the other required resources");
     }
@@ -426,8 +431,8 @@ public class AllSubcommandTests : IDisposable
         SetupHelpers.ApplyConsentUrlsIfNeeded(
             ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes, new[] { "McpServers.Mail.All" }, isM365: false);
 
-        ctx.Results.ConsentResourceNames.Should().BeEquivalentTo(new[] { "Microsoft Graph", "Agent 365 Tools", "Power Platform API" },
-            because: "a non-admin run must hand every stamped resource to an administrator, and Observability API is no longer stamped");
+        ctx.Results.ConsentResourceNames.Should().BeEquivalentTo(new[] { "Microsoft Graph", "Agent 365 Tools", "Defender API", "Power Platform API" },
+            because: "a non-admin run must hand every stamped resource to an administrator, including Defender, while Observability is no longer stamped");
         ctx.Config.ResourceConsents.Should().NotContain(rc => rc.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
             because: "no Observability API consent URL may be persisted when its permissions were skipped");
         ctx.Results.CombinedConsentUrl.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
