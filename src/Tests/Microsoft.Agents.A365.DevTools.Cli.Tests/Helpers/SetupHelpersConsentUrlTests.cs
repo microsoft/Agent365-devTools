@@ -84,17 +84,6 @@ public class SetupHelpersConsentUrlTests
     }
 
     [Fact]
-    public void BuildAdminConsentUrls_WhenDefenderDelegatedExcluded_OmitsDefenderApi()
-    {
-        var urls = SetupHelpers.BuildAdminConsentUrls(
-            TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" },
-            includeDefenderDelegated: false);
-
-        urls.Should().NotContain(url => url.ResourceName == "Defender API",
-            because: "S2S-only blueprint agents must not request delegated Defender admin consent");
-    }
-
-    [Fact]
     public void BuildAdminConsentUrls_PowerPlatformApi_UsesCorrectScopeConstant()
     {
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
@@ -271,21 +260,6 @@ public class SetupHelpersConsentUrlTests
             Uri.EscapeDataString(
                 $"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
             because: "a GCC consent URL must not request the commercial Observability audience");
-    }
-
-    [Fact]
-    public void BuildCombinedConsentUrl_WhenDefenderDelegatedExcluded_OmitsDefenderScope()
-    {
-        var url = SetupHelpers.BuildCombinedConsentUrl(
-            TenantId,
-            BlueprintClientId,
-            Array.Empty<string>(),
-            Array.Empty<string>(),
-            includeDefenderDelegated: false);
-
-        url.Should().NotContain(
-            Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
-            because: "S2S-only setup must not include a delegated Defender scope in the combined admin-consent URL");
     }
 
     [Fact]

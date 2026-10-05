@@ -358,16 +358,11 @@ public class AllSubcommandTests : IDisposable
     // Observability API permission wiring
     // -----------------------------------------------------------------------
 
-    private SetupContext BuildPermissionsContext(
-        bool skipObservabilityPermissions,
-        List<CustomResourcePermission>? customPermissions = null,
-        string? authMode = null,
-        bool isNonDwBlueprintFlow = true)
+    private SetupContext BuildPermissionsContext(bool skipObservabilityPermissions, List<CustomResourcePermission>? customPermissions = null)
     {
         var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
         var graph = Substitute.For<GraphApiService>();
         var blueprintService = Substitute.For<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), graph);
-        var results = new SetupResults { IsNonDwBlueprintFlow = isNonDwBlueprintFlow };
         // The blueprint has no inheritable permissions yet, so stale-permission cleanup has nothing to remove.
         blueprintService.ListInheritablePermissionsAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
@@ -383,7 +378,7 @@ public class AllSubcommandTests : IDisposable
                 DeploymentProjectPath = _tempDir,
                 CustomBlueprintPermissions = customPermissions,
             },
-            results: results,
+            results: new SetupResults(),
             logger: NullLogger.Instance,
             configFile: new FileInfo(Path.Combine(_tempDir, "a365.config.json")),
             generatedConfigPath: Path.Combine(_tempDir, "a365.generated.config.json"),
@@ -403,7 +398,6 @@ public class AllSubcommandTests : IDisposable
             federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(
                 Substitute.For<ILogger<FederatedCredentialService>>(), graph),
             clientAppValidator: Substitute.For<IClientAppValidator>(),
-            authMode: authMode,
             skipObservabilityPermissions: skipObservabilityPermissions);
     }
 
@@ -418,61 +412,10 @@ public class AllSubcommandTests : IDisposable
 
         specs.Any(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId).Should().Be(!skipObservabilityPermissions,
             because: "the spec list drives inheritable permissions, app role grants, and admin consent, so skipping Observability permissions must remove Observability API from it");
-        specs.Should().Contain(s => s.ResourceAppId == ConfigConstants.DefenderApiAppId,
-            because: "skipping Observability permissions must not remove the Defender permission required by the agent auth mode");
+        specs.Any(s => s.AppRoleScopes is { Length: > 0 }).Should().Be(!skipObservabilityPermissions,
+            because: "OtelWrite is the only app role setup requests, so skipping it must leave no app role grant that needs a Global Administrator");
         specs.Should().Contain(s => s.ResourceAppId == PowerPlatformConstants.PowerPlatformApiResourceAppId,
             because: "skipping Observability API must not drop the other required resources");
-    }
-
-    [Theory]
-    [InlineData(null, true, false)]
-    [InlineData("obo", true, false)]
-    [InlineData("s2s", false, true)]
-    [InlineData("both", true, true)]
-    public async Task BuildPermissionSpecsAsync_NonDw_DefenderPermissionsMatchAuthMode(
-        string? authMode,
-        bool expectDelegated,
-        bool expectApplication)
-    {
-        var ctx = BuildPermissionsContext(
-            skipObservabilityPermissions: true,
-            authMode: authMode,
-            isNonDwBlueprintFlow: true);
-
-        var (specs, _, _, _, _) = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
-
-        var defender = specs.Single(s => s.ResourceAppId == ConfigConstants.DefenderApiAppId);
-        defender.Scopes.Should().BeEquivalentTo(
-            expectDelegated ? [ConfigConstants.DefenderApiRealtimeProtectionScope] : [],
-            because: $"the '{authMode ?? "obo"}' auth mode must request delegated Defender consent only when OBO is enabled");
-        if (expectApplication)
-        {
-            defender.AppRoleScopes.Should().BeEquivalentTo(
-                [ConfigConstants.DefenderApiRealtimeProtectionScope],
-                because: $"the '{authMode ?? "obo"}' auth mode enables S2S Defender evaluation");
-        }
-        else
-        {
-            defender.AppRoleScopes.Should().BeNull(
-                because: $"the '{authMode ?? "obo"}' auth mode must not request a Defender application role");
-        }
-    }
-
-    [Fact]
-    public async Task BuildPermissionSpecsAsync_Dw_PreservesBothDefenderPermissionTypes()
-    {
-        var ctx = BuildPermissionsContext(
-            skipObservabilityPermissions: false,
-            authMode: "obo",
-            isNonDwBlueprintFlow: false);
-
-        var (specs, _, _, _, _) = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
-
-        var defender = specs.Single(s => s.ResourceAppId == ConfigConstants.DefenderApiAppId);
-        defender.Scopes.Should().BeEquivalentTo([ConfigConstants.DefenderApiRealtimeProtectionScope],
-            because: "DW setup does not use blueprint-agent auth modes and must preserve its delegated Defender permission");
-        defender.AppRoleScopes.Should().BeEquivalentTo([ConfigConstants.DefenderApiRealtimeProtectionScope],
-            because: "DW setup must preserve the existing Defender application permission");
     }
 
     [Fact]
@@ -483,31 +426,12 @@ public class AllSubcommandTests : IDisposable
         SetupHelpers.ApplyConsentUrlsIfNeeded(
             ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes, new[] { "McpServers.Mail.All" }, isM365: false);
 
-        ctx.Results.ConsentResourceNames.Should().BeEquivalentTo(new[] { "Microsoft Graph", "Agent 365 Tools", "Defender API", "Power Platform API" },
-            because: "default OBO setup must hand off every delegated resource, including Defender, while omitting Observability");
+        ctx.Results.ConsentResourceNames.Should().BeEquivalentTo(new[] { "Microsoft Graph", "Agent 365 Tools", "Power Platform API" },
+            because: "a non-admin run must hand every stamped resource to an administrator, and Observability API is no longer stamped");
         ctx.Config.ResourceConsents.Should().NotContain(rc => rc.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
             because: "no Observability API consent URL may be persisted when its permissions were skipped");
         ctx.Results.CombinedConsentUrl.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
             because: "the single hand-off URL must not request Observability API scopes that setup skipped");
-    }
-
-    [Fact]
-    public void ApplyConsentUrlsIfNeeded_S2s_OmitsDelegatedDefenderConsent()
-    {
-        var ctx = BuildPermissionsContext(
-            skipObservabilityPermissions: true,
-            authMode: "s2s",
-            isNonDwBlueprintFlow: true);
-
-        SetupHelpers.ApplyConsentUrlsIfNeeded(
-            ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes,
-            new[] { "McpServers.Mail.All" }, isM365: false);
-
-        ctx.Results.ConsentResourceNames.Should().NotContain("Defender API",
-            because: "S2S-only mode requests the Defender application role, not its delegated scope");
-        ctx.Results.CombinedConsentUrl.Should().NotContain(
-            Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
-            because: "the S2S hand-off URL must not request delegated Defender admin consent");
     }
 
     [Fact]

@@ -3,13 +3,6 @@
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
-internal enum DefenderPermissionMode
-{
-    Delegated,
-    Application,
-    Both,
-}
-
 /// <summary>
 /// Describes a single resource whose permissions should be configured on the agent blueprint.
 /// Used as input to <see cref="BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync"/>.

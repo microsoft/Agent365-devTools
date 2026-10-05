@@ -65,7 +65,7 @@ public class SetupResults
     /// <summary>
     /// Outcome of S2S app role assignments targeting the blueprint service principal. Written by
     /// <see cref="BatchPermissionsOrchestrator"/> in the DW path and in the non-DW path when the
-    /// blueprint carries app-role scopes (for example Defender API in s2s or both mode).
+    /// blueprint carries app-role scopes (e.g. Observability API).
     /// </summary>
     public GrantOutcome BlueprintS2SOutcome { get; set; }
 
