@@ -190,10 +190,14 @@ public class SetupHelpersConsentUrlTests
     {
         var url = SetupHelpers.BuildCombinedConsentUrl(
             TenantId, BlueprintClientId,
-            new[] { "Mail.Send" }, new[] { "McpServers.Mail.All" });
+            new[] { "Mail.Send" }, new[] { "McpServers.Mail.All" },
+            graphResourceUri: "https://graph.example",
+            authorityHost: "https://login.example");
 
-        url.Should().StartWith($"https://login.microsoftonline.com/{TenantId}/v2.0/adminconsent");
+        url.Should().StartWith($"https://login.example/{TenantId}/v2.0/adminconsent");
         url.Should().Contain($"client_id={BlueprintClientId}");
+        url.Should().Contain(Uri.EscapeDataString("https://graph.example/Mail.Send"),
+            because: "Graph scopes in the consent URL must be fully-qualified resource URIs and URI-encoded — AAD rejects bare scope names or unencoded URIs in the adminconsent query string");
         url.Should().Contain($"redirect_uri={Uri.EscapeDataString(AuthenticationConstants.BlueprintConsentRedirectUri)}",
             because: "redirect_uri must be registered on the blueprint app — AADSTS500113 is returned if absent or unregistered");
     }
@@ -238,6 +242,26 @@ public class SetupHelpersConsentUrlTests
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
             because: "RealtimeProtection.Process is the published delegated scope on the Defender API — without it the agent cannot call the Defender security webhook");
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
+    }
+
+    [Fact]
+    public void BuildCombinedConsentUrl_WithGccObservabilityResource_UsesGccAudience()
+    {
+        var url = SetupHelpers.BuildCombinedConsentUrl(
+            TenantId,
+            BlueprintClientId,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            observabilityResourceAppId: ConfigConstants.GccObservabilityApiAppId);
+
+        url.Should().Contain(
+            Uri.EscapeDataString(
+                $"api://{ConfigConstants.GccObservabilityApiAppId}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
+            because: "GCC admin consent must grant the OtelWrite scope on the GCC Observability resource");
+        url.Should().NotContain(
+            Uri.EscapeDataString(
+                $"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
+            because: "a GCC consent URL must not request the commercial Observability audience");
     }
 
     [Fact]
@@ -321,6 +345,45 @@ public class SetupHelpersConsentUrlTests
         config.ResourceConsents.Should().NotContain(
             rc => rc.ResourceAppId == ConfigConstants.MessagingBotApiAppId,
             because: "no Messaging Bot consent URL is generated for non-M365 agents, so no resourceConsents entry should be persisted");
+    }
+
+    [Theory]
+    [InlineData("prod", ConfigConstants.ObservabilityApiAppId)]
+    [InlineData("gcc", ConfigConstants.GccObservabilityApiAppId)]
+    public void PopulateAdminConsentUrls_WithoutObservability_ClearsObservabilityConsentUrlFromEarlierRun(string environment, string observabilityAppId)
+    {
+        var config = new Agent365Config
+        {
+            TenantId = TenantId,
+            AgentBlueprintId = BlueprintClientId,
+            Environment = environment,
+        };
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = observabilityAppId,
+            ConsentUrl = "https://login.microsoftonline.com/old-observability-consent",
+            ConsentGranted = true,
+            InheritablePermissionsConfigured = true,
+        });
+
+        var names = SetupHelpers.PopulateAdminConsentUrls(
+            config, McpConstants.WorkIQToolsProdAppId, new[] { "McpServers.Mail.All" },
+            isM365: false, includeObservability: false);
+
+        var observability = config.ResourceConsents.Should().ContainSingle(
+            rc => rc.ResourceAppId == observabilityAppId,
+            because: "re-running setup does not revoke, so the record of the earlier grant is kept").Which;
+        observability.ConsentUrl.Should().BeNull(
+            because: "an Observability consent URL saved by an earlier run must not keep asking the admin for permissions this run no longer requests, in any cloud");
+        observability.ConsentGranted.Should().BeTrue(
+            because: "clearing the URL must not erase that an earlier run granted consent");
+        observability.InheritablePermissionsConfigured.Should().Be(true,
+            because: "clearing the URL must not erase the earlier inheritable-permission state");
+        names.Should().NotContain("Observability API");
+        config.ResourceConsents.Should().Contain(
+            rc => rc.ResourceAppId == PowerPlatformConstants.PowerPlatformApiResourceAppId,
+            because: "clearing the stale Observability URL must not affect the resources that are still requested");
     }
 
     // ── V2 per-server audience routing (issue #429) ──────────────────────────

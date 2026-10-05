@@ -185,14 +185,27 @@ public class DevelopMcpCommandTests
     public void AllSubcommands_SupportDryRunOption()
     {
         // Act
-        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService);
+        var command = DevelopMcpCommand.CreateCommand(_mockLogger, _mockToolingService,
+            mcpServerPermissionService: CreatePermissionService());
 
         // Assert - All subcommands should have dry-run option for safety
+        command.Subcommands.Should().Contain(sc => sc.Name == "grant-agents-access",
+            because: "building the command without a permission service would let the permission " +
+                     "subcommands go unregistered and silently escape this dry-run contract");
         foreach (var subcommand in command.Subcommands)
         {
             var dryRunOption = subcommand.Options.FirstOrDefault(o => o.Name == "dry-run");
             dryRunOption.Should().NotBeNull($"Subcommand '{subcommand.Name}' should have --dry-run option");
         }
+    }
+
+    private static McpServerPermissionService CreatePermissionService()
+    {
+        var graph = Substitute.For<GraphApiService>();
+        var blueprintService = Substitute.For<AgentBlueprintService>(
+            Substitute.For<ILogger<AgentBlueprintService>>(), graph);
+        return Substitute.For<McpServerPermissionService>(
+            graph, blueprintService, Substitute.For<ILogger<McpServerPermissionService>>());
     }
 
     [Fact]

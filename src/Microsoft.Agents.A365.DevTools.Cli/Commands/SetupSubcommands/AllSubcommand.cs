@@ -127,7 +127,8 @@ internal static class AllSubcommand
             description: "Agent base name (e.g. \"MyAgent\"). When provided, no config file is required.\n" +
                         "Derives AgentIdentityDisplayName=\"<name> Identity\" and AgentBlueprintDisplayName=\"<name> Blueprint\".\n" +
                         "TenantId is auto-detected from 'az account show' (override with --tenant-id).\n" +
-                        $"ClientAppId is resolved by looking up \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" in your tenant.");
+                        "ClientAppId defaults to the first-party Agent 365 CLI enterprise application, " +
+                        $"then falls back to a tenant-owned \"{Constants.AuthenticationConstants.WellKnownClientAppDisplayName}\" app.");
 
         var tenantIdOption = new Option<string?>(
             "--tenant-id",
@@ -142,8 +143,8 @@ internal static class AllSubcommand
             "--authmode",
             description: "Authentication pattern for the agent identity (blueprint agents only).\n" +
                          "  obo  — on-behalf-of (default); principal-scoped delegated grants; no admin consent needed.\n" +
-                         "  s2s  — service-to-service; app permissions on agent identity; Global Admin needed or PowerShell fallback.\n" +
-                         "  both — delegated grants (OBO) and app permissions (S2S).\n" +
+                         "  s2s  — service-to-service; grants the app roles in requested specs (blueprint agents no longer request OtelWrite).\n" +
+                         "  both — delegated grants (OBO) plus those S2S app-role grants.\n" +
                          "Not supported with --aiteammate true.");
 
         var skipSpProvisioningOption = new Option<bool>(
@@ -396,19 +397,24 @@ internal static class AllSubcommand
                 return;
             }
 
+            // Registered blueprint agents export telemetry app-only over S2S without OtelWrite in every auth
+            // mode, so blueprint setup never requests it; AI Teammate setup (including an AI Teammate config
+            // kept for a dry run) is unchanged.
+            var skipObservabilityPermissions = nonDwConfig is not null
+                && (aiTeammateFlag == false || nonDwConfig.IsBlueprintAgent);
+
             if (nonDwConfig is not null)
             {
                 if (dryRun)
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
                     var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag, skipObservabilityPermissions);
                     return;
                 }
 
                 // Build SetupContext for non-DW blueprint and delegate to orchestrator.
-                if (!string.IsNullOrWhiteSpace(nonDwConfig.ClientAppId))
-                    graphApiService.CustomClientAppId = nonDwConfig.ClientAppId;
+                graphApiService.ConfigureCloudEndpoints(nonDwConfig);
 
                 var nonDwGeneratedConfigPath = Path.Combine(
                     config.DirectoryName ?? Environment.CurrentDirectory,
@@ -441,7 +447,8 @@ internal static class AllSubcommand
                     confirmationProvider: confirmationProvider,
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
-                    nonInteractive: Console.IsInputRedirected);
+                    nonInteractive: Console.IsInputRedirected,
+                    skipObservabilityPermissions: skipObservabilityPermissions);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -526,12 +533,7 @@ internal static class AllSubcommand
                     }
                 }
 
-                // Configure GraphApiService with custom client app ID if available
-                // This ensures inheritable permissions operations use the validated custom app
-                if (!string.IsNullOrWhiteSpace(setupConfig.ClientAppId))
-                {
-                    graphApiService.CustomClientAppId = setupConfig.ClientAppId;
-                }
+                graphApiService.ConfigureCloudEndpoints(setupConfig);
 
                 setupResults.PrerequisitesSkipped = skipRequirements;
                 setupResults.InfrastructureSkipped = true;
@@ -627,7 +629,7 @@ internal static class AllSubcommand
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);
                 logger.LogInformation("");
-                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                SetupHelpers.DisplaySetupSummary(setupResults, logger, graphApiService.GraphBaseUrl);
             }
             catch (Agent365Exception ex)
             {
@@ -635,7 +637,7 @@ internal static class AllSubcommand
                 ExceptionHandler.HandleAgent365Exception(ex, logFilePath: logFilePath);
                 setupResults.Errors.Add(ex.Message);
                 logger.LogInformation("");
-                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                SetupHelpers.DisplaySetupSummary(setupResults, logger, graphApiService.GraphBaseUrl);
                 ExceptionHandler.ExitWithCleanup(1);
             }
             catch (FileNotFoundException fnfEx)
@@ -643,7 +645,7 @@ internal static class AllSubcommand
                 logger.LogError("Setup failed: {Message}", fnfEx.Message);
                 setupResults.Errors.Add(fnfEx.Message);
                 logger.LogInformation("");
-                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                SetupHelpers.DisplaySetupSummary(setupResults, logger, graphApiService.GraphBaseUrl);
                 ExceptionHandler.ExitWithCleanup(1);
             }
             catch (OperationCanceledException)
@@ -657,7 +659,7 @@ internal static class AllSubcommand
                 logger.LogError(ex, "Setup failed: {Message}", ex.Message);
                 setupResults.Errors.Add(ex.Message);
                 logger.LogInformation("");
-                SetupHelpers.DisplaySetupSummary(setupResults, logger);
+                SetupHelpers.DisplaySetupSummary(setupResults, logger, graphApiService.GraphBaseUrl);
                 throw;
             }
         });
@@ -1017,7 +1019,8 @@ internal static class AllSubcommand
         // for both DW and non-DW agents; serverNamesByAudience drives the per-server display
         // names so V2 audiences read as e.g. "mcp_MailTools" rather than "Agent 365 Tools".
         var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
-            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience);
+            ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience,
+            includeObservability: !ctx.SkipObservabilityPermissions);
 
         // Return the full scopesByAudience map alongside the V1-compat mcpScopes so V2
         // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to the bare
@@ -1035,7 +1038,7 @@ internal static class AllSubcommand
     /// requiring an <c>a365.config.json</c> file on disk.
     /// <list type="bullet">
     ///   <item>TenantId: from <paramref name="tenantIdFlag"/> or auto-detected via <c>az account show</c></item>
-    ///   <item>ClientAppId: resolved by searching Entra for <see cref="AuthenticationConstants.WellKnownClientAppDisplayName"/></item>
+    ///   <item>ClientAppId: the first-party app when its service principal exists, otherwise the named custom-app fallback</item>
     /// </list>
     /// Returns <c>null</c> and logs errors if validation fails.
     /// </summary>
@@ -1052,6 +1055,9 @@ internal static class AllSubcommand
         if (tenantId is null)
             return null;
 
+        var environment = await SetupHelpers.ResolveBootstrapEnvironmentAsync(executor, logger, ct);
+        graphApiService.ConfigureCloudEndpoints(new Agent365Config { Environment = environment });
+
         var clientAppId = await SetupHelpers.ResolveBootstrapClientAppIdAsync(
             tenantId, graphApiService, logger, ct);
         if (string.IsNullOrWhiteSpace(clientAppId))
@@ -1064,6 +1070,9 @@ internal static class AllSubcommand
         {
             TenantId = tenantId,
             ClientAppId = clientAppId,
+            Environment = environment,
+            GraphBaseUrl = graphApiService.GraphBaseUrl,
+            AuthorityHost = graphApiService.AuthorityHost,
             AgentIdentityDisplayName = $"{agentName} Identity",
             AgentBlueprintDisplayName = $"{agentName} Blueprint",
             AgentDescription = agentName,

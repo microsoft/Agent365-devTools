@@ -3,6 +3,8 @@
 Authoritative package versions and code patterns for instrumenting A365 observability
 into a Node.js agent. All samples mirror the official Microsoft Learn docs (updated 2026-04-30).
 
+> **Blueprint agents:** Prefer the current `instrument-observability` skill in [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills). Non-AI-Teammate blueprint agents must export on the S2S route with an app-only token resolver; do not wire `AgenticTokenCacheInstance` or delegated OBS token refresh for those agents.
+
 ---
 
 ## npm Packages
@@ -109,7 +111,7 @@ No OBO user token is required.
 > standard client-credential request. This workaround will be removed once MSAL ships native
 > `fmiPath` support for the client-secret credential path.
 
-> **Note:** `a365 setup all` attempts to grant `Agent365.Observability.OtelWrite` to the Agent Identity SP, but this requires **Global Administrator** privileges. If the assignment fails (403), a Global Admin must manually grant the role via Entra portal — otherwise trace exports will return HTTP 403.
+> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; other clouds are listed under [Environment Variable Overrides](../../../src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides)).
 
 > **IMPORTANT — SDK `useS2SEndpoint` bug (v0.1.0-beta.1):** The `@microsoft/opentelemetry`
 > distro does **not** pass `useS2SEndpoint` to `Agent365Exporter`. The exporter defaults
@@ -1045,13 +1047,13 @@ setLogger({
 | `Cannot find module '@microsoft/agents-a365-observability'` | Package not installed | Run `npm install @microsoft/agents-a365-observability` |
 | `Cannot find module '@microsoft/agents-a365-observability-hosting'` | Package not installed | Run `npm install @microsoft/agents-a365-observability-hosting` |
 | Traces not in Admin Center | Exporter env var not set | Set `ENABLE_A365_OBSERVABILITY_EXPORTER=true` in production |
-| 401 on export | Missing permission | Check if upgrading past `0.2.0-preview.1` (requires new `Agent365.Observability.OtelWrite` permission) |
+| 401 on export | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `useS2SEndpoint: true` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial example: `9b975845-388f-4429-889e-eab1ef63949c`; see the per-cloud table in the CLI design) |
 | Spans dropped silently | Missing tenant/agent ID | Ensure `BaggageBuilder` (or `BaggageMiddleware`) populates tenant/agent ID before creating spans |
 | TypeScript error on `agentAuid` in `AgentDetails` | Interface field is `agentAUID` (uppercase UID), not `agentAuid` | Change to `agentAUID: '...'` |
 | `extensions-openai` install fails / peer dep error | Missing `@openai/agents` peer dep | Run `npm install @openai/agents@^0.7.0` first; this is the OpenAI Agents SDK, not the `openai` package |
 | S2S: AADSTS82001 or AADSTS1002012 | Direct MSAL client credentials not supported | Use the 3-hop FMI chain: Blueprint → FMI path → Agent Identity → Observability API token. |
-| S2S: 401 on export | Token scope mismatch | Ensure Hop 3 scope is `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Also ensure Agent Identity SP has OtelWrite role assigned |
-| S2S: 403 on `observabilityService/` endpoint | Missing app role | Assign `Agent365.Observability.OtelWrite` to the **Agent Identity** SP (not just the Blueprint) via Graph API |
+| S2S: 401 on export | Token scope mismatch, delegated token, or wrong route | Ensure Hop 3 scope is `api://9b975845-388f-4429-889e-eab1ef63949c/.default`, set `useS2SEndpoint: true`, and use an app-only token for the exporting agent identity |
+| S2S: 403 `insufficient_scope` on `observabilityService/` endpoint | Agent instance is not registered, or AI Teammate OtelWrite app-role grant is incomplete | Blueprint agents: run `a365 setup all --agent-registration-only` and retry. AI Teammates: complete the OtelWrite application-role PowerShell step printed by `a365 setup all --aiteammate` |
 | S2S: MSI fails locally | No Managed Identity in dev | Set `AGENT365_USE_MANAGED_IDENTITY=false` and provide `AGENT365_CLIENT_SECRET` |
 | S2S: token resolver never called | `RefreshObservabilityToken` called for S2S | Remove `AgenticTokenCacheInstance.RefreshObservabilityToken` — not used in S2S; token comes from `a365.tokenResolver` in `useMicrosoftOpenTelemetry(...)` |
 | `fromTurnContext` not found on `BaggageBuilder` | Static method is on `BaggageBuilderUtils`, not `BaggageBuilder` | Use `BaggageBuilderUtils.fromTurnContext(new BaggageBuilder(), context)` |

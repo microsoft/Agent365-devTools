@@ -8,13 +8,13 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.A365.DevTools.Cli.Services.Requirements.RequirementChecks;
 
 /// <summary>
-/// Requirement check that validates the custom client app configuration
-/// Verifies that the app exists, has required permissions, and admin consent is granted
+/// Validates first-party or custom client-app presence and Microsoft Graph authorization.
 /// </summary>
 public class ClientAppRequirementCheck : RequirementCheck
 {
     private readonly IClientAppValidator _clientAppValidator;
 
+    /// <param name="clientAppValidator">The validator used to check the client app configuration.</param>
     public ClientAppRequirementCheck(IClientAppValidator clientAppValidator)
     {
         _clientAppValidator = clientAppValidator ?? throw new ArgumentNullException(nameof(clientAppValidator));
@@ -24,7 +24,7 @@ public class ClientAppRequirementCheck : RequirementCheck
     public override string Name => "Client App Configuration";
 
     /// <inheritdoc />
-    public override string Description => "Validates that the custom client app exists, has required Microsoft Graph permissions, and admin consent is granted";
+    public override string Description => "Validates that the first-party or custom client app exists and has the required Microsoft Graph authorization";
 
     /// <inheritdoc />
     public override string Category => "Authentication";
@@ -62,7 +62,8 @@ public class ClientAppRequirementCheck : RequirementCheck
 
         try
         {
-            // Validate the client app using the validator
+            // First-party semantics are keyed off the well-known app ID inside the validator, so
+            // Microsoft's own registration is never PATCHed regardless of the call site.
             await _clientAppValidator.EnsureValidClientAppAsync(
                 config.ClientAppId,
                 config.TenantId,

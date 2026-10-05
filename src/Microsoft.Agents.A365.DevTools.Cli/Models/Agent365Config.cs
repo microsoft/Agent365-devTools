@@ -29,7 +29,7 @@ public class Agent365Config
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
         if (string.IsNullOrWhiteSpace(ClientAppId))
         {
-            errors.Add($"clientAppId is required. This must be a client app you create in your tenant with specific permissions. See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions.");
+            errors.Add($"clientAppId is required. Use the default Agent 365 CLI application or configure a tenant-owned custom client app. See {ConfigConstants.Agent365CliDocumentationUrl} for setup instructions.");
         }
         else
         {
@@ -78,7 +78,7 @@ public class Agent365Config
 
         if (string.IsNullOrWhiteSpace(TenantId)) errors.Add("tenantId is required.");
         if (string.IsNullOrWhiteSpace(ClientAppId))
-            errors.Add($"clientAppId could not be resolved. Ensure an Entra app named \"{AuthenticationConstants.WellKnownClientAppDisplayName}\" exists in your tenant.");
+            errors.Add("clientAppId could not be resolved. Ensure the Agent 365 CLI enterprise application exists or configure a tenant-owned custom client app.");
         else
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
@@ -125,9 +125,9 @@ public class Agent365Config
     public string TenantId { get; init; } = string.Empty;
 
     /// <summary>
-    /// Target environment for Agent 365 services (test, preprod, prod).
-    /// Controls which endpoints are used for Teams Graph API, Agent 365 Tools, etc.
-    /// Default: preprod
+    /// Target Agent 365 environment or cloud key.
+    /// Supported production cloud keys include prod, gcc, gcc-high, and dod.
+    /// Controls service endpoints, resource application IDs, and authentication audiences.
     /// </summary>
     [JsonPropertyName("environment")]
     public string Environment { get; init; } = "prod";
@@ -140,14 +140,17 @@ public class Agent365Config
     public string MessagingEndpoint { get; init; } = string.Empty;
 
     /// <summary>
-    /// Base URL for Microsoft Graph API.
-    /// Override this to target sovereign / government clouds:
-    ///   GCC High / DoD : "https://graph.microsoft.us"
-    ///   China (21Vianet): "https://microsoftgraph.chinacloudapi.cn"
-    /// Defaults to "https://graph.microsoft.com" when omitted.
+    /// Base URL for Microsoft Graph API. Defaults to the commercial cloud endpoint.
     /// </summary>
     [JsonPropertyName("graphBaseUrl")]
     public string GraphBaseUrl { get; init; } = Constants.GraphApiConstants.BaseUrl;
+
+    /// <summary>
+    /// OAuth authority host for the selected cloud. Pair this with <see cref="GraphBaseUrl"/>
+    /// so authentication and Graph data-plane calls target the same environment.
+    /// </summary>
+    [JsonPropertyName("authorityHost")]
+    public string? AuthorityHost { get; init; }
 
     #endregion
 
@@ -536,7 +539,7 @@ public class Agent365Config
     {
         var botResources = ResourceConsents
             .Where(rc => rc.ResourceAppId.Equals(ConfigConstants.MessagingBotApiAppId, StringComparison.OrdinalIgnoreCase) ||
-                         rc.ResourceAppId.Equals(ConfigConstants.ObservabilityApiAppId, StringComparison.OrdinalIgnoreCase) ||
+                         ConfigConstants.IsObservabilityApiAppId(rc.ResourceAppId) ||
                          rc.ResourceAppId.Equals(PowerPlatformConstants.PowerPlatformApiResourceAppId, StringComparison.OrdinalIgnoreCase))
             .Where(rc => rc.InheritablePermissionsConfigured.HasValue)
             .ToList();

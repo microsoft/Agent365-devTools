@@ -349,6 +349,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Granted,
             because: "when the az rest POST /appRoleAssignments succeeds the Action Required block must be suppressed");
+        setupResults.PendingBlueprintAppRoleSpecs.Should().BeEmpty(
+            because: "a completed fallback leaves no app role for the summary's hand-off");
     }
 
     /// <summary>
@@ -378,6 +380,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
             because: "a non-zero az rest exit code means the assignment was not created — Action Required must remain visible");
+        setupResults.PendingBlueprintAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "the summary's hand-off must list the app role the fallback could not assign");
     }
 
     /// <summary>
@@ -410,6 +414,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert — outcome is Failed (Action Required surfaces manual steps).
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
             because: "operator declined the confirmation, so no S2S grants were attempted; Action Required must surface the manual steps");
+        setupResults.PendingBlueprintAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "a declined grant leaves every requested app role for the summary's hand-off");
 
         // Primary path: no Graph API S2S call should have been made.
         await _blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
@@ -533,6 +539,8 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
             because: "a non-admin user cannot complete S2S app role assignment directly — the outcome must be marked Failed so DisplaySetupSummary surfaces the hand-off block");
+        setupResults.PendingBlueprintAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "a non-admin run leaves every requested app role for the summary's hand-off");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────────────
@@ -861,6 +869,39 @@ public class BatchPermissionsOrchestratorTests : IDisposable
     // makes the entry-point case unforgettable. This test additionally pins the contract at
     // the deeper layer: that the URL-building loop honors knownMcpAudienceAppIds per spec.
     // ──────────────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void UpdateResourceConsents_ReplacesCommercialObservabilityEntryForGcc()
+    {
+        var config = new Agent365Config();
+        config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+            ConsentGranted = true,
+        });
+        var specs = new[]
+        {
+            new ResourcePermissionSpec(
+                ConfigConstants.GccObservabilityApiAppId,
+                "Observability API",
+                new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+                SetInheritable: true),
+        };
+        var inheritedResults = new Dictionary<string, (bool configured, bool alreadyExisted)>
+        {
+            [ConfigConstants.GccObservabilityApiAppId] = (true, false),
+        };
+
+        BatchPermissionsOrchestrator.UpdateResourceConsents(config, specs, inheritedResults);
+
+        config.ResourceConsents.Should().ContainSingle(
+            resourceConsent => ConfigConstants.IsObservabilityApiAppId(resourceConsent.ResourceAppId),
+            because: "state must contain only the Observability resource for the currently selected cloud");
+        config.ResourceConsents.Single().ResourceAppId.Should().Be(
+            ConfigConstants.GccObservabilityApiAppId,
+            because: "a GCC rerun must replace stale commercial Observability state");
+    }
 
     /// <summary>
     /// Non-admin path: GrantAdminConsentAsync builds the unified consent URL via the catch-all

@@ -182,6 +182,13 @@ public class GlobalConfigDirectoryCleanupTests : IDisposable
             Substitute.For<ILogger<GraphApiService>>(),
             executor,
             (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
+        graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = 200
+            });
 
         // Graph resolves the blueprint to the SAME ID as the poisoned global file would
         // carry — so if the pre-fix merge logic at BuildBootstrapConfigForCleanupAsync
@@ -259,6 +266,13 @@ public class GlobalConfigDirectoryCleanupTests : IDisposable
             Substitute.For<ILogger<GraphApiService>>(),
             executor,
             (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
+        graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = 200
+            });
         // The cleanup duplicate calls FindApplicationByDisplayNameAsync WITHOUT a
         // CancellationToken argument (see CleanupCommand.cs ~line 1356-1357), so the
         // 2-arg overload must be stubbed in addition to the 3-arg one for safety.

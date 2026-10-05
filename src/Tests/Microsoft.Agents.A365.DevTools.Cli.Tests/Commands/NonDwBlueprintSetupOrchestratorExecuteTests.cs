@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -26,6 +27,20 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// </summary>
 public class NonDwBlueprintSetupOrchestratorExecuteTests
 {
+    private sealed class CapturingLogger : ILogger
+    {
+        private readonly List<string> _messages = [];
+
+        public string AllOutput => string.Join("\n", _messages);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => _messages.Add(formatter(state, exception));
+    }
+
     // -------------------------------------------------------------------------
     // ExecuteAsync behavioral tests — error paths
     // -------------------------------------------------------------------------
@@ -45,7 +60,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         return executor;
     }
 
-    private static SetupContext BuildContext(Agent365Config? config = null, bool skipRequirements = true)
+    private static SetupContext BuildContext(Agent365Config? config = null, bool skipRequirements = true, bool skipObservabilityPermissions = false)
     {
         var cfg = config ?? new Agent365Config
         {
@@ -121,7 +136,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             blueprintLookupService: blueprintLookupService,
             federatedCredentialService: federatedCredentialService,
             clientAppValidator: Substitute.For<IClientAppValidator>(),
-            loginHintResolver: () => Task.FromResult<string?>(null));
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            skipObservabilityPermissions: skipObservabilityPermissions);
     }
 
     /// <summary>
@@ -136,6 +152,34 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         var exitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
 
         exitCode.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CustomObservabilityPermission_DoesNotMarkObservabilitySkipped()
+    {
+        var ctx = BuildContext(
+            new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentIdentityDisplayName = "Test Agent",
+                ClientAppId = "client-app-id",
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        ResourceName = "Observability API",
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                    }
+                ],
+            },
+            skipObservabilityPermissions: true);
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        ctx.Results.ObservabilityPermissionsSkipped.Should().BeFalse(
+            because: "a valid custom Observability permission is an explicit opt-back-in even though setup omits the default fixed OtelWrite spec");
     }
 
     /// <summary>
@@ -167,6 +211,28 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         // Blueprint fails → exit 1, but NOT due to requirements check
         exitCode.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FirstPartyClientApp_DoesNotReadOrMutateTenantConsentGrants()
+    {
+        var ctx = BuildContext(new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentIdentityDisplayName = "Test Agent",
+            ClientAppId = AuthenticationConstants.WellKnownClientAppId,
+        });
+
+        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        var consentCalls = ctx.ClientAppValidator.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name is
+                nameof(IClientAppValidator.GetUnconsentedRequiredPermissionsAsync) or
+                nameof(IClientAppValidator.GrantConsentForPermissionsAsync))
+            .ToList();
+        consentCalls.Should().BeEmpty(
+            because: "setup must trust validated first-party token preauthorization instead of reading or mutating a tenant-local oauth2PermissionGrant");
     }
 
     /// <summary>
@@ -219,12 +285,17 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
     /// <summary>
     /// Builds a SetupContext suited for testing the agent identity + registration steps
-    /// (Steps 5–6) via the AgentInstanceOnly path.
+    /// (Steps 5–6), by default via the AgentInstanceOnly path.
     /// Returns the context, graph service mock, and blueprint service mock so tests can
     /// configure stub return values.
     /// </summary>
     private static (SetupContext ctx, GraphApiService graph, AgentBlueprintService blueprintService)
-        BuildIdempotencyTestContext(Agent365Config? config = null)
+        BuildIdempotencyTestContext(
+            Agent365Config? config = null,
+            ILogger? logger = null,
+            bool agentInstanceOnly = true,
+            bool skipObservabilityPermissions = false,
+            string? authMode = null)
     {
         var graph = Substitute.ForPartsOf<GraphApiService>();
 
@@ -254,7 +325,7 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
         var ctx = new SetupContext(
             config: cfg,
             results: new SetupResults(),
-            logger: Substitute.For<ILogger>(),
+            logger: logger ?? Substitute.For<ILogger>(),
             configFile: new FileInfo("a365.config.json"),
             generatedConfigPath: "a365.generated.config.json",
             correlationId: "test-correlation-id",
@@ -275,8 +346,10 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(
                 Substitute.For<ILogger<FederatedCredentialService>>(), graph),
             clientAppValidator: Substitute.For<IClientAppValidator>(),
-            agentInstanceOnly: true,
-            loginHintResolver: () => Task.FromResult<string?>(null));
+            agentInstanceOnly: agentInstanceOnly,
+            loginHintResolver: () => Task.FromResult<string?>(null),
+            skipObservabilityPermissions: skipObservabilityPermissions,
+            authMode: authMode);
 
         return (ctx, graph, blueprintService);
     }
@@ -341,10 +414,52 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             because: "missing agent identity is a fatal error for --agent-registration-only");
         ctx.Results.AgentIdentityFailed.Should().BeTrue(
             because: "identity not found via API lookup must surface as an identity failure");
+        ctx.Results.AgentIdentityFailureIsError.Should().BeTrue(
+            because: "registration-only cannot continue without an identity, so the identity row must point to Errors");
         ctx.Results.AgentRegistrationFailed.Should().BeTrue(
             because: "registration cannot proceed without an agent identity");
+        ctx.Results.AgentRegistrationFailureIsError.Should().BeTrue(
+            because: "registration-only cannot complete without an identity, so the registration row must point to Errors");
         await graph.DidNotReceive().CreateAgentIdentityDelegatedAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Step 6 (--agent-registration-only): A registration API failure must be fatal for the focused
+    /// command, returning exit code 1 and emitting an error summary instead of a success-with-warnings banner.
+    /// </summary>
+    [Fact]
+    public async Task Step6_RegistrationOnly_ReturnsExitCode1AndAvoidsSuccessfulSummary_WhenRegistrationFails()
+    {
+        var logger = new CapturingLogger();
+        var config = new Agent365Config
+        {
+            AiTeammate = false,
+            TenantId = "tenant-id",
+            AgentBlueprintId = "blueprint-id",
+            AgentIdentityDisplayName = "sellakapri211 Identity",
+            ClientAppId = "client-app-id",
+            AgenticAppId = "agentic-app-id",
+        };
+        var (ctx, graph, _) = BuildIdempotencyTestContext(config, logger);
+
+        graph.RegisterAgentInstanceAsyncV2(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(((string?)null, false));
+
+        var exitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+
+        exitCode.Should().Be(1,
+            because: "registration-only mode requested only agent registration, so that failure must be fatal");
+        ctx.Results.Errors.Should().ContainSingle(error => error.StartsWith("Agent registration failed via Graph copilot/agentRegistrations API."),
+            because: "registration-only failures are fatal and must be listed under Errors for the summary and exit-code path");
+        ctx.Results.Warnings.Should().NotContain(warning => warning.StartsWith("Agent registration failed"),
+            because: "registration-only failures must not be downgraded to warnings");
+        logger.AllOutput.Should().Contain("Setup completed with errors",
+            because: "the summary must not present a registration-only failure as successful");
+        logger.AllOutput.Should().NotContain("Setup completed successfully",
+            because: "registration-only failure must not emit either success status line");
     }
 
     /// <summary>
@@ -598,37 +713,335 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
     }
 
     /// <summary>
-    /// Step 6: When AgentRegistrationExistsAsync returns null (auth or transient error),
-    /// the stored registration ID must be preserved and re-registration must not be attempted.
+    /// Step 6: When AgentRegistrationExistsAsync returns null (auth or transient error) and registration is
+    /// optional (Observability permissions requested, not --agent-registration-only), the stored registration
+    /// ID must be preserved and re-registration must not be attempted.
     /// </summary>
     [Fact]
     public async Task Step6_PreservesStoredRegistrationId_WhenVerificationIsInconclusive()
     {
-        var config = new Agent365Config
+        // Empty project directory: the project settings step finds no project and writes nothing.
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwRegistrationTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
         {
-            AiTeammate = false,
-            TenantId = "tenant-id",
-            AgentBlueprintId = "blueprint-id",
-            AgentIdentityDisplayName = "sellakapri211 Identity",
-            ClientAppId = "client-app-id",
-            AgenticAppId = "agentic-app-id",
-            AgentRegistrationId = "stored-reg-id",
-        };
-        var (ctx, graph, _) = BuildIdempotencyTestContext(config);
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "sellakapri211 Identity",
+                ClientAppId = "client-app-id",
+                AgenticAppId = "agentic-app-id",
+                AgentRegistrationId = "stored-reg-id",
+                DeploymentProjectPath = projectDir,
+            };
+            var (ctx, graph, _) = BuildIdempotencyTestContext(config, agentInstanceOnly: false);
 
-        graph.AgentRegistrationExistsAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns((bool?)null);
+            graph.AgentRegistrationExistsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((bool?)null);
 
-        await NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx);
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
 
-        ctx.Results.AgentInstanceId.Should().Be("stored-reg-id",
-            because: "when verification is inconclusive the stored ID must be preserved to avoid unintended re-registration");
-        ctx.Results.AgentRegistrationAlreadyExisted.Should().BeTrue(
-            because: "an inconclusive verification is treated as 'assume still exists' to prevent data loss");
-        await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
+            ctx.Results.AgentInstanceId.Should().Be("stored-reg-id",
+                because: "when verification is inconclusive the stored ID must be preserved to avoid unintended re-registration");
+            ctx.Results.AgentRegistrationAlreadyExisted.Should().BeTrue(
+                because: "an inconclusive verification is treated as 'assume still exists' to prevent data loss");
+            await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Step 6: when registration is required (--agent-registration-only, or Observability permissions not
+    /// requested so registration is the agent's only authorization), an inconclusive verification must fail
+    /// setup instead of passing — while still keeping the stored ID and not creating a duplicate registration.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Step6_RegistrationRequired_FailsWithoutReRegistering_WhenVerificationIsInconclusive(bool agentInstanceOnly, bool skipObservabilityPermissions)
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwRegistrationTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                AgenticAppId = "agentic-app-id",
+                AgentRegistrationId = "stored-reg-id",
+                DeploymentProjectPath = projectDir,
+            };
+            var (ctx, graph, _) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: agentInstanceOnly, skipObservabilityPermissions: skipObservabilityPermissions);
+            graph.AgentRegistrationExistsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((bool?)null);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(
+                ctx, specs: [], skipIdentityAndPermissions: agentInstanceOnly);
+
+            ctx.Results.Errors.Should().ContainSingle(e => e.Contains("Could not verify agent registration"),
+                because: "an unverifiable registration cannot be relied on as the agent's only authorization, so setup must exit 1");
+            ctx.Results.AgentInstanceRegistered.Should().BeFalse(
+                because: "the summary must not report a registration that could not be confirmed");
+            ctx.Config.AgentRegistrationId.Should().Be("stored-reg-id",
+                because: "an auth or transient failure is not proof the registration is gone, so the stored ID is kept for the retry");
+            await graph.DidNotReceive().RegisterAgentInstanceAsyncV2(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
+                Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    private static Agent365Config RegistrationReadyConfig(string deploymentProjectPath = "") => new()
+    {
+        AiTeammate = false,
+        TenantId = "tenant-id",
+        AgentBlueprintId = "blueprint-id",
+        AgentIdentityDisplayName = "Test Agent Identity",
+        ClientAppId = "client-app-id",
+        AgenticAppId = "agentic-app-id",
+        DeploymentProjectPath = deploymentProjectPath,
+    };
+
+    private static void StubRegistrationFailure(GraphApiService graph) =>
+        graph.RegisterAgentInstanceAsyncV2(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string?>(),
-            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(((string?)null, false));
+
+    /// <summary>
+    /// Step 5: when the blueprint secret is missing, setup cannot create the identity or register the agent.
+    /// </summary>
+    [Fact]
+    public async Task Step5_MissingBlueprintClientSecret_RecordsErrorForExitCode1()
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwMissingSecretTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                DeploymentProjectPath = projectDir,
+                AgentBlueprintClientSecret = null,
+            };
+            var (ctx, _, blueprintService) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: false, skipObservabilityPermissions: true);
+            blueprintService.FindExistingAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((string?)null);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.AgentIdentityFailed.Should().BeTrue(
+                because: "without the blueprint secret setup cannot create the agent identity");
+            ctx.Results.AgentIdentityFailureIsError.Should().BeTrue(
+                because: "the missing secret path records an error, so the identity summary row must say see errors");
+            ctx.Results.AgentRegistrationFailed.Should().BeTrue(
+                because: "registration is mandatory when Observability permissions were skipped");
+            ctx.Results.AgentRegistrationFailureIsError.Should().BeTrue(
+                because: "the missing secret path records an error before registration can run");
+            ctx.Results.Errors.Should().ContainSingle(e => e.Contains("blueprint client secret is not available"),
+                because: "ExecuteAsync returns exit code 1 whenever Results.HasErrors is true");
+            ctx.Results.Errors.Single().Should().Contain("re-run 'a365 setup all'")
+                .And.NotContain("--agent-registration-only",
+                    because: "--agent-registration-only skips identity creation, so it cannot recover a run that never created the identity");
+            ctx.Results.HasErrors.Should().BeTrue(
+                because: "the full setup command maps recorded errors to exit code 1");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Step 5: an s2s run whose identity step fails still records its auth mode and that no S2S app role
+    /// is requested, so the summary does not fall back to delegated-consent wording.
+    /// </summary>
+    [Fact]
+    public async Task Step5_IdentityStepFails_S2sMode_SummaryStillReportsNoS2SAppRolesToGrant()
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwS2sIdentityFailureTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                DeploymentProjectPath = projectDir,
+                AgentBlueprintClientSecret = null,
+            };
+            var (ctx, _, blueprintService) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: false, skipObservabilityPermissions: true, authMode: "s2s");
+            blueprintService.FindExistingAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((string?)null);
+            // A non-admin run: the blueprint grants completed but tenant-wide consent was not granted.
+            ctx.Results.IsNonDwBlueprintFlow = true;
+            ctx.Results.BatchPermissionsPhase1Completed = true;
+            ctx.Results.BatchPermissionsPhase2Completed = true;
+            ctx.Results.TenantWideConsentOutcome = GrantOutcome.Failed;
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.AgentIdentityFailed.Should().BeTrue(because: "precondition: the missing secret stops identity creation");
+            ctx.Results.EffectiveAuthMode.Should().Be(AuthMode.S2s,
+                because: "the auth mode is known before identity creation, and the summary derives delegated-consent applicability from it");
+            ctx.Results.NoS2SAppRolesToGrant.Should().BeTrue(
+                because: "no requested spec carries an app role, whether or not the identity step succeeds");
+
+            var logger = new CapturingLogger();
+            SetupHelpers.DisplaySetupSummary(ctx.Results, logger);
+            logger.AllOutput.Split('\n').Should().ContainSingle(l => l.Contains("Blueprint Permission Grants"))
+                .Which.Should().Contain("not required  (no S2S app roles to grant)",
+                    because: "an s2s run with no app roles to grant needs no blueprint grant, even when the identity step failed");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Step5_IdentityCreationNull_RecordsIdentityWarningSeverity()
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwIdentityNullTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                DeploymentProjectPath = projectDir,
+                AgentBlueprintClientSecret = "secret",
+            };
+            var (ctx, graph, blueprintService) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: false, skipObservabilityPermissions: false);
+            blueprintService.FindExistingAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((string?)null);
+            graph.CreateAgentIdentityAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns((string?)null);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.AgentIdentityFailed.Should().BeTrue(
+                because: "a null identity creation result is still surfaced to the summary");
+            ctx.Results.AgentIdentityFailureIsError.Should().BeFalse(
+                because: "identity creation returning null is recorded as a warning path, not an Errors path");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Step 6: when Observability permissions are not requested, registration is the agent's only Observability
+    /// authorization, so its failure is an error; when they are requested (AI Teammate) it stays a warning.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Step6_RegistrationFailureIsError_OnlyWhenObservabilityPermissionsSkipped(bool skipObservabilityPermissions)
+    {
+        // Empty project directory: the project settings step finds no project and writes nothing.
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwRegistrationTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var (ctx, graph, _) = BuildIdempotencyTestContext(
+                RegistrationReadyConfig(projectDir), agentInstanceOnly: false, skipObservabilityPermissions: skipObservabilityPermissions);
+            StubRegistrationFailure(graph);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.AgentRegistrationFailed.Should().BeTrue(because: "precondition: the stubbed registration API returned no ID");
+            ctx.Results.Errors.Any(e => e.Contains("Agent registration failed")).Should().Be(skipObservabilityPermissions,
+                because: "without OtelWrite an unregistered agent cannot export telemetry, so setup must fail (exit 1)");
+            if (skipObservabilityPermissions)
+                ctx.Results.Errors.Should().Contain(e => e.Contains(AuthenticationConstants.AgentRegistrationReadWriteAllScope),
+                    because: "the failure guidance should name the Graph permission the registration API requires");
+            ctx.Results.Warnings.Any(w => w.Contains("Agent registration failed")).Should().Be(!skipObservabilityPermissions,
+                because: "when Observability permissions are requested the agent keeps OtelWrite, and a failed registration remains a non-fatal warning");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Step6_RegistrationFailureWithCustomObservabilityPermission_RemainsWarning()
+    {
+        var projectDir = Path.Combine(Path.GetTempPath(), "NonDwRegistrationTests_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(projectDir);
+        try
+        {
+            var config = new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                AgentIdentityDisplayName = "Test Agent Identity",
+                ClientAppId = "client-app-id",
+                AgenticAppId = "agentic-app-id",
+                DeploymentProjectPath = projectDir,
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        ResourceName = "Observability API",
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                    }
+                ],
+            };
+            var (ctx, graph, _) = BuildIdempotencyTestContext(
+                config, agentInstanceOnly: false, skipObservabilityPermissions: true);
+            StubRegistrationFailure(graph);
+
+            await NonDwBlueprintSetupOrchestrator.ExecuteAgentIdentityAndRegistrationAsync(ctx, specs: []);
+
+            ctx.Results.Errors.Should().NotContain(e => e.Contains("Agent registration failed"),
+                because: "custom Observability permissions mean registration is not the agent's only Observability authorization");
+            ctx.Results.Warnings.Should().Contain(w => w.Contains("Agent registration failed"),
+                because: "registration failure remains non-fatal when Observability was explicitly requested through custom permissions");
+        }
+        finally
+        {
+            Directory.Delete(projectDir, recursive: true);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -733,6 +1146,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
 
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
             because: "when AgenticAppId (the SP object ID) is absent, grants cannot proceed and the outcome must be Failed");
+        ctx.Results.PendingAgentIdentityAppRoleSpecs.Should().ContainSingle(s => s.ResourceName == "Test Resource",
+            because: "the summary's hand-off must list the app role that could not be assigned");
         await blueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
@@ -807,6 +1222,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Failed,
             because: "when both the Graph grant and the az rest fallback fail, AgentIdentityS2SOutcome must be Failed");
+        ctx.Results.PendingAgentIdentityAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == resourceAppId,
+            because: "the summary's hand-off must list exactly the app role that failed");
         ctx.Results.HasWarnings.Should().BeTrue(
             because: "a failed S2S grant must add a warning so the setup summary shows Action Required");
         ctx.Results.Warnings.Should().ContainSingle()
@@ -870,6 +1287,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
             because: "when the az rest fallback assigns the app role, the agent identity S2S grant succeeded");
+        ctx.Results.PendingAgentIdentityAppRoleSpecs.Should().BeEmpty(
+            because: "a completed fallback leaves no app role for the summary's hand-off");
         ctx.Results.HasWarnings.Should().BeFalse(
             because: "a successful az rest fallback must not surface a PowerShell hand-off warning");
     }
@@ -917,6 +1336,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.Granted,
             because: "without inheritance the direct grant runs and, when it succeeds, the outcome is Granted");
+        ctx.Results.NoS2SAppRolesToGrant.Should().BeFalse(
+            because: "an app role was requested, so the summary must report the S2S grant");
     }
 
     /// <summary>
@@ -940,6 +1361,8 @@ public class NonDwBlueprintSetupOrchestratorExecuteTests
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
         ctx.Results.AgentIdentityS2SOutcome.Should().Be(Cli.Models.GrantOutcome.NotApplicable,
             because: "with no S2S specs there is nothing to grant or inherit, so the outcome must remain NotApplicable");
+        ctx.Results.NoS2SAppRolesToGrant.Should().BeTrue(
+            because: "the summary needs to know the s2s/both grant step had no app role to grant");
     }
 
     // -------------------------------------------------------------------------

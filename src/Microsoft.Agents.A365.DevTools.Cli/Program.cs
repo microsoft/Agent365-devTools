@@ -163,6 +163,7 @@ class Program
             var graphApiService = serviceProvider.GetRequiredService<GraphApiService>();
             var armApiService = serviceProvider.GetRequiredService<ArmApiService>();
             var agentBlueprintService = serviceProvider.GetRequiredService<AgentBlueprintService>();
+            var mcpServerPermissionService = serviceProvider.GetRequiredService<McpServerPermissionService>();
             var blueprintLookupService = serviceProvider.GetRequiredService<BlueprintLookupService>();
             var federatedCredentialService = serviceProvider.GetRequiredService<FederatedCredentialService>();
             var platformDetector = serviceProvider.GetRequiredService<PlatformDetector>();
@@ -174,7 +175,7 @@ class Program
 
             // Add commands
             rootCommand.AddCommand(DevelopCommand.CreateCommand(developLogger, configService, executor, authService, graphApiService, agentBlueprintService, processService));
-            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService, graphApiService));
+            rootCommand.AddCommand(DevelopMcpCommand.CreateCommand(developLogger, toolingService, evaluationPipelineService, graphApiService, mcpServerPermissionService));
             var confirmationProvider = serviceProvider.GetRequiredService<IConfirmationProvider>();
             rootCommand.AddCommand(SetupCommand.CreateCommand(setupLogger, configService, executor,
                 backendConfigurator, azureAuthValidator, platformDetector, graphApiService, agentBlueprintService, blueprintLookupService, federatedCredentialService, clientAppValidator, confirmationProvider, armApiService, resolver: bootstrapResolver));
@@ -243,8 +244,6 @@ class Program
                     await next(context);
                 }, MiddlewareOrder.ErrorReporting);
 
-            // Validate the configured clientAppId still exists in the tenant before any command runs.
-            // If not found, falls back to the well-known display name and patches a365.config.json.
             // Skip for help/version/show-secret — these never make Graph calls and must work offline.
             var isHelpOrVersion = args.Length == 0
                 || args.Any(a => a is "--help" or "-h" or "--version");
@@ -334,6 +333,7 @@ class Program
 
             // Default to "prod". Override with A365_ENVIRONMENT env var or a365.config.json.
             string environment = Environment.GetEnvironmentVariable("A365_ENVIRONMENT") ?? "prod";
+            string? authorityHost = null;
 
             var configFilePath = ConfigService.GetConfigFilePath();
             if (configFilePath != null)
@@ -350,6 +350,8 @@ class Program
                             environment = envValue;
                         }
                     }
+                    if (doc.RootElement.TryGetProperty("authorityHost", out var authorityProp))
+                        authorityHost = authorityProp.GetString();
 
                     logger.LogDebug("Resolved environment from config: {Environment}", environment);
                 }
@@ -359,7 +361,7 @@ class Program
                 }
             }
 
-            return new Agent365ToolingService(configService, authService, logger, environment);
+            return new Agent365ToolingService(configService, authService, logger, environment, authorityHost);
         });
 
         // Add Azure validators (individual validators for composition)
@@ -379,6 +381,7 @@ class Program
         services.AddSingleton<GraphApiService>();
         services.AddSingleton<ArmApiService>();
         services.AddSingleton<AgentBlueprintService>();
+        services.AddSingleton<McpServerPermissionService>();
         services.AddSingleton<BlueprintLookupService>();
         services.AddSingleton<FederatedCredentialService>();
         services.AddSingleton<DelegatedConsentService>(); // For AgentApplication.Create permission
@@ -442,4 +445,3 @@ class Program
             .Replace("_", "-");
     }
 }
-

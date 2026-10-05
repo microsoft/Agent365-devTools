@@ -429,7 +429,7 @@ After `a365 setup all` completes, show the user exactly this — nothing more, n
 4. After showing the CLI output sections above, output exactly one of these closing lines — choose based on what the CLI reported:
    - **If the CLI printed an admin consent action item** (i.e., you showed a PowerShell script in step 2 above):
      > "Your agent is provisioned. Have a Global Admin run the PowerShell script above to complete admin consent."
-   - **If Permission Grants row in the Summary shows `granted`** (no action item was printed):
+   - **If Permission Grants row in the Summary shows `granted` or `not required`** (no action item was printed):
      > "Your agent is provisioned."
 
 ### Step 4 completion

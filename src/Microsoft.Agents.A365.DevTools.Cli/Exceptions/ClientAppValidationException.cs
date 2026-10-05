@@ -80,12 +80,125 @@ public sealed class ClientAppValidationException : Agent365Exception
     }
 
     /// <summary>
+    /// Creates an exception when the first-party enterprise application is absent from the tenant.
+    /// </summary>
+    public static ClientAppValidationException FirstPartyServicePrincipalNotFound(
+        string clientAppId,
+        string tenantId)
+    {
+        return new ClientAppValidationException(
+            issueDescription: "First-party client app service principal not found in tenant",
+            errorDetails:
+            [
+                $"The Agent 365 CLI enterprise application '{clientAppId}' is not present in tenant '{tenantId}'."
+            ],
+            mitigationSteps:
+            [
+                "Ensure you are signed in to the intended tenant with 'az login'.",
+                "Ask a tenant administrator to provision or enable the Microsoft Agent 365 CLI enterprise application.",
+                "Do not create or modify a tenant-local app registration for this Microsoft-owned application.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
+            ],
+            context: new Dictionary<string, string>
+            {
+                ["clientAppId"] = clientAppId,
+                ["tenantId"] = tenantId
+            });
+    }
+
+    /// <summary>
+    /// Creates an exception when first-party service-principal lookup fails.
+    /// </summary>
+    public static ClientAppValidationException FirstPartyServicePrincipalLookupFailed(
+        string clientAppId,
+        string tenantId,
+        string reason)
+    {
+        return new ClientAppValidationException(
+            issueDescription: "Unable to verify the first-party client app service principal",
+            errorDetails:
+            [
+                reason,
+                $"Service-principal lookup failed in tenant '{tenantId}'."
+            ],
+            mitigationSteps:
+            [
+                "Confirm network connectivity and sign in to the intended tenant with 'az login'.",
+                "Ask a tenant administrator to verify that the Microsoft Agent 365 CLI enterprise application is available.",
+                "Do not create or modify a tenant-local app registration for this Microsoft-owned application.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
+            ],
+            context: new Dictionary<string, string>
+            {
+                ["clientAppId"] = clientAppId,
+                ["tenantId"] = tenantId
+            });
+    }
+
+    /// <summary>
+    /// Creates an exception when first-party token acquisition cannot verify delegated authorization.
+    /// </summary>
+    public static ClientAppValidationException FirstPartyAuthorizationFailed(
+        string clientAppId,
+        IEnumerable<string> requiredScopes,
+        string reason)
+    {
+        var scopes = requiredScopes.ToList();
+        return new ClientAppValidationException(
+            issueDescription: "Unable to validate first-party client app authorization from the access token",
+            errorDetails:
+            [
+                reason,
+                $"Scopes being validated: {string.Join(", ", scopes)}"
+            ],
+            mitigationSteps:
+            [
+                "Run 'az logout', then 'az login', and retry the requirements check.",
+                "Ask a tenant administrator to verify that the Microsoft Agent 365 CLI enterprise application is authorized.",
+                "Do not add permissions to a tenant-local app registration for this Microsoft-owned application.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
+            ],
+            context: new Dictionary<string, string>
+            {
+                ["clientAppId"] = clientAppId,
+                ["requiredScopes"] = string.Join(", ", scopes)
+            });
+    }
+
+    /// <summary>
+    /// Creates an exception when an acquired first-party token omits required delegated scopes.
+    /// </summary>
+    public static ClientAppValidationException FirstPartyMissingPermissions(
+        string clientAppId,
+        List<string> missingPermissions)
+    {
+        return new ClientAppValidationException(
+            issueDescription: "First-party client app token is missing required delegated scopes",
+            errorDetails:
+            [
+                $"Missing scopes in token 'scp' claim: {string.Join(", ", missingPermissions)}"
+            ],
+            mitigationSteps:
+            [
+                "Run 'az logout', then 'az login', and retry the requirements check.",
+                "Ask a tenant administrator to verify that the Microsoft Agent 365 CLI enterprise application is authorized for the required scopes.",
+                "Do not add permissions to a tenant-local app registration for this Microsoft-owned application.",
+                $"See setup guide: {ConfigConstants.Agent365CliDocumentationUrl}"
+            ],
+            context: new Dictionary<string, string>
+            {
+                ["clientAppId"] = clientAppId,
+                ["missingPermissions"] = string.Join(", ", missingPermissions)
+            });
+    }
+
+    /// <summary>
     /// Creates exception for missing admin consent.
     /// Includes a direct admin consent URL that a Global Administrator can open to grant consent.
     /// </summary>
-    public static ClientAppValidationException MissingAdminConsent(string clientAppId, string? tenantId = null)
+    public static ClientAppValidationException MissingAdminConsent(string clientAppId, string? tenantId = null, string? authorityHost = null)
     {
-        var consentUrl = BuildAdminConsentUrl(clientAppId, tenantId);
+        var consentUrl = BuildAdminConsentUrl(clientAppId, tenantId, authorityHost);
         var consentInstruction = consentUrl != null
             ? $"Share this URL with a Global Administrator to grant consent:\n  {consentUrl}"
             : "Grant admin consent at: Azure Portal > App registrations > Your app > API permissions.";
@@ -116,16 +229,19 @@ public sealed class ClientAppValidationException : Agent365Exception
     /// Builds the admin consent URL for the given client app and tenant.
     /// A Global Administrator can open this URL to grant tenant-wide (AllPrincipals) consent.
     /// </summary>
-    public static string? BuildAdminConsentUrl(string clientAppId, string? tenantId)
+    public static string? BuildAdminConsentUrl(string clientAppId, string? tenantId, string? authorityHost = null)
     {
         if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
             return null;
 
-        // Standard native-app redirect URI accepted by Entra ID for admin consent flows
-        const string redirectUri = "https://login.microsoftonline.com/common/oauth2/nativeclient";
+        // Standard native-app redirect URI accepted by Entra ID for admin consent flows.
+        // Authority host defaults to commercial cloud; callers pass a cloud-resolved host
+        // (e.g. GraphApiService.AuthorityHost) so sovereign tenants get a matching consent URL.
+        var host = ConfigConstants.NormalizeAuthorityHost(authorityHost);
+        var redirectUri = $"{host}/common/oauth2/nativeclient";
         var clientIdEncoded = Uri.EscapeDataString(clientAppId);
         var redirectUriEncoded = Uri.EscapeDataString(redirectUri);
-        return $"https://login.microsoftonline.com/{tenantId}/adminconsent?client_id={clientIdEncoded}&redirect_uri={redirectUriEncoded}";
+        return $"{host}/{tenantId}/adminconsent?client_id={clientIdEncoded}&redirect_uri={redirectUriEncoded}";
     }
 
     /// <summary>

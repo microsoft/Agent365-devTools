@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -22,7 +23,8 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     private static Agent365Config BuildConfig(
         string displayName = "My Agent",
         string tenantId = "tenant-id",
-        string? blueprintId = null) =>
+        string? blueprintId = null,
+        List<CustomResourcePermission>? customPermissions = null) =>
         new()
         {
             AgentIdentityDisplayName = displayName,
@@ -31,7 +33,8 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
             UseBlueprint = true,
             ClientAppId = "client-app-id",
             DeploymentProjectPath = "./app",
-            AgentBlueprintId = blueprintId
+            AgentBlueprintId = blueprintId,
+            CustomBlueprintPermissions = customPermissions,
         };
 
     private bool AnyLogContains(string value) =>
@@ -169,6 +172,41 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     /// <summary>
+    /// Skipping OtelWrite does not remove the Defender application role required for S2S evaluation.
+    /// </summary>
+    [Fact]
+    public void PrintDryRunPlan_AuthModeS2s_WhenObservabilitySkipped_ShowsDefenderAppRoleGrant()
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "s2s", skipObservabilityPermissions: true);
+
+        AnyLogContains("S2S app roles").Should().BeTrue(
+            because: "RealtimeProtection.Evaluate.All remains required when Observability permissions are skipped");
+        AnyLogContains("Global Administrator required if 403").Should().BeTrue(
+            because: "assigning the Defender application role may require Global Administrator");
+    }
+
+    [Fact]
+    public void PrintDryRunPlan_CustomObservabilityPermission_DoesNotClaimObservabilityNotRequested()
+    {
+        var config = BuildConfig(customPermissions:
+        [
+            new CustomResourcePermission
+            {
+                ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                ResourceName = "Observability API",
+                Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+            }
+        ]);
+
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(config, _logger, authMode: "s2s", skipObservabilityPermissions: true);
+
+        AnyLogContains("Observability API not requested").Should().BeFalse(
+            because: "a custom Observability permission explicitly opts back into requesting Observability permissions");
+        AnyLogContains("S2S app roles").Should().BeTrue(
+            because: "the fixed Defender permission still carries an application role when Observability is configured as a custom delegated permission");
+    }
+
+    /// <summary>
     /// Both mode must surface both delegated grants and application permissions on the
     /// agent identity SP.
     /// </summary>
@@ -179,6 +217,20 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
 
         AnyLogContains("delegated").Should().BeTrue(because: "Both mode includes OBO delegated grants on the agent identity SP");
         AnyLogContains("S2S app roles").Should().BeTrue(because: "Both mode includes S2S app role assignments on the agent identity SP");
+    }
+
+    /// <summary>
+    /// Both mode retains delegated consent work and the Defender S2S app role when OtelWrite is skipped.
+    /// </summary>
+    [Fact]
+    public void PrintDryRunPlan_AuthModeBoth_WhenObservabilitySkipped_ShowsDelegatedAndDefenderAppRole()
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "both", skipObservabilityPermissions: true);
+
+        AnyLogContains("delegated grants for the signed-in principal + S2S app roles").Should().BeTrue(
+            because: "both mode must preserve delegated grants and the Defender application role when OtelWrite is skipped");
+        AnyLogContains("Global Administrator required for S2S if 403").Should().BeTrue(
+            because: "the Defender S2S app role still needs an administrative fallback");
     }
 
     /// <summary>

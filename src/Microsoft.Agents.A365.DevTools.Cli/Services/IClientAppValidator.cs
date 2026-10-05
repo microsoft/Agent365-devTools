@@ -19,6 +19,8 @@ public interface IClientAppValidator
     /// Use for non-interactive or CI scenarios. Defaults to false (prompt before modifying the app registration).</param>
     /// <param name="ct">Cancellation token</param>
     /// <exception cref="Exceptions.ClientAppValidationException">Thrown when validation fails</exception>
+    /// <remarks>The well-known first-party Agent 365 CLI app is validated without mutating its Entra
+    /// registration — presence via /servicePrincipals, scopes via the token 'scp' claim.</remarks>
     Task EnsureValidClientAppAsync(string clientAppId, string tenantId, bool skipConfirmation = false, CancellationToken ct = default);
 
     /// <summary>
@@ -32,13 +34,14 @@ public interface IClientAppValidator
 
     /// <summary>
     /// Returns the subset of required permissions that are not yet present in the client app's
-    /// oauth2PermissionGrant (i.e. not consented). Used to prompt the user before granting.
+    /// oauth2PermissionGrant; returns empty for the Microsoft first-party app.
     /// </summary>
     Task<List<string>> GetUnconsentedRequiredPermissionsAsync(string clientAppId, string tenantId, CancellationToken ct = default);
 
     /// <summary>
-    /// Extends the client app's oauth2PermissionGrant to include the given permissions.
+    /// Extends a custom client app's oauth2PermissionGrant to include the given permissions.
     /// </summary>
+    /// <exception cref="InvalidOperationException">The client app is Microsoft's first-party app.</exception>
     Task GrantConsentForPermissionsAsync(string clientAppId, List<string> permissions, string tenantId, CancellationToken ct = default);
 
     /// <summary>
@@ -50,4 +53,12 @@ public interface IClientAppValidator
     /// caller decides how to surface either case to the operator.
     /// </summary>
     Task<bool> HasWidsAccessTokenOptionalClaimAsync(string clientAppId, string tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns whether an access token issued to the client app actually carries the <c>wids</c>
+    /// claim, or <c>null</c> when the token could not be acquired or decoded. Used for apps whose
+    /// registration cannot be read from the tenant (the Microsoft first-party app), where the
+    /// issued token is the only available evidence.
+    /// </summary>
+    Task<bool?> HasWidsClaimOnIssuedAccessTokenAsync(string clientAppId, string tenantId, CancellationToken ct = default);
 }

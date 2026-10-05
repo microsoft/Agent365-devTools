@@ -49,7 +49,7 @@ public sealed class ClientAppValidator : IClientAppValidator
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
         // Step 1: Validate GUID format
-        if (!Guid.TryParse(clientAppId, out _))
+        if (!Guid.TryParse(clientAppId, out var parsedClientAppId))
         {
             throw ClientAppValidationException.ValidationFailed(
                 $"clientAppId must be a valid GUID format (received: {clientAppId})",
@@ -67,6 +67,13 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         try
         {
+            // Never run tenant-owned mutation logic against Microsoft's application registration.
+            if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+            {
+                await EnsureValidFirstPartyClientAppAsync(parsedClientAppId.ToString("D"), tenantId, ct);
+                return;
+            }
+
             // Step 2: Verify app exists (token acquisition is handled inside GraphApiService)
             var appInfo = await GetClientAppInfoAsync(clientAppId, tenantId, ct);
             if (appInfo == null)
@@ -165,7 +172,7 @@ public sealed class ClientAppValidator : IClientAppValidator
                         missingDetails.Add("OAuth2 consent grant must be upgraded from per-user (Principal) to tenant-wide (AllPrincipals)");
                     if (needsWidsClaim)
                         missingDetails.Add("'wids' optional claim missing on access tokens — without it, role detection always returns Unknown and the AllPrincipals grant phase silently skips, leaving the agent blueprint with no permissions granted on its service principal");
-                    var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+                    var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId, _graphApiService.AuthorityHost);
                     var steps = new List<string>
                     {
                         "Next Steps — Global Administrator action required:",
@@ -289,7 +296,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Step 4: Verify admin consent (requires AllPrincipals grant)
             if (!await ValidateAdminConsentAsync(clientAppId, tenantId, ct))
             {
-                throw ClientAppValidationException.MissingAdminConsent(clientAppId, tenantId);
+                throw ClientAppValidationException.MissingAdminConsent(clientAppId, tenantId, _graphApiService.AuthorityHost);
             }
 
             // Step 5: Verify and fix redirect URIs
@@ -340,6 +347,99 @@ public sealed class ClientAppValidator : IClientAppValidator
     }
 
     /// <summary>
+    /// Validates first-party service-principal presence and delegated token scopes without mutation.
+    /// </summary>
+    private async Task EnsureValidFirstPartyClientAppAsync(string clientAppId, string tenantId, CancellationToken ct)
+    {
+        GraphApiService.ServicePrincipalLookupResult lookup;
+        try
+        {
+            _graphApiService.CustomClientAppId = clientAppId;
+            lookup = await _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                tenantId, clientAppId, ct, GraphAuthenticationMode.ResolvedClientApp);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw ClientAppValidationException.FirstPartyServicePrincipalLookupFailed(
+                clientAppId, tenantId, ex.Message);
+        }
+
+        if (lookup is null || !lookup.IsSuccess)
+        {
+            throw ClientAppValidationException.FirstPartyServicePrincipalLookupFailed(
+                clientAppId,
+                tenantId,
+                lookup?.FailureReason ?? "Service-principal lookup returned no result.");
+        }
+
+        if (string.IsNullOrWhiteSpace(lookup.ServicePrincipalId))
+        {
+            throw ClientAppValidationException.FirstPartyServicePrincipalNotFound(clientAppId, tenantId);
+        }
+
+        _logger.LogDebug(
+            "First-party service principal {SpId} found for {ClientAppId} — no app-registration mutations will be attempted.",
+            lookup.ServicePrincipalId, clientAppId);
+
+        // Keep the registration scope separate because Entra can reject a combined request before
+        // returning a token whose scp claim identifies the unavailable permission.
+        await ValidateFirstPartyTokenScopesAsync(
+            clientAppId,
+            tenantId,
+            AuthenticationConstants.BlueprintOperationScopes,
+            ct);
+        await ValidateFirstPartyTokenScopesAsync(
+            clientAppId,
+            tenantId,
+            [AuthenticationConstants.AgentRegistrationReadWriteAllScope],
+            ct);
+
+        _logger.LogDebug(
+            "First-party client app validation successful for {ClientAppId} — all required scopes present on delegated tokens.",
+            clientAppId);
+    }
+
+    private async Task ValidateFirstPartyTokenScopesAsync(
+        string clientAppId,
+        string tenantId,
+        IReadOnlyCollection<string> requiredScopes,
+        CancellationToken ct)
+    {
+        string? token;
+        try
+        {
+            token = await _graphApiService.GetClientAppAccessTokenAsync(tenantId, clientAppId, requiredScopes, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw ClientAppValidationException.FirstPartyAuthorizationFailed(
+                clientAppId, requiredScopes, ex.Message);
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw ClientAppValidationException.FirstPartyAuthorizationFailed(
+                clientAppId, requiredScopes, "Token acquisition returned no result.");
+        }
+
+        if (!JwtHelper.TryDecodeSpaceDelimitedClaim(
+                token,
+                "scp",
+                out var grantedScopes,
+                out var decodeFailureReason))
+        {
+            throw ClientAppValidationException.FirstPartyAuthorizationFailed(
+                clientAppId, requiredScopes, decodeFailureReason);
+        }
+
+        var missingScopes = requiredScopes.Where(s => !grantedScopes.Contains(s)).ToList();
+        if (missingScopes.Count > 0)
+        {
+            throw ClientAppValidationException.FirstPartyMissingPermissions(clientAppId, missingScopes);
+        }
+    }
+
+    /// <summary>
     /// Ensures the client app has required redirect URIs configured for Microsoft Graph PowerShell SDK.
     /// Automatically adds missing redirect URIs if needed (self-healing).
     /// </summary>
@@ -354,12 +454,21 @@ public sealed class ClientAppValidator : IClientAppValidator
         ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+        {
+            _logger.LogDebug("Skipping redirect URI mutation for the first-party Agent 365 CLI application.");
+            return;
+        }
+
         try
         {
             _logger.LogDebug("Checking redirect URIs for client app {ClientAppId}", clientAppId);
 
             using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,publicClient", ct);
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,publicClient",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (appDoc == null)
             {
@@ -416,7 +525,9 @@ public sealed class ClientAppValidator : IClientAppValidator
             var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
                 $"/v1.0/applications/{objectId}",
                 new JsonObject { ["publicClient"] = new JsonObject { ["redirectUris"] = urisArray } },
-                ct);
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (!patchSuccess)
             {
@@ -508,7 +619,9 @@ public sealed class ClientAppValidator : IClientAppValidator
             var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
                 $"/v1.0/applications/{objectId}",
                 patchPayload,
-                ct);
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (!patchSuccess)
             {
@@ -592,7 +705,10 @@ public sealed class ClientAppValidator : IClientAppValidator
             _logger.LogDebug("Checking 'Allow public client flows' for client app {ClientAppId}", clientAppId);
 
             using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,isFallbackPublicClient", ct);
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,isFallbackPublicClient",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (appDoc == null)
             {
@@ -634,7 +750,9 @@ public sealed class ClientAppValidator : IClientAppValidator
             var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
                 $"/v1.0/applications/{objectId}",
                 new { isFallbackPublicClient = true },
-                ct);
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (!patchSuccess)
             {
@@ -755,7 +873,9 @@ public sealed class ClientAppValidator : IClientAppValidator
             var patchSuccess = await _graphApiService.GraphPatchAsync(tenantId,
                 $"/v1.0/applications/{appInfo.ObjectId}",
                 new JsonObject { ["requiredResourceAccess"] = updatedResourceAccess },
-                ct);
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (!patchSuccess)
             {
@@ -768,6 +888,9 @@ public sealed class ClientAppValidator : IClientAppValidator
 
             // Best-effort: also extend the existing oauth2PermissionGrant so consent takes effect immediately
             await TryExtendConsentGrantScopesAsync(clientAppId, missingPermissions, tenantId, ct);
+
+            // Tokens issued before the permission update cannot carry the newly consented scopes.
+            await _graphApiService.ClearTokenCacheAsync();
 
             return true;
         }
@@ -793,7 +916,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         {
             // Look up the service principal for the client app
             using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id", ct);
+                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (spDoc == null) return;
 
@@ -803,7 +929,10 @@ public sealed class ClientAppValidator : IClientAppValidator
 
             // Find the oauth2PermissionGrant that targets Microsoft Graph
             using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (grantsDoc == null) return;
 
@@ -814,7 +943,10 @@ public sealed class ClientAppValidator : IClientAppValidator
             // Look up the Microsoft Graph service principal ID to match against resourceId
             string? graphSpObjectId = null;
             using var graphSpDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'&$select=id", ct);
+                $"/v1.0/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'&$select=id",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (graphSpDoc != null)
             {
@@ -855,7 +987,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                         ["consentType"] = "AllPrincipals",
                         ["principalId"] = null
                     },
-                    ct);
+                    ct,
+                    scopes: null,
+                    authenticationMode: GraphAuthenticationMode.Ambient);
 
                 if (patchSuccess)
                 {
@@ -878,13 +1012,18 @@ public sealed class ClientAppValidator : IClientAppValidator
 
     /// <summary>
     /// Returns the subset of <see cref="AuthenticationConstants.RequiredClientAppPermissions"/>
-    /// that are not yet present in the client app's oauth2PermissionGrant (i.e. not consented).
+    /// missing from a custom app's grant; first-party authorization is token-based and returns empty.
     /// </summary>
     public async Task<List<string>> GetUnconsentedRequiredPermissionsAsync(
         string clientAppId,
         string tenantId,
         CancellationToken ct = default)
     {
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+        {
+            return [];
+        }
+
         var consented = await GetConsentedPermissionsAsync(clientAppId, tenantId, ct);
         return AuthenticationConstants.RequiredClientAppPermissions
             .Where(p => !consented.Contains(p, StringComparer.OrdinalIgnoreCase))
@@ -892,7 +1031,7 @@ public sealed class ClientAppValidator : IClientAppValidator
     }
 
     /// <summary>
-    /// Extends the client app's oauth2PermissionGrant to include the specified permissions.
+    /// Extends a custom client app's oauth2PermissionGrant to include the specified permissions.
     /// Call after the user has confirmed they want to grant admin consent.
     /// </summary>
     public Task GrantConsentForPermissionsAsync(
@@ -900,7 +1039,15 @@ public sealed class ClientAppValidator : IClientAppValidator
         List<string> permissions,
         string tenantId,
         CancellationToken ct = default)
-        => TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
+    {
+        if (AuthenticationConstants.IsWellKnownFirstPartyClientApp(clientAppId))
+        {
+            throw new InvalidOperationException(
+                "Tenant-local consent grants cannot be modified for the first-party Agent 365 CLI application.");
+        }
+
+        return TryExtendConsentGrantScopesAsync(clientAppId, permissions, tenantId, ct);
+    }
 
     /// <inheritdoc />
     public async Task<bool> HasWidsAccessTokenOptionalClaimAsync(
@@ -915,6 +1062,31 @@ public sealed class ClientAppValidator : IClientAppValidator
         return hasWids;
     }
 
+    /// <inheritdoc />
+    public async Task<bool?> HasWidsClaimOnIssuedAccessTokenAsync(
+        string clientAppId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientAppId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+        string? token;
+        try
+        {
+            // User.Read matches the scope set used by the role check, so the token is served from
+            // the provider cache instead of triggering a second interactive sign-in.
+            token = await _graphApiService.GetClientAppAccessTokenAsync(
+                tenantId, clientAppId, [AuthenticationConstants.UserReadScope], ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Could not acquire an access token for {ClientAppId} to inspect the 'wids' claim.", clientAppId);
+            return null;
+        }
+
+        return JwtHelper.ClaimExists(token, "wids");
+    }
 
     /// <summary>
     /// Read-only check: returns the redirect URIs that are missing from the app registration
@@ -928,7 +1100,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         try
         {
             using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,publicClient", ct);
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,publicClient",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (appDoc == null) return new List<string>();
 
@@ -968,7 +1143,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         try
         {
             using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,isFallbackPublicClient", ct);
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,isFallbackPublicClient",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (appDoc == null) return false;
 
@@ -1005,7 +1183,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         try
         {
             using var appDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,optionalClaims", ct);
+                $"/v1.0/applications?$filter=appId eq '{clientAppId}'&$select=id,optionalClaims",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (appDoc == null) return (false, null, null);
 
@@ -1060,7 +1241,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         try
         {
             using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id", ct);
+                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
             if (spDoc == null) return false;
 
             var spJson = JsonNode.Parse(spDoc.RootElement.GetRawText());
@@ -1068,7 +1252,10 @@ public sealed class ClientAppValidator : IClientAppValidator
             if (string.IsNullOrWhiteSpace(spObjectId)) return false;
 
             using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
             if (grantsDoc == null) return false;
 
             var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
@@ -1115,7 +1302,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         try
         {
             using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id", ct);
+                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
             if (spDoc == null) return;
 
             var spJson = JsonNode.Parse(spDoc.RootElement.GetRawText());
@@ -1123,7 +1313,10 @@ public sealed class ClientAppValidator : IClientAppValidator
             if (string.IsNullOrWhiteSpace(spObjectId)) return;
 
             using var grantsDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct);
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
             if (grantsDoc == null) return;
 
             var grantsJson = JsonNode.Parse(grantsDoc.RootElement.GetRawText());
@@ -1158,7 +1351,9 @@ public sealed class ClientAppValidator : IClientAppValidator
                         ["principalId"] = null,
                         ["scope"] = scope
                     },
-                    ct);
+                    ct,
+                    scopes: null,
+                    authenticationMode: GraphAuthenticationMode.Ambient);
 
                 if (patchSuccess)
                     _logger.LogInformation("Consent grant upgraded to AllPrincipals — all tenant users can now authenticate without individual consent prompts.");
@@ -1180,7 +1375,9 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         const string path = "/v1.0/applications?$filter=appId eq '{0}'&$select=id,appId,displayName,requiredResourceAccess";
         var graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
-            string.Format(path, clientAppId), ct: ct);
+            string.Format(path, clientAppId),
+            ct: ct,
+            authenticationMode: GraphAuthenticationMode.Ambient);
 
         if (graphResponse == null || !graphResponse.IsSuccess)
         {
@@ -1190,27 +1387,72 @@ public sealed class ClientAppValidator : IClientAppValidator
             if (graphResponse?.StatusCode != 401)
             {
                 _logger.LogDebug("Graph app query failed with {StatusCode} — not retrying", graphResponse?.StatusCode);
-                return null;
+                throw ClientAppValidationException.ValidationFailed(
+                    "Unable to verify the client app registration",
+                    [$"Microsoft Graph application lookup failed: HTTP {graphResponse?.StatusCode ?? 0} {graphResponse?.ReasonPhrase ?? "Unknown"}."],
+                    clientAppId);
             }
 
             _logger.LogDebug("Graph app query returned 401 — retrying with fresh token (possible CAE revocation)");
             graphResponse = await _graphApiService.GraphGetWithResponseAsync(tenantId,
-                string.Format(path, clientAppId), forceRefresh: true, ct: ct);
+                string.Format(path, clientAppId),
+                forceRefresh: true,
+                ct: ct,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (!graphResponse.IsSuccess)
-                throw ClientAppValidationException.TokenRevoked(clientAppId);
+            {
+                if (graphResponse.StatusCode == 401)
+                    throw ClientAppValidationException.TokenRevoked(clientAppId);
+
+                throw ClientAppValidationException.ValidationFailed(
+                    "Unable to verify the client app registration",
+                    [$"Microsoft Graph application lookup failed after token refresh: HTTP {graphResponse.StatusCode} {graphResponse.ReasonPhrase}."],
+                    clientAppId);
+            }
         }
 
         using var doc = graphResponse.Json;
-        if (doc == null) return null;
+        if (doc is null)
+        {
+            throw ClientAppValidationException.ValidationFailed(
+                "Unable to verify the client app registration",
+                ["Microsoft Graph application lookup returned an empty response body."],
+                clientAppId);
+        }
 
-        var response = JsonNode.Parse(doc.RootElement.GetRawText());
-        var apps = response?["value"]?.AsArray();
-        if (apps == null || apps.Count == 0) return null;
+        if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+            !doc.RootElement.TryGetProperty("value", out var appsElement) ||
+            appsElement.ValueKind != JsonValueKind.Array)
+        {
+            throw ClientAppValidationException.ValidationFailed(
+                "Unable to verify the client app registration",
+                ["Microsoft Graph application lookup returned an invalid response."],
+                clientAppId);
+        }
 
-        var app = apps[0]!.AsObject();
+        if (appsElement.GetArrayLength() == 0) return null;
+
+        var firstApp = appsElement[0];
+        if (firstApp.ValueKind != JsonValueKind.Object ||
+            !firstApp.TryGetProperty("id", out var objectIdElement) ||
+            objectIdElement.ValueKind != JsonValueKind.String ||
+            !Guid.TryParse(objectIdElement.GetString(), out var objectId) ||
+            !firstApp.TryGetProperty("appId", out var appIdElement) ||
+            appIdElement.ValueKind != JsonValueKind.String ||
+            !Guid.TryParse(appIdElement.GetString(), out var returnedAppId) ||
+            !Guid.TryParse(clientAppId, out var expectedAppId) ||
+            returnedAppId != expectedAppId)
+        {
+            throw ClientAppValidationException.ValidationFailed(
+                "Unable to verify the client app registration",
+                ["Microsoft Graph application lookup returned an invalid application record."],
+                clientAppId);
+        }
+
+        var app = JsonNode.Parse(firstApp.GetRawText())!.AsObject();
         return new ClientAppInfo(
-            app["id"]?.GetValue<string>() ?? string.Empty,
+            objectId.ToString("D"),
             app["displayName"]?.GetValue<string>() ?? string.Empty,
             app["requiredResourceAccess"]?.AsArray());
     }
@@ -1296,7 +1538,9 @@ public sealed class ClientAppValidator : IClientAppValidator
         {
             using var doc = await _graphApiService.GraphGetAsync(tenantId,
                 $"/v1.0/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'&$select=id,oauth2PermissionScopes",
-                ct);
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (doc == null)
             {
@@ -1355,7 +1599,10 @@ public sealed class ClientAppValidator : IClientAppValidator
         {
             // Get service principal for the app
             using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
-                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id", ct);
+                $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id",
+                ct,
+                scopes: null,
+                authenticationMode: GraphAuthenticationMode.Ambient);
 
             if (spDoc == null)
             {
@@ -1386,7 +1633,9 @@ public sealed class ClientAppValidator : IClientAppValidator
             // "permissions not consented" prompt for non-admin developers who can never read
             // the grants table by design).
             var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
-                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
+                $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'",
+                ct: ct,
+                authenticationMode: GraphAuthenticationMode.Ambient);
             using var grantsDoc = grantsResp.Json;
 
             if (grantsResp.StatusCode == 403)
@@ -1443,7 +1692,10 @@ public sealed class ClientAppValidator : IClientAppValidator
 
         // Get service principal for the app
         using var spDoc = await _graphApiService.GraphGetAsync(tenantId,
-            $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id,appId", ct);
+            $"/v1.0/servicePrincipals?$filter=appId eq '{clientAppId}'&$select=id,appId",
+            ct,
+            scopes: null,
+            authenticationMode: GraphAuthenticationMode.Ambient);
 
         if (spDoc == null)
         {
@@ -1474,7 +1726,9 @@ public sealed class ClientAppValidator : IClientAppValidator
         // (token acquisition, network, 5xx) — the user-facing message differs and lumping them
         // together would either misattribute the cause or hide real failures.
         var grantsResp = await _graphApiService.GraphGetWithResponseAsync(tenantId,
-            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'", ct: ct);
+            $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spObjectId}'",
+            ct: ct,
+            authenticationMode: GraphAuthenticationMode.Ambient);
         using var grantsDoc = grantsResp.Json;
 
         if (grantsResp.StatusCode == 403)
@@ -1570,7 +1824,7 @@ public sealed class ClientAppValidator : IClientAppValidator
             }
 
             // Print the admin consent URL so the user (or their admin) can fix this immediately
-            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId);
+            var consentUrl = ClientAppValidationException.BuildAdminConsentUrl(clientAppId, tenantId, _graphApiService.AuthorityHost);
             if (consentUrl != null)
             {
                 _logger.LogInformation("To grant tenant-wide admin consent, share this URL with a Global Administrator:");

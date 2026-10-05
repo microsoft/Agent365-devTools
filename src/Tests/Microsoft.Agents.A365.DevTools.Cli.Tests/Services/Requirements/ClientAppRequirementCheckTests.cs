@@ -196,9 +196,10 @@ public class ClientAppRequirementCheckTests
         var check = new ClientAppRequirementCheck(_mockValidator);
 
         // Act & Assert
-        check.Description.Should().Contain("custom client app");
-        check.Description.Should().Contain("Microsoft Graph permissions");
-        check.Description.Should().Contain("admin consent");
+        check.Description.Should().Contain("first-party or custom client app",
+            because: "the requirement check supports both the Microsoft-managed app and tenant-owned custom apps");
+        check.Description.Should().Contain("Microsoft Graph authorization",
+            because: "first-party readiness is established from delegated token authorization rather than tenant-local grant mutation");
     }
 
     [Fact]

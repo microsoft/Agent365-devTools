@@ -16,6 +16,7 @@ public class SetupResults
     public string? BlueprintDisplayName { get; set; }
     public bool McpPermissionsConfigured { get; set; }
     public bool BotApiPermissionsConfigured { get; set; }
+    public string? ObservabilityResourceAppId { get; set; }
     public bool MessagingEndpointRegistered { get; set; }
 
     /// <summary>
@@ -274,8 +275,14 @@ public class SetupResults
     /// <summary>Whether step 6 (Agent identity creation) was attempted but failed.</summary>
     public bool AgentIdentityFailed { get; set; }
 
+    /// <summary>Whether an agent identity failure is fatal and should point to Errors.</summary>
+    public bool AgentIdentityFailureIsError { get; set; }
+
     /// <summary>Whether step 7 (Agent registration) was attempted but failed.</summary>
     public bool AgentRegistrationFailed { get; set; }
+
+    /// <summary>Whether an agent registration failure is fatal and should point to Errors.</summary>
+    public bool AgentRegistrationFailureIsError { get; set; }
 
     /// <summary>Whether step 8 (Project settings) was written to appsettings.json.</summary>
     public bool ProjectSettingsWritten { get; set; }
@@ -285,6 +292,32 @@ public class SetupResults
     /// was passed. Drives the "skipped" row in the setup summary instead of showing a grant status.
     /// </summary>
     public bool PermissionGrantsSkipped { get; set; }
+
+    /// <summary>
+    /// True when Observability API permissions were not requested (blueprint agents).
+    /// Registration failure is then an error, and the admin consent walkthrough omits Observability API.
+    /// </summary>
+    public bool ObservabilityPermissionsSkipped { get; set; }
+
+    /// <summary>
+    /// True when the s2s/both grant step ran but no permission spec carries an app role (blueprint
+    /// agents no longer request the Observability API OtelWrite role). The setup summary then reports
+    /// that no S2S app roles were needed instead of falling back to the delegated rows.
+    /// </summary>
+    public bool NoS2SAppRolesToGrant { get; set; }
+
+    /// <summary>
+    /// App-role specs not assigned on the blueprint service principal because the grant failed or
+    /// was not attempted (non-admin caller or declined prompt). The setup summary's S2S PowerShell
+    /// block lists exactly these roles.
+    /// </summary>
+    internal List<ResourcePermissionSpec> PendingBlueprintAppRoleSpecs { get; } = new();
+
+    /// <summary>
+    /// App-role specs whose assignment on the agent identity service principal failed. The setup
+    /// summary's S2S PowerShell block lists exactly these roles.
+    /// </summary>
+    internal List<ResourcePermissionSpec> PendingAgentIdentityAppRoleSpecs { get; } = new();
 
     public List<string> Errors { get; } = new();
     public List<string> Warnings { get; } = new();

@@ -37,6 +37,13 @@ public class BootstrapConfigResolverTests : IDisposable
             Substitute.For<ILogger<GraphApiService>>(),
             _executor,
             (Func<Task<string?>>)(() => Task.FromResult<string?>(null)));
+        _graphApiService.LookupServicePrincipalByAppIdWithResponseAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new GraphApiService.ServicePrincipalLookupResult
+            {
+                IsSuccess = true,
+                StatusCode = 200
+            });
 
         _loggerFactory = NullLoggerFactory.Instance;
     }
@@ -58,7 +65,13 @@ public class BootstrapConfigResolverTests : IDisposable
         var configFile = new FileInfo(Path.Combine(_tempDir, "a365.config.json"));
         File.WriteAllText(configFile.FullName, "{}"); // just needs to exist on disk
 
-        var expected = new Agent365Config { TenantId = "loaded-tenant" };
+        var expected = new Agent365Config
+        {
+            TenantId = "loaded-tenant",
+            Environment = "AzureUSGovernment",
+            GraphBaseUrl = "https://graph.microsoft.us",
+            AuthorityHost = "https://login.microsoftonline.us"
+        };
         _configService.LoadAsync(configFile.FullName).Returns(expected);
 
         var resolver = CreateResolver();
@@ -66,6 +79,10 @@ public class BootstrapConfigResolverTests : IDisposable
 
         result.Should().BeSameAs(expected,
             because: "when the config file exists and no agent-name is supplied, the file must be loaded");
+        _graphApiService.GraphBaseUrl.Should().Be(expected.GraphBaseUrl,
+            because: "commands using the shared resolver must target the configured sovereign Graph endpoint");
+        _graphApiService.AuthorityHost.Should().Be(expected.AuthorityHost,
+            because: "commands using the shared resolver must authenticate against the matching sovereign authority");
     }
 
     [Fact]

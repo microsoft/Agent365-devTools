@@ -265,6 +265,31 @@ public class InteractiveGraphAuthServiceTests
     }
 
     /// <summary>
+    /// Verifies that the returned GraphServiceClient targets the configured (sovereign) Graph
+    /// base URL with the API version segment appended. Overriding RequestAdapter.BaseUrl with the
+    /// origin alone drops the SDK default "/v1.0" segment and sends every request to a 404.
+    /// </summary>
+    [Fact]
+    public async Task GetAuthenticatedGraphClientAsync_UsesConfiguredGraphBaseUrlWithVersionSegment()
+    {
+        // Arrange
+        var workingCredential = new StubTokenCredential("token-value", DateTimeOffset.UtcNow.AddHours(1));
+        var logger = Substitute.For<ILogger<InteractiveGraphAuthService>>();
+        var sut = new InteractiveGraphAuthService(logger, ValidGuid,
+            credentialFactory: (_, _) => workingCredential,
+            loginHintResolver: NoOpLoginHint,
+            graphBaseUrl: "https://graph.microsoft.us");
+
+        // Act
+        var client = await sut.GetAuthenticatedGraphClientAsync(ValidTenantId);
+
+        // Assert
+        client.RequestAdapter.BaseUrl.Should().Be(
+            "https://graph.microsoft.us/v1.0",
+            because: "the Graph SDK routes requests relative to BaseUrl, so the cloud-specific host must retain the /v1.0 API version segment or all requests 404");
+    }
+
+    /// <summary>
     /// Verifies that the service returns the same cached GraphServiceClient for the same tenant
     /// on repeated calls, avoiding redundant authentication prompts.
     /// </summary>

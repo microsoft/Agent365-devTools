@@ -20,6 +20,7 @@ public class Agent365ToolingService : IAgent365ToolingService
     private readonly AuthenticationService _authService;
     private readonly ILogger<Agent365ToolingService> _logger;
     private readonly string _environment;
+    private readonly string _authorityHost;
 
     /// <inheritdoc />
     public string Environment => _environment;
@@ -28,12 +29,14 @@ public class Agent365ToolingService : IAgent365ToolingService
         IConfigService configService,
         AuthenticationService authService,
         ILogger<Agent365ToolingService> logger,
-        string environment = "prod")
+        string environment = "prod",
+        string? authorityHost = null)
     {
         _configService = configService ?? throw new ArgumentNullException(nameof(configService));
         _authService = authService ?? throw new ArgumentNullException(nameof(authService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _environment = environment ?? "prod";
+        _authorityHost = ConfigConstants.GetAuthorityHost(_environment, authorityHost);
     }
 
     /// <summary>
@@ -157,6 +160,46 @@ public class Agent365ToolingService : IAgent365ToolingService
         {
             return responseContent;
         }
+    }
+
+    /// <summary>
+    /// Builds a populated failure <see cref="PublishMcpServerResponse"/> from a failed publish response
+    /// body so the caller surfaces the server's actual error. The publish path previously discarded the
+    /// body and returned <c>null</c>, which the executor rendered as the misleading "No response received"
+    /// no matter what the server reported (a duplicate-instance rejection, a validation error, or a
+    /// downstream 5xx). Handles the platform's { Status, Message } envelope — including double-serialized
+    /// bodies, since the platform returns its already-JSON string via Ok(string) which re-serializes it —
+    /// and ASP.NET { error[, details] } / { message } problem bodies, falling back to the status code when
+    /// the body carries no readable message.
+    /// </summary>
+    /// <param name="responseContent">The raw failure response body.</param>
+    /// <param name="statusCode">The HTTP status code, used only when the body has no readable message.</param>
+    /// <param name="logger">Logger for the double-serialization-aware deserialization helper.</param>
+    /// <returns>A non-null failure response whose <see cref="PublishMcpServerResponse.Message"/> is set.</returns>
+    internal static PublishMcpServerResponse BuildPublishFailureResponse(
+        string? responseContent,
+        System.Net.HttpStatusCode statusCode,
+        ILogger logger)
+    {
+        // Prefer the platform's { Status, Message } envelope (the deserialization helper transparently
+        // unwraps double-serialized bodies).
+        var envelope = JsonDeserializationHelper.DeserializeWithDoubleSerialization<PublishMcpServerResponse>(
+            responseContent ?? string.Empty, logger);
+        var message = envelope?.Message;
+
+        // Otherwise fall back to ASP.NET-style { error[, details] } / { message } problem bodies.
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            message = ExtractErrorMessage(responseContent);
+        }
+
+        return new PublishMcpServerResponse
+        {
+            Status = "Failed",
+            Message = string.IsNullOrWhiteSpace(message)
+                ? $"Server returned {statusCode}"
+                : message,
+        };
     }
 
     /// <summary>
@@ -343,7 +386,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -422,7 +466,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -496,7 +541,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -523,7 +569,10 @@ public class Agent365ToolingService : IAgent365ToolingService
             var (isSuccess, responseContent) = await ValidateResponseAsync(response, "publish MCP server", cancellationToken);
             if (!isSuccess)
             {
-                return null;
+                // Surface the server's actual error instead of returning null (which the executor renders
+                // as the misleading "No response received"). ValidateResponseAsync already flags both
+                // non-2xx responses and 200 bodies carrying a { Status: "Failed" } envelope.
+                return BuildPublishFailureResponse(responseContent, response.StatusCode, _logger);
             }
 
             // Try to deserialize response, but allow for empty/null response
@@ -583,7 +632,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
             
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint, ct: cancellationToken);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -628,7 +678,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var endpointUrl = BuildLogRegisterUrl(_environment);
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogDebug("Skipping telemetry: failed to acquire token");
@@ -666,7 +717,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             var endpointUrl = BuildLogEvaluateUrl(_environment);
             var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogDebug("Skipping telemetry: failed to acquire token");
@@ -721,7 +773,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -801,7 +854,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -873,7 +927,8 @@ public class Agent365ToolingService : IAgent365ToolingService
             _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
 
             var loginHint = await AzCliHelper.ResolveLoginHintAsync();
-            var authToken = await _authService.GetAccessTokenAsync(audience, userId: loginHint);
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, authorityHost: _authorityHost);
             if (string.IsNullOrWhiteSpace(authToken))
             {
                 _logger.LogError("Failed to acquire authentication token");
@@ -905,4 +960,3 @@ public class Agent365ToolingService : IAgent365ToolingService
         }
     }
 }
-

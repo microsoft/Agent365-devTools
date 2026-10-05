@@ -3,6 +3,8 @@
 Authoritative package versions and code patterns for instrumenting A365 observability
 into a Python agent. All samples mirror the official Microsoft Learn docs (updated 2026-04-30).
 
+> **Blueprint agents:** Prefer the current `instrument-observability` skill in [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills). Non-AI-Teammate blueprint agents must export on the S2S route with an app-only token resolver; do not wire delegated `AgenticTokenCache` / `exchange_token(...observability...)` flows for those agents.
+
 ---
 
 ## pip Packages
@@ -62,7 +64,7 @@ No OBO user token is required.
 
 > **⚠️ Known Issue (msal v1.34.0):** Python MSAL does NOT properly support `fmi_path` as a parameter to `acquire_token_for_client()`. Passing it causes `TypeError: Session.request() got an unexpected keyword argument 'fmi_path'`. Use **direct HTTP POST** to the token endpoint with `fmi_path` as a form parameter for Hop 1+2 (same workaround as Node.js). MSAL is fine for Hop 3 (no `fmi_path` needed).
 
-> **Note:** As of CLI 1.1, `a365 setup all` automatically grants `Agent365.Observability.OtelWrite` to the Agent Identity SP (both delegated and application). No manual role assignment is needed for newly provisioned agents.
+> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; other clouds are listed under [Environment Variable Overrides](../../../src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides)).
 
 #### Step 1 — Create `observability/token_cache.py`
 
@@ -858,11 +860,11 @@ python -c "from microsoft.opentelemetry import use_microsoft_opentelemetry; from
 | Token resolver returns `None` | Per-turn OBO token cache was never refreshed | Call `exchange_token()` and `cache_agentic_token()` at the start of each message handler turn |
 | `ModuleNotFoundError` | Package not installed | Run `pip install microsoft-opentelemetry` and install `msal azure-identity httpx` when needed |
 | Traces not in Admin Center | Exporter env var not set | Set `ENABLE_A365_OBSERVABILITY_EXPORTER=true` in production |
-| 401 on export | Missing permission | Check if upgrading past `0.3.0` (requires new `Agent365.Observability.OtelWrite` permission) |
+| 401 on export | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `a365_use_s2s_endpoint=True` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial example: `9b975845-388f-4429-889e-eab1ef63949c`; see the per-cloud table in the CLI design) |
 | Spans dropped silently | Missing tenant/agent ID | Ensure `BaggageBuilder` or `populate()` adds tenant/agent identity before creating spans |
 | S2S: OBO token-refresh code still runs in the handler | S2S does not use per-turn OBO token exchange | Remove the OBO handler refresh path; token comes from the background token service via `a365_token_resolver` |
 | S2S 401: wrong Hop 3 scope | FMI Hop 3 used `https://api.powerplatform.com/.default` from older samples | Change Hop 3 scope to `api://9b975845-388f-4429-889e-eab1ef63949c/.default` |
-| S2S 401 even with correct scope | `OtelWrite` role not on Agent Identity SP | For agents provisioned before CLI 1.1, manually assign `Agent365.Observability.OtelWrite` to the Agent Identity SP via Entra portal (App registrations > Blueprint app > API permissions) |
+| S2S 401 even with correct scope | Exporter is not on the S2S route or received a delegated token | Set `a365_use_s2s_endpoint=True`, use the app-only resolver, and verify the token has no `scp` claim |
 | S2S: Spans appear to run but nothing is exported | `ENABLE_A365_OBSERVABILITY=true` not set | Python SDK has **two** env vars: `ENABLE_A365_OBSERVABILITY_EXPORTER` (exporter creation) AND `ENABLE_A365_OBSERVABILITY` (span creation). Both must be `true`. Without the second, `InvokeAgentScope.start()` creates a no-op scope. |
 | S2S: `_is_telemetry_enabled()` returns `False` | `ENABLE_A365_OBSERVABILITY` env var missing | Set `ENABLE_A365_OBSERVABILITY=true` in `.env` — this is separate from `ENABLE_A365_OBSERVABILITY_EXPORTER` |
 | S2S: MSI fails locally | No Managed Identity in dev | Set `AGENT365_USE_MANAGED_IDENTITY=false` and provide `AGENT365_CLIENT_SECRET` |
@@ -870,6 +872,6 @@ python -c "from microsoft.opentelemetry import use_microsoft_opentelemetry; from
 | S2S: `TypeError: Session.request() got an unexpected keyword argument 'fmi_path'` | MSAL Python v1.34.0 bug | Use direct HTTP POST to `https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token` with `fmi_path` as form data instead of MSAL `acquire_token_for_client(fmi_path=...)`. MSAL is still used for Hop 3 (no `fmi_path` needed). |
 | S2S: `InferenceCallDetails.__init__() got an unexpected keyword argument 'operation_name'` | Python SDK uses camelCase kwargs | Use `operationName=`, `providerName=`, `inputTokens=`, `outputTokens=`, `finishReasons=` (camelCase, NOT snake_case) |
 | S2S: HTTP 400 TenantIdInvalid from exporter | Token not yet acquired when exporter first fires | Ensure `acquire_initial_token()` runs in lifespan BEFORE monitor starts. The `a365_token_resolver` returns `""` when no cached token exists, causing 400. |
-| S2S: HTTP 403 `insufficient_scope: Required app role: Agent365.Observability.OtelWrite` | OtelWrite role not assigned to Agent Identity SP | Run PowerShell: `Connect-MgGraph; $sp = Get-MgServicePrincipal -Filter "appId eq '<agentId>'"` then `New-MgServicePrincipalAppRoleAssignment` with OtelWrite role from observability API SP (`9b975845-388f-4429-889e-eab1ef63949c`) |
+| S2S: HTTP 403 `insufficient_scope: Required app role: Agent365.Observability.OtelWrite` | Agent instance is not registered, or AI Teammate OtelWrite app-role grant is incomplete | Blueprint agents: run `a365 setup all --agent-registration-only` and retry. AI Teammates: complete the OtelWrite application-role PowerShell step printed by `a365 setup all --aiteammate` |
 | S2S: FMI Hop 3 returns `AADSTS700024` | Agent Identity has no FMI credential | Verify `a365 setup all` completed successfully — it creates the federated credential on the Agent Identity |
 | S2S: HTTP 200 but `rejectedSpans > 0` | Missing baggage context (tenant_id/agent_id) | Ensure `BaggageBuilder().tenant_id(...).agent_id(...).build()` wraps all scope code — without it, spans lack identity and are rejected |
