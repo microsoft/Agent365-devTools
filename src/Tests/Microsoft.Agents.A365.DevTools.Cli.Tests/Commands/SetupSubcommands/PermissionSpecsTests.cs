@@ -320,9 +320,9 @@ public class PermissionSpecsTests : IDisposable
         // Assert
         var defender = SpecFor(specs, ConfigConstants.DefenderApiAppId);
         defender.Scopes.Should().BeEquivalentTo(new[] { ConfigConstants.DefenderApiRealtimeProtectionScope },
-            because: "the Defender API delegated scope grants RealtimeProtection.Process for the OBO path");
+            because: "the Defender API delegated scope grants RealtimeProtection.Evaluate.All for the OBO path");
         defender.AppRoleScopes.Should().BeEquivalentTo(new[] { ConfigConstants.DefenderApiRealtimeProtectionScope },
-            because: "the Defender API app role grants RealtimeProtection.Process for the s2s path — the Defender webhook rejects tokens without the roles claim, so losing either side breaks one auth mode");
+            because: "the Defender API app role grants RealtimeProtection.Evaluate.All for the s2s path - the Defender webhook rejects tokens without the roles claim, so losing either side breaks one auth mode");
         defender.SetInheritable.Should().BeTrue(
             because: "agent identities minted from the blueprint must inherit the Defender permission, exactly as they do for OtelWrite");
     }
@@ -332,7 +332,7 @@ public class PermissionSpecsTests : IDisposable
     {
         // A value the resource SP does not publish fails the combined consent URL for every
         // resource in it (AADSTS650053), not just Defender.
-        ConfigConstants.DefenderApiRealtimeProtectionScope.Should().Be("RealtimeProtection.Process",
+        ConfigConstants.DefenderApiRealtimeProtectionScope.Should().Be("RealtimeProtection.Evaluate.All",
             because: "this is the app role and delegated scope value published on the Defender resource SP; changing it without a matching resource-side change fails admin consent tenant-wide");
     }
 

@@ -116,7 +116,7 @@ public static class ConfigConstants
     /// <summary>
     /// Defender API identifier URI.
     /// </summary>
-    public const string DefenderApiIdentifierUri = "https://rtp-a365.ai.defender.microsoft.com";
+    public const string DefenderApiIdentifierUri = "api://86a21212-634e-4553-b3d6-e477e4c9d9ec";
 
     /// <summary>
     /// Single source of truth for the Messaging Bot API delegated scope.
@@ -139,7 +139,7 @@ public static class ConfigConstants
     /// Defender API app role and delegated scope for the Defender security integration.
     /// Must match the value published on the resource SP.
     /// </summary>
-    public const string DefenderApiRealtimeProtectionScope = "RealtimeProtection.Process";
+    public const string DefenderApiRealtimeProtectionScope = "RealtimeProtection.Evaluate.All";
 
     /// <summary>
     /// Delegated scope value exposed on the blueprint app registration to enable

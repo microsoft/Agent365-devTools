@@ -74,15 +74,13 @@ public class SetupHelpersConsentUrlTests
     }
 
     [Fact]
-    public void BuildAdminConsentUrls_DefenderApi_UsesHttpsIdentifierUriNotApiScheme()
+    public void BuildAdminConsentUrls_DefenderApi_UsesAppIdIdentifierUri()
     {
         var urls = SetupHelpers.BuildAdminConsentUrls(TenantId, BlueprintClientId, new[] { "Mail.Send" }, new[] { "scope" });
         var defenderUrl = urls.First(u => u.ResourceName == "Defender API").ConsentUrl;
 
         defenderUrl.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
-            because: "the Defender resource publishes only the https identifier URI — api://{appId} is not in its servicePrincipalNames and consent fails with AADSTS500011");
-        defenderUrl.Should().NotContain(Uri.EscapeDataString($"api://{ConfigConstants.DefenderApiAppId}"),
-            because: "the api:// form of the Defender resource is not a registered servicePrincipalName");
+            because: "the Defender resource publishes its delegated permission under the api://{appId} audience");
     }
 
     [Fact]
@@ -240,7 +238,7 @@ public class SetupHelpersConsentUrlTests
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.ObservabilityApiIdentifierUri}/{ConfigConstants.ObservabilityApiOtelWriteScope}"),
             because: "OtelWrite is the published delegated scope on the Observability API used for admin consent");
         url.Should().Contain(Uri.EscapeDataString($"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
-            because: "RealtimeProtection.Process is the published delegated scope on the Defender API — without it the agent cannot call the Defender security webhook");
+            because: "RealtimeProtection.Evaluate.All is the published delegated scope on the Defender API - without it the agent cannot call the Defender security webhook");
         url.Should().Contain(Uri.EscapeDataString($"{PowerPlatformConstants.PowerPlatformApiIdentifierUri}/{PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead}"));
     }
 

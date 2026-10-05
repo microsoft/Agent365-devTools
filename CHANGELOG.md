@@ -30,10 +30,10 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 
 #### Existing agents: grant Defender API permissions
 
-Agents provisioned before this release need `RealtimeProtection.Process` granted as both a **delegated** and an **application** permission on the blueprint app for the Defender security integration. Requires Global Administrator. Follow the steps above, searching for `86a21212-634e-4553-b3d6-e477e4c9d9ec` in step 2 and selecting `RealtimeProtection.Process` in steps 3 and 4. Re-running `a365 setup all` grants it automatically.
+Agents provisioned before this release need `RealtimeProtection.Evaluate.All` granted as both a **delegated** and an **application** permission on the blueprint app for the Defender security integration. Requires Global Administrator. Follow the steps above, searching for `86a21212-634e-4553-b3d6-e477e4c9d9ec` in step 2 and selecting `RealtimeProtection.Evaluate.All` in steps 3 and 4. Re-running `a365 setup all` grants it automatically.
 
 ### Added
-- `RealtimeProtection.Process` on the Defender API is now granted automatically during `a365 setup` as both a delegated and an application permission, enabling the Microsoft Defender security integration without manual Entra steps.
+- `RealtimeProtection.Evaluate.All` on the Defender API is now granted automatically during `a365 setup` as both a delegated and an application permission, enabling the Microsoft Defender security integration without manual Entra steps.
 - `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server, and prompts you to select which ones to grant it to (#500).
 - When more than one Entra application shares the MCP server's name, `a365 develop-mcp grant-agents-access` now lists them all and asks which one to use instead of failing (#500).
 - `a365 develop-mcp grant-agents-access --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere (#500).
