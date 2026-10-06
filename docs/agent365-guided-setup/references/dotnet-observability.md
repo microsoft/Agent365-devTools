@@ -4,6 +4,8 @@ Authoritative package versions and code patterns for instrumenting A365 observab
 into a .NET AgentFramework agent. All samples mirror the official Microsoft Learn docs
 (updated 2026-04-30).
 
+> **Blueprint agents:** Prefer the current `instrument-observability` skill in [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills). Non-AI-Teammate blueprint agents must export on the S2S route with an app-only token resolver; do not wire `AddAgenticTracingExporter()` or delegated OBS token refresh for those agents.
+
 ---
 
 ## NuGet Packages
@@ -188,7 +190,7 @@ public static class ObservabilityServiceExtensions
 >   - `true` (production) — MSI → Blueprint FIC → Agent Identity → API
 >   - `false` (local dev) — Client Secret → Blueprint FIC → Agent Identity → API
 >
-> **Note:** As of CLI 1.1, `a365 setup all` automatically grants `Agent365.Observability.OtelWrite` to the Agent Identity SP (both delegated and application). No manual role assignment is needed for newly provisioned agents.
+> **Note:** `a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents. Registered blueprint agents that use the app-only S2S endpoint need no Observability admin consent. Agents that still export through the delegated route must opt back in with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; other clouds are listed under [Environment Variable Overrides](../../../src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides)).
 
 ```csharp
 using Azure.Core;
@@ -932,7 +934,7 @@ The `a365 setup` command (as of April 2026) automatically writes the following t
 | No logs in Defender | Missing `Logging.LogLevel` config | Add `Microsoft.Agents.A365.Observability: Debug` to appsettings.json |
 | `AgenticAppId` is null | Missing `AGENTIC_APP_ID` env var | Set it in `.env` or App Service config |
 | Token resolver returns null | `AddAgenticTracingExporter()` not called | Add to `Program.cs` DI |
-| 401 from A365 exporter | OAuth consent not granted | Run `a365 setup permissions observability`; also check if upgrading past `0.3-beta` (requires new `Agent365.Observability.OtelWrite` permission) |
+| 401 from A365 exporter | Delegated route or delegated-token wiring is still in use | For blueprint agents, set `UseS2SEndpoint` and use an app-only token resolver. If you intentionally use the delegated route, grant OtelWrite with `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite` (commercial example: `9b975845-388f-4429-889e-eab1ef63949c`; see the per-cloud table in the CLI design) |
 | Build error on `BaggageBuilder` | Wrong namespace | Use `Microsoft.Agents.A365.Observability.Runtime.Common` |
 | Build error on `AgenticTokenStruct` | Object initializer syntax used | Use constructor: `new AgenticTokenStruct(userAuthorization: ..., turnContext: ..., authHandlerName: "AGENTIC")` |
 | Build error on `IExporterTokenCache` | Wrong namespace | Use `Microsoft.Agents.A365.Observability.Hosting.Caching` |
@@ -940,9 +942,9 @@ The `a365 setup` command (as of April 2026) automatically writes the following t
 | Build error on `AddA365Tracing` | Wrong namespace | Use `Microsoft.Agents.A365.Observability.Runtime` |
 | Spans dropped silently | Missing tenant/agent ID in baggage | Ensure `BaggageBuilder` is set up before creating spans, or register `BaggageTurnMiddleware` |
 | S2S: token service skipped at startup | Placeholder or missing `Agent365Observability` credentials | Run `a365 setup all` or populate `TenantId`, `AgentId`, `ClientId`, and `ClientSecret` (when `UseManagedIdentity` is `false`) |
-| S2S: 401 on export | Token acquired for wrong scope or app | Verify FMI Hop 3 scope is `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. For agents provisioned before CLI 1.1, verify Agent Identity SP has `Agent365.Observability.OtelWrite` app role via Entra portal |
+| S2S: 401 on export | Token acquired for wrong scope/app or the exporter is not on the S2S route | Verify FMI Hop 3 scope is `api://9b975845-388f-4429-889e-eab1ef63949c/.default`, set the S2S route flag, and ensure the token is app-only for the exporting agent identity |
 | S2S: FMI Hop 1+2 fails | Blueprint credentials wrong or `.WithFmiPath(agentId)` target incorrect | Check `ClientId` (Blueprint app ID) and `ClientSecret` in appsettings; verify `AgentId` matches the Agent Identity app ID |
-| S2S: FMI Hop 3 → 401 on export | Wrong scope or missing role | FMI Hop 3 scope is `api://9b975845-388f-4429-889e-eab1ef63949c/.default`; Agent Identity SP needs `OtelWrite` role assigned via Graph API |
+| S2S: 403 `insufficient_scope` on export | Agent instance is not registered, or AI Teammate OtelWrite app-role grant is incomplete | Blueprint agents: run `a365 setup all --agent-registration-only` and retry. AI Teammates: complete the OtelWrite application-role PowerShell step printed by `a365 setup all --aiteammate` |
 | S2S: MSI fails locally | No Managed Identity available in dev | Set `UseManagedIdentity: false` in appsettings.Development.json, ensure `ClientSecret` is populated |
 | S2S: `UseMicrosoftOpenTelemetry` not found | Unified distro not installed | Run `dotnet add package Microsoft.OpenTelemetry --version 1.0.0-beta.1` |
 | S2S: Runtime `FileNotFoundException` for `Microsoft.Extensions.Logging v10.0.0` | `Microsoft.OpenTelemetry` v1.0.0-beta.1 depends on v10 logging | (1) Upgrade TFM to `net9.0`. (2) Run `dotnet add package Microsoft.Extensions.Logging --version "10.0.4"` — use the **stable** version, not a preview; specifying a preview causes NU1605 downgrade errors because `Microsoft.Agents.A365.Observability.Hosting` requires `>= 10.0.4`. |

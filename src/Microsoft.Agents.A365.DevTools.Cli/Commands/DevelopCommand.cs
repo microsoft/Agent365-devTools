@@ -146,7 +146,10 @@ public static class DevelopCommand
                 // Resolve az CLI login hint so WAM targets the correct account instead of
                 // defaulting to the first cached MSAL account (which may be stale).
                 var loginHint = await Services.Helpers.AzCliHelper.ResolveLoginHintAsync();
-                authToken = await authService.GetAccessTokenAsync(audience, userId: loginHint);
+                authToken = await authService.GetAccessTokenAsync(
+                    audience,
+                    userId: loginHint,
+                    authorityHost: ConfigConstants.GetAuthorityHost(environment));
 
                 if (string.IsNullOrWhiteSpace(authToken))
                 {

@@ -20,6 +20,18 @@ public class SetupHelpersDisplaySetupSummaryTests
     private const string AgentSpId = "agent-sp-id-123";
     private const string TenantId = "tenant-id-456";
     private const string BlueprintId = "blueprint-app-id-789";
+    private const string CustomAppRoleResourceAppId = "contoso-api-app-id";
+    private const string NoAppRolesConsentUrl = "https://login.microsoftonline.com/tenant/v2.0/adminconsent?client_id=bp-no-app-roles";
+
+    private static readonly ResourcePermissionSpec CustomAppRoleSpec =
+        new(CustomAppRoleResourceAppId, "Contoso API", [], false, AppRoleScopes: ["Contoso.Write"]);
+
+    private static readonly ResourcePermissionSpec BlueprintOnlyAppRoleSpec =
+        new("fabrikam-api-app-id", "Fabrikam API", [], false, AppRoleScopes: ["Fabrikam.Read"]);
+
+    private static readonly ResourcePermissionSpec ObservabilityAppRoleSpec =
+        new(ConfigConstants.ObservabilityApiAppId, "Observability API", [ConfigConstants.ObservabilityApiOtelWriteScope], false,
+            AppRoleScopes: [ConfigConstants.ObservabilityApiOtelWriteScope]);
 
     private sealed class CapturingLogger : ILogger
     {
@@ -99,6 +111,21 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the required role must be surfaced so the admin knows which Entra role is needed");
     }
 
+    [Fact]
+    public void DisplaySetupSummary_PendingDelegatedAction_WhenObservabilitySkipped_OmitsObservabilityGrant()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildDelegatedPendingResults();
+        results.ObservabilityPermissionsSkipped = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiOtelWriteScope,
+            because: "blueprint agents that skipped Observability permissions must not be told to grant OtelWrite later");
+        logger.AllOutput.Should().Contain(PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,
+            because: "gating the Observability scope must keep the remaining delegated remediation intact");
+    }
+
     // ── pendingS2SAction (non-DW path) ─────────────────────────────────────────
 
     [Fact]
@@ -164,6 +191,162 @@ public class SetupHelpersDisplaySetupSummaryTests
         logger.AllOutput.Should().Contain(TenantId,
             because: "the Connect-MgGraph call must include -TenantId so the admin targets the correct tenant");
     }
+
+    // ── S2S app roles: hand-off lists what failed; none to grant for blueprint agents ─
+
+    [Fact]
+    public void DisplaySetupSummary_PendingS2SAction_ListsOnlyTheAppRolesThatFailed()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SPendingResults();
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Contoso API S2S app role (PowerShell)",
+            because: "the hand-off heading must name the resource whose app role was not assigned");
+        logger.AllOutput.Should().Contain($"appId eq '{CustomAppRoleResourceAppId}'",
+            because: "the PowerShell must look up the resource whose grant actually failed");
+        logger.AllOutput.Should().Contain("$_.Value -eq 'Contoso.Write'",
+            because: "the PowerShell must assign the role whose grant actually failed");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiOtelWriteScope,
+            because: "setup no longer requests OtelWrite for blueprint agents, so the hand-off must not grant it");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_PendingBlueprintS2S_AiTeammate_ListsTheObservabilityRole()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = false,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+            BlueprintS2SOutcome = Cli.Models.GrantOutcome.Failed,
+            PendingBlueprintAppRoleSpecs = { ObservabilityAppRoleSpec },
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Observability API S2S app role (PowerShell)",
+            because: "AI Teammates still request OtelWrite, so a declined or failed grant keeps its hand-off");
+        logger.AllOutput.Should().Contain($"$_.Value -eq '{ConfigConstants.ObservabilityApiOtelWriteScope}'",
+            because: "the recorded pending role is OtelWrite");
+        logger.AllOutput.Should().Contain($"appId eq '{BlueprintId}'",
+            because: "the AI Teammate grant targets the blueprint service principal");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_PendingS2SAction_WithoutRecordedSpecs_DoesNotAssumeARole()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SPendingResults();
+        results.PendingAgentIdentityAppRoleSpecs.Clear();
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Re-run 'a365 setup all'",
+            because: "without a recorded spec the hand-off can only point back to setup");
+        logger.AllOutput.Should().NotContain("New-MgServicePrincipalAppRoleAssignment",
+            because: "without a recorded spec there is no role to assign");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiOtelWriteScope,
+            because: "the hand-off must never fall back to a hardcoded role");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_PendingS2SAction_RepeatedSpec_IsListedOnce()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SPendingResults();
+        results.PendingAgentIdentityAppRoleSpecs.Add(CustomAppRoleSpec);
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        System.Text.RegularExpressions.Regex.Matches(logger.AllOutput, "Value -eq 'Contoso.Write'").Count.Should().Be(1,
+            because: "a role recorded twice for the same target needs only one assignment command");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_PendingS2SAction_BothTargetsFailed_ListsEachTargetsRoles()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SPendingResults();
+        results.BlueprintS2SOutcome = Cli.Models.GrantOutcome.Failed;
+        results.PendingBlueprintAppRoleSpecs.Add(BlueprintOnlyAppRoleSpec);
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Contoso API S2S app role on the agent identity (PowerShell)",
+            because: "the agent identity's failed role needs its own hand-off");
+        logger.AllOutput.Should().Contain("Fabrikam API S2S app role on the blueprint (PowerShell)",
+            because: "a blueprint role that also failed in the same run must not be dropped");
+        logger.AllOutput.Should().Contain("$_.Value -eq 'Contoso.Write'")
+            .And.Contain("$_.Value -eq 'Fabrikam.Read'");
+        logger.AllOutput.Should().Contain($"$agentSpId = '{AgentSpId}'")
+            .And.Contain($"appId eq '{BlueprintId}'", because: "each hand-off targets its own service principal");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void DisplaySetupSummary_S2sMode_NoAppRolesToGrant_ReportsNotRequired(bool isAdmin)
+    {
+        var logger = new CapturingLogger();
+        var results = BuildNoAppRolesToGrantResults(Cli.Models.AuthMode.S2s, isAdmin);
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("not required  (no S2S app roles to grant)",
+            because: "blueprint agents request no app role, so the s2s grant step has nothing to do");
+        logger.AllOutput.Should().NotContain("tenant-wide delegated",
+            because: "an s2s run must not be reported as a delegated grant");
+        logger.AllOutput.Should().NotContain("PENDING",
+            because: "nothing is pending when no app role needs to be granted");
+        logger.AllOutput.Should().NotContain("Action Required",
+            because: "an s2s run with no app roles leaves nothing for an administrator to do");
+        logger.AllOutput.Should().Contain("Setup completed successfully",
+            because: "no step failed and nothing is pending");
+    }
+
+    [Theory]
+    [InlineData(true, "granted  tenant-wide delegated; no S2S app roles to grant")]
+    [InlineData(false, "PENDING; no S2S app roles to grant")]
+    public void DisplaySetupSummary_BothMode_NoAppRolesToGrant_ReportsTheDelegatedHalf(bool isAdmin, string expectedRow)
+    {
+        var logger = new CapturingLogger();
+        var results = BuildNoAppRolesToGrantResults(Cli.Models.AuthMode.Both, isAdmin);
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(expectedRow,
+            because: "both mode still needs delegated consent, and the row must say the S2S half had nothing to grant");
+        logger.AllOutput.Should().NotContain("New-MgServicePrincipalAppRoleAssignment",
+            because: "no app role was requested, so there is no S2S hand-off");
+        if (!isAdmin)
+            logger.AllOutput.Should().Contain(NoAppRolesConsentUrl,
+                because: "a non-admin both-mode run still hands the delegated consent URL to an administrator");
+    }
+
+    private static SetupResults BuildNoAppRolesToGrantResults(Cli.Models.AuthMode authMode, bool isAdmin) => new()
+    {
+        IsNonDwBlueprintFlow = true,
+        BlueprintCreated = true,
+        BlueprintId = BlueprintId,
+        BlueprintServicePrincipalCreated = true,
+        AgentIdentityCreated = true,
+        AgentIdentityId = AgentSpId,
+        TenantId = TenantId,
+        EffectiveAuthMode = authMode,
+        ObservabilityPermissionsSkipped = true,
+        NoS2SAppRolesToGrant = true,
+        BatchPermissionsPhase1Completed = true,
+        BatchPermissionsPhase2Completed = true,
+        TenantWideConsentOutcome = isAdmin ? Cli.Models.GrantOutcome.Granted : Cli.Models.GrantOutcome.Failed,
+        CombinedConsentUrl = isAdmin ? null : NoAppRolesConsentUrl,
+    };
 
     // ── pendingAdminAction (DW path) ──────────────────────────────────────────
 
@@ -271,6 +454,111 @@ public class SetupHelpersDisplaySetupSummaryTests
 
         logger.AllOutput.Should().Contain("Option A — Entra portal",
             because: "when no consent URL is available the non-DW summary must fall back to the LogNonDwAdminConsentInstructions portal walkthrough so the user still has a recovery path");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(ConfigConstants.GccObservabilityApiAppId)]
+    public void DisplaySetupSummary_ObservabilitySkipped_PortalWalkthroughOmitsObservability(string? observabilityResourceAppId)
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            ObservabilityPermissionsSkipped = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            ObservabilityResourceAppId = observabilityResourceAppId,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain("Option A — Entra portal",
+            because: "precondition: without a consent URL the summary renders the portal walkthrough");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiOtelWriteScope,
+            because: "the administrator must not be asked to add Observability API permissions that setup skipped, in any cloud");
+        logger.AllOutput.Should().Contain(PowerPlatformConstants.PermissionNames.ConnectivityConnectionsRead,
+            because: "Power Platform API is still required and must stay in the walkthrough");
+    }
+
+    [Theory]
+    [InlineData(true, "failed — see errors")]
+    [InlineData(false, "failed — see warnings")]
+    public void DisplaySetupSummary_IdentityFailed_RowPointsToTheListHoldingTheFailure(bool failureIsError, string expectedStatus)
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityFailed = true,
+            AgentIdentityFailureIsError = failureIsError,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Split('\n').Should().ContainSingle(l => l.Contains("Agent identity"))
+            .Which.Should().Contain(expectedStatus,
+                because: "the identity row must point to Errors only when the writer recorded an error-severity identity failure");
+    }
+
+    [Theory]
+    [InlineData(true, "failed — see errors")]
+    [InlineData(false, "failed — see warnings")]
+    public void DisplaySetupSummary_RegistrationFailed_RowPointsToTheListHoldingTheFailure(bool failureIsError, string expectedStatus)
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            AgentRegistrationFailed = true,
+            AgentRegistrationFailureIsError = failureIsError,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Split('\n').Should().ContainSingle(l => l.Contains("Agent Registration"))
+            .Which.Should().Contain(expectedStatus,
+                because: "the registration row must point to Errors only when the writer recorded an error-severity registration failure");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_NonDwGccAdminConsentPending_UsesGccObservabilityResource()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            ObservabilityResourceAppId = ConfigConstants.GccObservabilityApiAppId,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(ConfigConstants.GccObservabilityApiAppId,
+            because: "manual GCC recovery instructions must target the GCC Observability service");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
+            because: "manual GCC recovery instructions must not target the commercial Observability service");
     }
 
     /// <summary>
@@ -575,6 +863,36 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the blueprint summary must point to the bot/observability permissions step");
     }
 
+    [Fact]
+    public void DisplaySetupSummary_AgentRegistrationOnlyFailure_UsesErrorStatusInsteadOfSuccess()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildAgentRegistrationOnlyFailureResults(), logger);
+
+        logger.AllOutput.Should().Contain("Setup completed with errors",
+            because: "registration-only mode should treat the requested registration failure as fatal");
+        logger.AllOutput.Should().NotContain("Setup completed successfully",
+            because: "the previous success-with-warnings banner was misleading for this focused failure");
+        logger.AllOutput.Should().Contain("failed — see errors",
+            because: "the registration-only row should direct the operator to the error block");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_FullSetupRegistrationFailure_RemainsWarningStatus()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildFullSetupRegistrationWarningResults(), logger);
+
+        logger.AllOutput.Should().Contain("Setup completed successfully with warnings",
+            because: "full setup intentionally keeps agent registration best-effort so other completed work is preserved");
+        logger.AllOutput.Should().NotContain("Setup completed with errors",
+            because: "the compatibility path should remain non-fatal outside registration-only mode");
+        logger.AllOutput.Should().Contain("failed — see warnings",
+            because: "the full setup row should continue to point at the warning block");
+    }
+
     private const string BlueprintConsentUrl = "https://login.microsoftonline.com/" + TenantId + "/v2.0/adminconsent?client_id=" + BlueprintId;
 
     private static SetupResults BuildBlueprintOnlyResults(bool consentPending) => new()
@@ -592,6 +910,43 @@ public class SetupHelpersDisplaySetupSummaryTests
         TenantWideConsentOutcome = consentPending ? Cli.Models.GrantOutcome.Failed : Cli.Models.GrantOutcome.Granted,
         AdminConsentUrl = consentPending ? BlueprintConsentUrl : null,
     };
+
+    private static SetupResults BuildAgentRegistrationOnlyFailureResults()
+    {
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            PermissionGrantsSkipped = true,
+            AgentIdentityCreated = true,
+            AgentIdentityAlreadyExisted = true,
+            AgentIdentityId = AgentSpId,
+            BlueprintId = BlueprintId,
+            AgentRegistrationFailed = true,
+        };
+        results.Errors.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
+        return results;
+    }
+
+    private static SetupResults BuildFullSetupRegistrationWarningResults()
+    {
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintServicePrincipalCreated = true,
+            BlueprintId = BlueprintId,
+            BlueprintDisplayName = "Repro Blueprint",
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            AgentIdentityDisplayName = "Repro Agent Identity",
+            AgentRegistrationFailed = true,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+        };
+        results.Warnings.Add("Agent registration failed via Graph copilot/agentRegistrations API.");
+        return results;
+    }
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -624,6 +979,7 @@ public class SetupHelpersDisplaySetupSummaryTests
         TenantId = TenantId,
         EffectiveAuthMode = Cli.Models.AuthMode.S2s,
         AgentIdentityS2SOutcome = Cli.Models.GrantOutcome.Failed,
+        PendingAgentIdentityAppRoleSpecs = { CustomAppRoleSpec },
         BatchPermissionsPhase1Completed = true,
         BatchPermissionsPhase2Completed = true,
     };

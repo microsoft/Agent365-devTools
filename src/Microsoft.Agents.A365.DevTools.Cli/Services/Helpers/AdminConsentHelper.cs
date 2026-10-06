@@ -78,12 +78,14 @@ public static class AdminConsentHelper
         string scopeDescriptor,
         int timeoutSeconds,
         int intervalSeconds,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? graphBaseUrl = null)
     {
         if (BypassConsentChecksForTests)
             return true;
 
         var start = DateTime.UtcNow;
+        var baseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
         string? spId = null;
         int lastProgressReportSeconds = 0;
 
@@ -107,7 +109,7 @@ public static class AdminConsentHelper
                 if (spId == null)
                 {
                     var spResult = await executor.ExecuteAsync("az",
-                        $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
+                        $"rest --method GET --url \"{baseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'\"",
                         captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
 
                     if (spResult.Success)
@@ -128,7 +130,7 @@ public static class AdminConsentHelper
                 if (spId != null)
                 {
                     var grants = await executor.ExecuteAsync("az",
-                        $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
+                        $"rest --method GET --url \"{baseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
                         captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
 
                     if (grants.Success)
@@ -387,7 +389,8 @@ public static class AdminConsentHelper
         CancellationToken ct,
         string? consentType = null,
         string? blueprintSpObjectId = null,
-        string? resourceSpObjectId = null)
+        string? resourceSpObjectId = null,
+        string? graphBaseUrl = null)
     {
         if (BypassConsentChecksForTests)
             return true;
@@ -406,11 +409,12 @@ public static class AdminConsentHelper
 
         try
         {
+            var baseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
             // Skip SP lookups when the caller already resolved them in Phase 1 — each az rest
             // call costs ~1.7s due to az's Python startup. The orchestrator passes pre-resolved
             // IDs to cut 4-resource setup pre-check from ~21s to ~7s.
             var blueprintSpId = blueprintSpObjectId
-                ?? await LookupSpObjectIdByAppIdAsync(executor, blueprintAppId, ct);
+                ?? await LookupSpObjectIdByAppIdAsync(executor, blueprintAppId, baseUrl, ct);
             if (blueprintSpId == null)
             {
                 logger.LogDebug("Blueprint SP not found for appId {BlueprintAppId} via az rest", blueprintAppId);
@@ -418,7 +422,7 @@ public static class AdminConsentHelper
             }
 
             var resourceSpId = resourceSpObjectId
-                ?? await LookupSpObjectIdByAppIdAsync(executor, resourceAppId, ct);
+                ?? await LookupSpObjectIdByAppIdAsync(executor, resourceAppId, baseUrl, ct);
             if (resourceSpId == null)
             {
                 logger.LogDebug("Resource SP not found for appId {ResourceAppId} via az rest", resourceAppId);
@@ -430,7 +434,7 @@ public static class AdminConsentHelper
                 filter += $" and consentType eq '{consentType}'";
 
             var grantsResult = await executor.ExecuteAsync("az",
-                $"rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString(filter)}\"",
+                $"rest --method GET --url \"{baseUrl}/v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString(filter)}\"",
                 captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
 
             if (!grantsResult.Success)
@@ -480,10 +484,10 @@ public static class AdminConsentHelper
     }
 
     private static async Task<string?> LookupSpObjectIdByAppIdAsync(
-        CommandExecutor executor, string appId, CancellationToken ct)
+        CommandExecutor executor, string appId, string graphBaseUrl, CancellationToken ct)
     {
         var spResult = await executor.ExecuteAsync("az",
-            $"rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id\"",
+            $"rest --method GET --url \"{graphBaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id\"",
             captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
 
         if (!spResult.Success)

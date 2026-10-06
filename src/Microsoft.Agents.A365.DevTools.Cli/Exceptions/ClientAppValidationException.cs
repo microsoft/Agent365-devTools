@@ -196,9 +196,9 @@ public sealed class ClientAppValidationException : Agent365Exception
     /// Creates exception for missing admin consent.
     /// Includes a direct admin consent URL that a Global Administrator can open to grant consent.
     /// </summary>
-    public static ClientAppValidationException MissingAdminConsent(string clientAppId, string? tenantId = null)
+    public static ClientAppValidationException MissingAdminConsent(string clientAppId, string? tenantId = null, string? authorityHost = null)
     {
-        var consentUrl = BuildAdminConsentUrl(clientAppId, tenantId);
+        var consentUrl = BuildAdminConsentUrl(clientAppId, tenantId, authorityHost);
         var consentInstruction = consentUrl != null
             ? $"Share this URL with a Global Administrator to grant consent:\n  {consentUrl}"
             : "Grant admin consent at: Azure Portal > App registrations > Your app > API permissions.";
@@ -229,16 +229,19 @@ public sealed class ClientAppValidationException : Agent365Exception
     /// Builds the admin consent URL for the given client app and tenant.
     /// A Global Administrator can open this URL to grant tenant-wide (AllPrincipals) consent.
     /// </summary>
-    public static string? BuildAdminConsentUrl(string clientAppId, string? tenantId)
+    public static string? BuildAdminConsentUrl(string clientAppId, string? tenantId, string? authorityHost = null)
     {
         if (string.IsNullOrWhiteSpace(clientAppId) || string.IsNullOrWhiteSpace(tenantId))
             return null;
 
-        // Standard native-app redirect URI accepted by Entra ID for admin consent flows
-        const string redirectUri = "https://login.microsoftonline.com/common/oauth2/nativeclient";
+        // Standard native-app redirect URI accepted by Entra ID for admin consent flows.
+        // Authority host defaults to commercial cloud; callers pass a cloud-resolved host
+        // (e.g. GraphApiService.AuthorityHost) so sovereign tenants get a matching consent URL.
+        var host = ConfigConstants.NormalizeAuthorityHost(authorityHost);
+        var redirectUri = $"{host}/common/oauth2/nativeclient";
         var clientIdEncoded = Uri.EscapeDataString(clientAppId);
         var redirectUriEncoded = Uri.EscapeDataString(redirectUri);
-        return $"https://login.microsoftonline.com/{tenantId}/adminconsent?client_id={clientIdEncoded}&redirect_uri={redirectUriEncoded}";
+        return $"{host}/{tenantId}/adminconsent?client_id={clientIdEncoded}&redirect_uri={redirectUriEncoded}";
     }
 
     /// <summary>

@@ -18,7 +18,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands.SetupSubcommands;
 /// input-driven rule that applies to <strong>both</strong> DW and non-DW agents:
 /// </para>
 /// <list type="bullet">
-///   <item><description>Observability API and Power Platform API are always included.</description></item>
+///   <item><description>Power Platform API is always included; Observability API is included unless <c>includeObservability</c> is false.</description></item>
 ///   <item><description>Microsoft Graph is always included with <c>AgentApplicationScopes</c>.</description></item>
 ///   <item><description>Messaging Bot API is included when <c>isM365 == true</c>.</description></item>
 ///   <item><description>Agent 365 Tools (MCP audiences from <c>ToolingManifest.json</c>) are included when a manifest is present.</description></item>
@@ -101,6 +101,26 @@ public class PermissionSpecsTests : IDisposable
         SpecFor(specs, AuthenticationConstants.MicrosoftGraphResourceAppId).Scopes
             .Should().BeEquivalentTo(ConfigConstants.DefaultAgentApplicationScopes,
                 because: "Microsoft Graph spec scopes must come from Agent365Config.AgentApplicationScopes");
+    }
+
+    [Fact]
+    public async Task GccPath_UsesGccObservabilityResource()
+    {
+        var config = new Agent365Config
+        {
+            DeploymentProjectPath = _tempDir,
+            Environment = "gcc",
+        };
+
+        var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
+            config,
+            setInheritable: true,
+            isM365: true);
+
+        ResourceAppIds(specs).Should().Contain(ConfigConstants.GccObservabilityApiAppId,
+            because: "GCC blueprints must inherit permissions from the GCC Observability resource");
+        ResourceAppIds(specs).Should().NotContain(ConfigConstants.ObservabilityApiAppId,
+            because: "the commercial Observability resource must not be stamped on a GCC blueprint");
     }
 
     [Fact]

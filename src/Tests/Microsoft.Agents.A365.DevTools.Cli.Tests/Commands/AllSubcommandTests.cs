@@ -353,4 +353,243 @@ public class AllSubcommandTests : IDisposable
         ctx.Results.MessagingEndpoint.Should().Be(overrideUrl,
             because: "the registered endpoint reported in the summary must be the override URL");
     }
+
+    // -----------------------------------------------------------------------
+    // Observability API permission wiring
+    // -----------------------------------------------------------------------
+
+    private SetupContext BuildPermissionsContext(bool skipObservabilityPermissions, List<CustomResourcePermission>? customPermissions = null)
+    {
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var graph = Substitute.For<GraphApiService>();
+        var blueprintService = Substitute.For<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), graph);
+        // The blueprint has no inheritable permissions yet, so stale-permission cleanup has nothing to remove.
+        blueprintService.ListInheritablePermissionsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            .Returns(new List<(string ResourceAppId, bool ScopesAllAllowed, bool RolesAllAllowed)>());
+
+        return new SetupContext(
+            config: new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                AgentBlueprintId = "blueprint-id",
+                ClientAppId = "client-app-id",
+                DeploymentProjectPath = _tempDir,
+                CustomBlueprintPermissions = customPermissions,
+            },
+            results: new SetupResults(),
+            logger: NullLogger.Instance,
+            configFile: new FileInfo(Path.Combine(_tempDir, "a365.config.json")),
+            generatedConfigPath: Path.Combine(_tempDir, "a365.generated.config.json"),
+            correlationId: "test-correlation-id",
+            skipInfrastructure: true,
+            skipRequirements: true,
+            cancellationToken: CancellationToken.None,
+            configService: Substitute.For<IConfigService>(),
+            executor: executor,
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
+            authValidator: Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, executor),
+            platformDetector: Substitute.ForPartsOf<PlatformDetector>(Substitute.For<ILogger<PlatformDetector>>()),
+            graphApiService: graph,
+            blueprintService: blueprintService,
+            blueprintLookupService: Substitute.ForPartsOf<BlueprintLookupService>(
+                Substitute.For<ILogger<BlueprintLookupService>>(), graph),
+            federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(
+                Substitute.For<ILogger<FederatedCredentialService>>(), graph),
+            clientAppValidator: Substitute.For<IClientAppValidator>(),
+            skipObservabilityPermissions: skipObservabilityPermissions);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BuildPermissionSpecsAsync_StampsObservabilityApiUnlessSkipped(bool skipObservabilityPermissions)
+    {
+        var ctx = BuildPermissionsContext(skipObservabilityPermissions);
+
+        var (specs, _, _, _, _) = await AllSubcommand.BuildPermissionSpecsAsync(ctx);
+
+        specs.Any(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId).Should().Be(!skipObservabilityPermissions,
+            because: "the spec list drives inheritable permissions, app role grants, and admin consent, so skipping Observability permissions must remove Observability API from it");
+        specs.Any(s => s.AppRoleScopes is { Length: > 0 }).Should().Be(!skipObservabilityPermissions,
+            because: "OtelWrite is the only app role setup requests, so skipping it must leave no app role grant that needs a Global Administrator");
+        specs.Should().Contain(s => s.ResourceAppId == PowerPlatformConstants.PowerPlatformApiResourceAppId,
+            because: "skipping Observability API must not drop the other required resources");
+    }
+
+    [Fact]
+    public void ApplyConsentUrlsIfNeeded_WhenObservabilitySkipped_HandsOffOnlyTheRemainingResources()
+    {
+        var ctx = BuildPermissionsContext(skipObservabilityPermissions: true);
+
+        SetupHelpers.ApplyConsentUrlsIfNeeded(
+            ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes, new[] { "McpServers.Mail.All" }, isM365: false);
+
+        ctx.Results.ConsentResourceNames.Should().BeEquivalentTo(new[] { "Microsoft Graph", "Agent 365 Tools", "Power Platform API" },
+            because: "a non-admin run must hand every stamped resource to an administrator, and Observability API is no longer stamped");
+        ctx.Config.ResourceConsents.Should().NotContain(rc => rc.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "no Observability API consent URL may be persisted when its permissions were skipped");
+        ctx.Results.CombinedConsentUrl.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
+            because: "the single hand-off URL must not request Observability API scopes that setup skipped");
+    }
+
+    [Fact]
+    public void ApplyConsentUrlsIfNeeded_AdminRun_ClearsObservabilityConsentUrlSavedByAnEarlierRun()
+    {
+        var ctx = BuildPermissionsContext(skipObservabilityPermissions: true);
+        ctx.Results.TenantWideConsentOutcome = GrantOutcome.Granted;
+        ctx.Config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+            ConsentUrl = "https://login.microsoftonline.com/earlier-non-admin-run",
+            InheritablePermissionsConfigured = true,
+        });
+
+        SetupHelpers.ApplyConsentUrlsIfNeeded(
+            ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes, new[] { "McpServers.Mail.All" }, isM365: false);
+
+        var observability = ctx.Config.ResourceConsents.Should().ContainSingle(
+            rc => rc.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
+            because: "re-running setup does not revoke, so the earlier record is kept").Which;
+        observability.ConsentUrl.Should().BeNull(
+            because: "an admin run must also stop handing out a consent URL that an earlier non-admin run saved for permissions setup no longer requests");
+        observability.InheritablePermissionsConfigured.Should().Be(true,
+            because: "only the URL is cleared; the rest of the earlier record stays");
+        ctx.Results.CombinedConsentUrl.Should().BeNull(
+            because: "consent was granted in this run, so there is nothing to hand off");
+    }
+
+    [Fact]
+    public void ApplyConsentUrlsIfNeeded_AdminRun_CustomObservabilityPermission_KeepsSavedObservabilityConsentUrl()
+    {
+        var ctx = BuildPermissionsContext(
+            skipObservabilityPermissions: true,
+            customPermissions:
+            [
+                new CustomResourcePermission
+                {
+                    ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                    ResourceName = "Observability API",
+                    Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                }
+            ]);
+        ctx.Results.TenantWideConsentOutcome = GrantOutcome.Granted;
+        ctx.Config.ResourceConsents.Add(new ResourceConsent
+        {
+            ResourceName = "Observability API",
+            ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+            ConsentUrl = "https://login.microsoftonline.com/custom-observability",
+            InheritablePermissionsConfigured = true,
+        });
+
+        SetupHelpers.ApplyConsentUrlsIfNeeded(
+            ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes, new[] { "McpServers.Mail.All" }, isM365: false);
+
+        ctx.Config.ResourceConsents.Should().ContainSingle(rc =>
+                rc.ResourceAppId == ConfigConstants.ObservabilityApiAppId &&
+                rc.ConsentUrl == "https://login.microsoftonline.com/custom-observability",
+            because: "custom Observability permissions opt back into the resource, so setup must not clear the saved hand-off URL");
+    }
+
+    public static TheoryData<Agent365Config, bool, string> CustomObservabilityCases() => new()
+    {
+        {
+            new Agent365Config
+            {
+                Environment = "gcc",
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                    }
+                ],
+            },
+            false,
+            "a commercial Observability app ID is not an opt-back-in for a GCC blueprint"
+        },
+        {
+            new Agent365Config
+            {
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        Scopes = ["Agent365.Observability.Read"],
+                    }
+                ],
+            },
+            false,
+            "a custom Observability entry without OtelWrite does not authorize telemetry export"
+        },
+        {
+            new Agent365Config
+            {
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope.ToUpperInvariant()],
+                    }
+                ],
+            },
+            true,
+            "scope names are compared case-insensitively throughout permission handling"
+        },
+        {
+            new Agent365Config
+            {
+                Environment = "gcc",
+                CustomBlueprintPermissions =
+                [
+                    new CustomResourcePermission
+                    {
+                        ResourceAppId = ConfigConstants.GccObservabilityApiAppId,
+                        Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                    }
+                ],
+            },
+            true,
+            "the configured GCC Observability app ID with OtelWrite is an explicit opt-back-in"
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(CustomObservabilityCases))]
+    public void CustomPermissionsRequestObservability_RequiresConfiguredCloudAndOtelWrite(
+        Agent365Config config,
+        bool expected,
+        string because)
+    {
+        SetupHelpers.CustomPermissionsRequestObservability(config).Should().Be(expected, because);
+    }
+
+    [Fact]
+    public void CustomPermissionsRequestObservability_NonObservabilityCustomPermission_DoesNotResolveAmbiguousGovernmentCloud()
+    {
+        var config = new Agent365Config
+        {
+            Environment = "AzureUSGovernment",
+            CustomBlueprintPermissions =
+            [
+                new CustomResourcePermission
+                {
+                    ResourceAppId = AuthenticationConstants.MicrosoftGraphResourceAppId,
+                    Scopes = ["User.Read"],
+                }
+            ],
+        };
+
+        var act = () => SetupHelpers.CustomPermissionsRequestObservability(config);
+
+        act.Should().NotThrow(
+            because: "GetObservabilityApiAppId throws for ambiguous AzureUSGovernment, so it must be resolved only after an Observability custom entry is detected");
+        act().Should().BeFalse(
+            because: "non-Observability custom permissions must not opt back into Observability handling");
+    }
 }

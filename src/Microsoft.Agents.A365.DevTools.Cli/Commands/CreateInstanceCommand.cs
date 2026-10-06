@@ -168,11 +168,12 @@ public class CreateInstanceCommand
                 if (!botApiGrantOk)
                     logger.LogWarning("Failed to create/update oauth2PermissionGrant for agent identity to Messaging Bot API.");
 
+                var observabilityApiAppId = ConfigConstants.GetObservabilityApiAppId(instanceConfig.Environment);
                 var observabilityApiResourceSpObjectId = await graphApiService.EnsureServicePrincipalForAppIdAsync(
                     instanceConfig.TenantId,
-                    ConfigConstants.ObservabilityApiAppId)
+                    observabilityApiAppId)
                     ?? throw new InvalidOperationException(
-                        $"Failed to resolve service principal for Observability API (appId {ConfigConstants.ObservabilityApiAppId}).");
+                        $"Failed to resolve service principal for Observability API (appId {observabilityApiAppId}).");
 
                 // Grant oauth2PermissionGrants: *agent identity SP* -> Observability API SP
                 var observabilityApiGrantOk = await graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(

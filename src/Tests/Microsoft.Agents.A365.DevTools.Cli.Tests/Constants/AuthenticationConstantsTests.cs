@@ -12,6 +12,17 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Constants;
 public class AuthenticationConstantsTests
 {
     [Fact]
+    public void RequiredPermissionGrantScopes_IncludeApplicationAndBlueprintScopes()
+    {
+        AuthenticationConstants.RequiredPermissionGrantScopes.Should().Contain(
+            AuthenticationConstants.ApplicationReadAllScope,
+            because: "permission setup reads applications and service principals before applying grants");
+        AuthenticationConstants.RequiredPermissionGrantScopes.Should().Contain(
+            "AgentIdentityBlueprint.ReadWrite.All",
+            because: "permission setup reads and writes inheritable blueprint permissions");
+    }
+
+    [Fact]
     public void AzureCliClientId_ShouldBeValidGuid()
     {
         Guid.TryParse(AuthenticationConstants.AzureCliClientId, out _).Should().BeTrue();
