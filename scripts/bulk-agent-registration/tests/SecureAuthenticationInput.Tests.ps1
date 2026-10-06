@@ -40,23 +40,20 @@ $wrapperCases = @(
 
 foreach ($case in $wrapperCases) {
 
-    Test-Case "$($case.Name): a SecureString -ClientSecret/-CertificatePassword/-AccessToken all reach the step script as the exact live objects bound on the command line" {
+    Test-Case "$($case.Name): a SecureString -ClientSecret/-CertificatePassword both reach the step script as the exact live objects bound on the command line" {
         $global:A365UpdateWrapperFixtureCalls = [System.Collections.Generic.List[object]]::new()
         $clientSecret = $null
         $certificatePassword = $null
-        $accessToken = $null
         try {
             $clientSecret = New-A365SecureStringMarker -Value 'client-secret-marker'
             $certificatePassword = New-A365SecureStringMarker -Value 'cert-password-marker'
-            $accessToken = New-A365SecureStringMarker -Value 'access-token-marker'
             $splat = @{
-                TenantId             = 'tenant-id'
-                ScriptRoot           = $script:UpdateWrapperFixturesDir
-                ClientId             = 'test-client'
-                ClientSecret         = $clientSecret
-                CertificatePassword  = $certificatePassword
-                AccessToken          = $accessToken
-                Confirm              = $false
+                TenantId            = 'tenant-id'
+                ScriptRoot          = $script:UpdateWrapperFixturesDir
+                ClientId            = 'test-client'
+                ClientSecret        = $clientSecret
+                CertificatePassword = $certificatePassword
+                Confirm             = $false
             }
             $splat[$case.IdParam] = $case.IdValue
 
@@ -65,35 +62,28 @@ foreach ($case in $wrapperCases) {
             Assert-Equal 1 $global:A365UpdateWrapperFixtureCalls.Count "$($case.Name): exactly one call must reach the fixture step script per invocation."
             $call = $global:A365UpdateWrapperFixtureCalls[0]
 
-            # SecureString inputs must remain SecureString values at the step boundary.
             Assert-Equal 'System.Security.SecureString' $call.ClientSecretType "$($case.Name): -ClientSecret must still be a SecureString when it reaches the step script."
             Assert-Equal 'System.Security.SecureString' $call.CertificatePasswordType "$($case.Name): -CertificatePassword must still be a SecureString when it reaches the step script."
-            Assert-Equal 'System.Security.SecureString' $call.AccessTokenType "$($case.Name): -AccessToken must still be a SecureString when it reaches the step script."
-
-            # Wrappers must forward the exact live credential objects.
             Assert-Equal ([System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($clientSecret)) $call.ClientSecretIdentity "$($case.Name): -ClientSecret must reach the step script as the identical object instance, not a copy."
             Assert-Equal ([System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($certificatePassword)) $call.CertificatePasswordIdentity "$($case.Name): -CertificatePassword must reach the step script as the identical object instance, not a copy."
-            Assert-Equal ([System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($accessToken)) $call.AccessTokenIdentity "$($case.Name): -AccessToken must reach the step script as the identical object instance, not a copy."
         }
         finally {
             Remove-Variable -Name A365UpdateWrapperFixtureCalls -Scope Global -ErrorAction SilentlyContinue
             if ($clientSecret) { $clientSecret.Dispose() }
             if ($certificatePassword) { $certificatePassword.Dispose() }
-            if ($accessToken) { $accessToken.Dispose() }
         }
     }
 
-    Test-Case "$($case.Name): a plain string -ClientSecret/-CertificatePassword/-AccessToken remain plain strings at the step script (backward compatibility)" {
+    Test-Case "$($case.Name): a plain string -ClientSecret/-CertificatePassword both remain plain strings at the step script (backward compatibility)" {
         $global:A365UpdateWrapperFixtureCalls = [System.Collections.Generic.List[object]]::new()
         try {
             $splat = @{
-                TenantId             = 'tenant-id'
-                ScriptRoot           = $script:UpdateWrapperFixturesDir
-                ClientId             = 'test-client'
-                ClientSecret         = 'plain-client-secret'
-                CertificatePassword  = 'plain-cert-password'
-                AccessToken          = 'plain-access-token'
-                Confirm              = $false
+                TenantId            = 'tenant-id'
+                ScriptRoot          = $script:UpdateWrapperFixturesDir
+                ClientId            = 'test-client'
+                ClientSecret        = 'plain-client-secret'
+                CertificatePassword = 'plain-cert-password'
+                Confirm             = $false
             }
             $splat[$case.IdParam] = $case.IdValue
 
@@ -101,11 +91,9 @@ foreach ($case in $wrapperCases) {
 
             Assert-Equal 1 $global:A365UpdateWrapperFixtureCalls.Count "$($case.Name): exactly one call must reach the fixture step script per invocation."
             $call = $global:A365UpdateWrapperFixtureCalls[0]
-
             # Plain-string authentication remains backward compatible.
             Assert-Equal 'System.String' $call.ClientSecretType "$($case.Name): a plain string -ClientSecret must still be forwarded as a plain string."
             Assert-Equal 'System.String' $call.CertificatePasswordType "$($case.Name): a plain string -CertificatePassword must still be forwarded as a plain string."
-            Assert-Equal 'System.String' $call.AccessTokenType "$($case.Name): a plain string -AccessToken must still be forwarded as a plain string."
         }
         finally {
             Remove-Variable -Name A365UpdateWrapperFixtureCalls -Scope Global -ErrorAction SilentlyContinue
@@ -233,6 +221,94 @@ Test-Case 'Get-AppOnlyGraphToken rejects an explicit null -ClientSecret before a
     }
     finally {
         Remove-Item -Path Function:\Invoke-RestMethod -ErrorAction SilentlyContinue
+    }
+}
+
+$script:AutomationAppScriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..' 'New-A365AutomationApp.ps1')).ProviderPath
+$automationAuthSource = Get-A365ExtractedFunctionSource -Path $script:AutomationAppScriptPath `
+    -FunctionName @('Connect-GraphSession', 'ConvertTo-SecureStringValue', 'Test-HasProperty')
+. ([scriptblock]::Create($automationAuthSource))
+
+Test-Case 'Connect-GraphSession accepts interactive authentication without a certificate source' {
+    $previousEnvironmentSecret = $env:A365_CLIENT_SECRET
+    $global:A365ConnectMgGraphCalled = $false
+    try {
+        $env:A365_CLIENT_SECRET = $null
+
+        function Get-Module {
+            [CmdletBinding()]
+            param([switch] $ListAvailable, [string] $Name)
+            [pscustomobject]@{ Name = $Name }
+        }
+        function Import-Module {
+            [CmdletBinding()]
+            param([Parameter(Position = 0)] $Name)
+        }
+        function Connect-MgGraph {
+            [CmdletBinding()]
+            param(
+                [switch] $NoWelcome,
+                [string] $TenantId,
+                [string] $ClientId,
+                [string[]] $Scopes,
+                [pscredential] $ClientSecretCredential,
+                [object] $Certificate,
+                [string] $CertificateThumbprint,
+                [switch] $Identity
+            )
+            $global:A365ConnectMgGraphCalled = $true
+        }
+        function Get-MgContext {
+            [pscustomobject]@{
+                TenantId = 'tenant-id'
+                Account = 'operator@contoso.com'
+                AuthType = 'Delegated'
+            }
+        }
+
+        $context = Connect-GraphSession -TenantId 'tenant-id' -Interactive
+
+        Assert-True $global:A365ConnectMgGraphCalled 'Interactive authentication without a certificate must reach Connect-MgGraph.'
+        Assert-Equal 'Interactive' $context.Mode 'Interactive authentication must remain selected when no certificate source is supplied.'
+        Assert-False $context.IsAppOnly 'Interactive authentication must produce a delegated context.'
+    }
+    finally {
+        $env:A365_CLIENT_SECRET = $previousEnvironmentSecret
+        Remove-Item -Path Function:\Get-Module, Function:\Import-Module, Function:\Connect-MgGraph, Function:\Get-MgContext -ErrorAction SilentlyContinue
+        Remove-Variable -Name A365ConnectMgGraphCalled -Scope Global -ErrorAction SilentlyContinue
+    }
+}
+
+$ephemeralPfxScripts = @(
+    'New-A365AgentBlueprint.ps1'
+    'New-A365AgentIdentity.ps1'
+    'New-A365AgentRegistration.ps1'
+    'Remove-A365Blueprint.ps1'
+    'Remove-A365AgentIdentity.ps1'
+    'Remove-A365AgentUser.ps1'
+    'Remove-A365AgentRegistration.ps1'
+)
+
+foreach ($scriptName in $ephemeralPfxScripts) {
+    Test-Case "$scriptName loads authentication PFX private keys ephemerally" {
+        $scriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..' $scriptName)).ProviderPath
+        $source = Get-Content -LiteralPath $scriptPath -Raw
+
+        Assert-True ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet'
+            )) "$scriptName must keep imported authentication private keys in memory instead of persisting them to a user or machine profile."
+        Assert-True ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword, $keyStorageFlags)'
+            )) "$scriptName must apply ephemeral key storage when the PFX is password protected."
+        Assert-True ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, [string]::Empty, $keyStorageFlags)'
+            )) "$scriptName must apply ephemeral key storage when the PFX has no password."
+        Assert-False ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword)'
+            )) "$scriptName must not use the default key store for a password-protected PFX."
+        Assert-False ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx)'
+            )) "$scriptName must not use the default key store for a passwordless PFX."
     }
 }
 

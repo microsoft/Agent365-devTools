@@ -70,6 +70,7 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- Bulk onboarding and update/remove wrappers now use a unified authentication contract that supports client secret, certificate, system-assigned managed identity, and interactive delegated sign-in while removing deprecated token and tool-based authentication paths (#505).
 - `a365 create-instance` now reports an ambiguous government-cloud environment as a configuration error with guidance to select a specific cloud (#478).
 - Setup now warns before replacing a stale stored blueprint ID with the sole application matching the configured display name (#478).
 - Messaging endpoint create and delete overrides now reject non-HTTPS URLs and URLs containing user information, query strings, or fragments (#478).

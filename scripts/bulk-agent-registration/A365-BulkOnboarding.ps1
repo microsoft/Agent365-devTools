@@ -140,9 +140,6 @@
     Authenticate with the host's managed identity, forwarded verbatim to every row's
     orchestrator call.
 
-.PARAMETER AccessToken
-    A pre-acquired Graph access token, forwarded verbatim to every row's orchestrator call.
-
 .PARAMETER Interactive
     Sign in as a user, forwarded verbatim to every row's orchestrator call.
 
@@ -151,7 +148,7 @@
     call.
 
     Exactly one authentication method (-ClientSecret, -CertificateThumbprint, -Certificate,
-    -CertificatePath, -UseManagedIdentity, -AccessToken or -Interactive) must be supplied -
+    -CertificatePath, -UseManagedIdentity, or -Interactive) must be supplied -
     see A365-AutomationOrchestrator.ps1's own help for the full description of each.
 
 .PARAMETER LogPath
@@ -208,7 +205,6 @@ param(
     [string]       $CertificatePath,
     [object]       $CertificatePassword,
     [switch]       $UseManagedIdentity,
-    [object]       $AccessToken,
     [switch]       $Interactive,
     [switch]       $SkipPermissionCheck,
 
@@ -430,15 +426,13 @@ if (-not $shouldRun) {
 }
 
 # ---------------------------------------------------------------------------
-# Real run. Exactly one authentication method is required up front - failing every row
-# with the identical error the orchestrator would give is no more informative than failing
-# once here, and this way nothing is attempted at all. Skipped for the test invoker, which
-# supplies its own fake authentication surface.
+# Real run. Validate that exactly one supported authentication method is selected before any
+# row is attempted. Skipped for the test invoker, which supplies its own fake auth surface.
 # ---------------------------------------------------------------------------
 
 $authSplat = @{}
 foreach ($k in 'ClientId', 'ClientSecret', 'CertificateThumbprint', 'Certificate', 'CertificatePath',
-               'CertificatePassword', 'UseManagedIdentity', 'AccessToken', 'Interactive', 'SkipPermissionCheck') {
+               'CertificatePassword', 'UseManagedIdentity', 'Interactive', 'SkipPermissionCheck') {
     if ($PSBoundParameters.ContainsKey($k)) { $authSplat[$k] = $PSBoundParameters[$k] }
 }
 if (-not $OrchestratorInvoker) {
@@ -449,22 +443,35 @@ if (-not $OrchestratorInvoker) {
     try {
         $authModes = @()
         if ($Interactive) { $authModes += 'Interactive' }
-        if ($AccessToken) { $authModes += 'AccessToken' }
         if ($UseManagedIdentity) { $authModes += 'ManagedIdentity' }
         if ($CertificateThumbprint -or $Certificate -or $CertificatePath) { $authModes += 'Certificate' }
         if ($ClientSecret -or $env:A365_CLIENT_SECRET) { $authModes += 'ClientSecret' }
         if ($authModes.Count -eq 0) {
-            throw 'No authentication method was specified. Pass -ClientId with -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath (or use -UseManagedIdentity / -AccessToken), or pass -Interactive to sign in as a user.'
+            throw 'No authentication method was specified. Pass -ClientId with -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath (or use -UseManagedIdentity), or pass -Interactive to sign in as a user.'
         }
         if ($authModes.Count -gt 1) {
             throw "Conflicting authentication options ($($authModes -join ', ')). Supply exactly one."
         }
-        # New-A365AgentUser.ps1 is client-credentials only (mirrors the orchestrator's own
-        # precondition). Every AgentUser row would fail identically, so refuse once, up front,
-        # instead of once per row.
-        $isAppOnly = $authModes[0] -in @('ClientSecret', 'Certificate', 'ManagedIdentity')
-        if (-not $isAppOnly -and @($plan.Nodes | Where-Object { $_.ObjectType -eq 'AgentUser' }).Count -gt 0) {
-            throw "The CSV has AgentUser row(s), which require app-only authentication, but this run authenticates as '$($authModes[0])'. Re-run with -ClientId plus -ClientSecret / -CertificateThumbprint / -UseManagedIdentity."
+        $certificateSourceCount = @(
+            [bool]$CertificateThumbprint,
+            ($null -ne $Certificate),
+            [bool]$CertificatePath
+        ).Where({ $_ }).Count
+        if ($certificateSourceCount -gt 1) {
+            throw 'Supply exactly one certificate source: -CertificateThumbprint, -Certificate, or -CertificatePath.'
+        }
+        if ($CertificatePassword -and (-not $CertificatePath)) {
+            throw '-CertificatePassword can be used only with -CertificatePath.'
+        }
+        if (($authModes[0] -in @('ClientSecret', 'Certificate')) -and [string]::IsNullOrWhiteSpace($ClientId)) {
+            throw "-ClientId is required for $($authModes[0]) authentication."
+        }
+        if ($UseManagedIdentity -and (-not [string]::IsNullOrWhiteSpace($ClientId))) {
+            throw '-UseManagedIdentity supports only the system-assigned managed identity; do not pass -ClientId.'
+        }
+        if ($Interactive -and [string]::IsNullOrWhiteSpace($ClientId) -and
+            @($plan.Nodes | Where-Object ObjectType -eq 'AgentUser').Count -gt 0) {
+            throw '-ClientId is required for interactive AgentUser onboarding because the caller-controlled public client must be authorized for the AgentUser preview scopes.'
         }
     }
     catch {
