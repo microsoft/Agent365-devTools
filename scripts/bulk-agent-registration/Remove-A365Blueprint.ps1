@@ -975,9 +975,18 @@ if ($dependents -gt 0) {
         }
     }
 
-    $commonArgs = @{ Force = $true }
+    $identityIds = @($identities | ForEach-Object { [string](Get-Value $_ 'id' '') } | Where-Object { $_ })
+    $userIds     = @($agentUsers | ForEach-Object { [string](Get-Value $_ 'id' '') } | Where-Object { $_ })
+
+    if ([string]::IsNullOrWhiteSpace($ctxTenant)) {
+        throw 'The connected Graph context did not provide a tenant ID, so the dependent removal scripts cannot be invoked safely.'
+    }
+    if ($mode -eq 'Interactive' -and $userIds.Count -gt 0 -and [string]::IsNullOrWhiteSpace($ClientId)) {
+        throw '-ClientId is required for an interactive blueprint cascade that removes AgentUsers because the caller-controlled public client must be authorized for the AgentUser preview scopes.'
+    }
+
+    $commonArgs = @{ Force = $true; TenantId = $ctxTenant }
     if ($Permanent)         { $commonArgs.Permanent         = $true }
-    if ($TenantId)          { $commonArgs.TenantId          = $TenantId }
     if ($ClientId)          { $commonArgs.ClientId          = $ClientId }
     if ($Interactive)       { $commonArgs.Interactive       = $true }
     if ($UseManagedIdentity){ $commonArgs.UseManagedIdentity = $true }
@@ -990,9 +999,6 @@ if ($dependents -gt 0) {
     if ($LogPath)           { $commonArgs.LogPath           = $LogPath }
     if ($LogIncludeSecrets) { $commonArgs.LogIncludeSecrets = $true }
     if ($LogCorrelationId)  { $commonArgs.LogCorrelationId  = $LogCorrelationId }
-
-    $identityIds = @($identities | ForEach-Object { [string](Get-Value $_ 'id' '') } | Where-Object { $_ })
-    $userIds     = @($agentUsers | ForEach-Object { [string](Get-Value $_ 'id' '') } | Where-Object { $_ })
 
     if ($PSCmdlet.ShouldProcess("$($identities.Count) agent identities and $($agentUsers.Count) agent users under '$appName'", 'Delete')) {
         if ($userIds.Count -gt 0) {

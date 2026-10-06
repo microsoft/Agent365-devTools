@@ -1160,14 +1160,13 @@ function Get-InteractiveDelegatedScopes {
             'AgentIdentity.Read.All',
             'AgentIdentity.ReadWrite.All',
             'AgentIdUser.ReadWrite.All',
-            'LicenseAssignment.ReadWrite.All',
-            'DelegatedPermissionGrant.ReadWrite.All',
-            'AppRoleAssignment.ReadWrite.All')) {
+            'LicenseAssignment.ReadWrite.All')) {
         $null = $scopes.Add($scope)
     }
 
     if ($ConfigurePermissions) {
         $null = $scopes.Add('Application.ReadWrite.All')
+        $null = $scopes.Add('AppRoleAssignment.ReadWrite.All')
     }
 
     return @($scopes)

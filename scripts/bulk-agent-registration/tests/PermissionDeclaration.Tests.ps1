@@ -98,7 +98,6 @@ function New-A365DeclarationFixture {
         'AgentIdentity.ReadWrite.All',
         'AgentIdUser.ReadWrite.All',
         'LicenseAssignment.ReadWrite.All',
-        'DelegatedPermissionGrant.ReadWrite.All',
         'AppRoleAssignment.ReadWrite.All'
     )
     $agentUserScopes = @()
@@ -601,6 +600,10 @@ Test-Case 'AgentUser scenario requests delegated scopes even when registration d
         Assert-True (@($json.delegatedScopesRequested | Where-Object { $_ -eq $scope }).Count -gt 0) `
             "AgentUser scenario must request delegated scope '$scope'."
     }
+    Assert-False (@($json.delegatedScopesRequested | Where-Object {
+                $_ -eq 'DelegatedPermissionGrant.ReadWrite.All'
+            }).Count -gt 0) `
+        'AgentUser declarations must not include a delegated-grant scope that provisioning never uses.'
 
     $publicClientPatch = @($state.Calls | Where-Object {
             $_.Method -eq 'PATCH' -and

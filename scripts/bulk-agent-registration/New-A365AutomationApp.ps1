@@ -1066,7 +1066,7 @@ $script:RegistrationDelegatedScopes = @(
 )
 
 # New-A365AgentUser.ps1 can run interactively (delegated), so these scopes are declared on the
-# automation app for the user-create/update/manager/license and per-identity consent operations.
+# automation app for routine provisioning and optional permission bootstrap operations.
 $script:AgentUserDelegatedScopes = @(
     'User.Read'
     'User.Read.All'
@@ -1078,7 +1078,6 @@ $script:AgentUserDelegatedScopes = @(
     'AgentIdentity.ReadWrite.All'
     'AgentIdUser.ReadWrite.All'
     'LicenseAssignment.ReadWrite.All'
-    'DelegatedPermissionGrant.ReadWrite.All'
     'AppRoleAssignment.ReadWrite.All'
 )
 
