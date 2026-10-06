@@ -279,4 +279,37 @@ Test-Case 'Connect-GraphSession accepts interactive authentication without a cer
     }
 }
 
+$ephemeralPfxScripts = @(
+    'New-A365AgentBlueprint.ps1'
+    'New-A365AgentIdentity.ps1'
+    'New-A365AgentRegistration.ps1'
+    'Remove-A365Blueprint.ps1'
+    'Remove-A365AgentIdentity.ps1'
+    'Remove-A365AgentUser.ps1'
+    'Remove-A365AgentRegistration.ps1'
+)
+
+foreach ($scriptName in $ephemeralPfxScripts) {
+    Test-Case "$scriptName loads authentication PFX private keys ephemerally" {
+        $scriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..' $scriptName)).ProviderPath
+        $source = Get-Content -LiteralPath $scriptPath -Raw
+
+        Assert-True ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet'
+            )) "$scriptName must keep imported authentication private keys in memory instead of persisting them to a user or machine profile."
+        Assert-True ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword, $keyStorageFlags)'
+            )) "$scriptName must apply ephemeral key storage when the PFX is password protected."
+        Assert-True ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, [string]::Empty, $keyStorageFlags)'
+            )) "$scriptName must apply ephemeral key storage when the PFX has no password."
+        Assert-False ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword)'
+            )) "$scriptName must not use the default key store for a password-protected PFX."
+        Assert-False ($source.Contains(
+                '[System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx)'
+            )) "$scriptName must not use the default key store for a passwordless PFX."
+    }
+}
+
 Get-A365TestResults

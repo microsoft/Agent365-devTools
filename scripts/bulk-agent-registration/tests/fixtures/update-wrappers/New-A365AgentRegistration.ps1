@@ -29,7 +29,8 @@ param(
     [object] $Certificate,
     [string] $CertificatePath,
     [object] $CertificatePassword,
-    [switch] $UseManagedIdentity,    [switch] $Interactive,
+    [switch] $UseManagedIdentity,
+    [switch] $Interactive,
     [switch] $SkipPermissionCheck
 )
 

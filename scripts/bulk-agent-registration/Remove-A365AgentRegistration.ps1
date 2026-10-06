@@ -1049,11 +1049,12 @@ $connect = @{ NoWelcome = $true; ErrorAction = 'Stop' }
                     throw "Certificate file not found: $CertificatePath"
                 }
                 $pfx = (Resolve-Path -LiteralPath $CertificatePath).ProviderPath
+                $keyStorageFlags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
                 $connect.Certificate = if ($CertificatePassword) {
-                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword)
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword, $keyStorageFlags)
                 }
                 else {
-                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx)
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, [string]::Empty, $keyStorageFlags)
                 }
             }
             else {
