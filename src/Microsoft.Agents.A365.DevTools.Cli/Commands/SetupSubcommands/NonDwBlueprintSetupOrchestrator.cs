@@ -139,12 +139,14 @@ internal static class NonDwBlueprintSetupOrchestrator
         if (observabilityPermissionsEffectivelySkipped)
             logger.LogInformation(sub + "Observability API not requested (registered agents export telemetry with an app-only token)");
 
-        // 4. Blueprint Permission Grants — per authMode. The consent URL targets the blueprint
-        //    app, and S2S app-role assignments are persisted as grants flowing from the blueprint;
+        // 4. Blueprint Permission Grants. authMode controls delegated grants, while fixed S2S
+        //    app-role assignments are persisted on the blueprint whenever the specs require them;
         //    grouping here keeps all blueprint-side rows (2 Blueprint, 3 Inheritable Permissions,
         //    4 Blueprint Permission Grants) contiguous.
         if (effectiveMode is "obo")
-            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)");
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (!fixedSpecsHaveAppRoles
+                ? "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)"
+                : $"delegated grants for the signed-in principal + S2S app roles — attempted programmatically; {AuthenticationConstants.S2SGrantRequiredRoles} required for S2S if 403"));
         else if (effectiveMode is "s2s")
             logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (!fixedSpecsHaveAppRoles
                 ? "not required  (no S2S app roles to grant)"

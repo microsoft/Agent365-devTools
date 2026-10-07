@@ -158,6 +158,27 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     /// <summary>
+    /// OBO mode still grants fixed application roles on the blueprint independently of the
+    /// principal-scoped delegated grants applied to the agent identity.
+    /// </summary>
+    [Theory]
+    [InlineData("obo")]
+    [InlineData(null)]
+    public void PrintDryRunPlan_AuthModeObo_ShowsDefenderApplicationRoleGrantOnBlueprint(string? authMode)
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(
+            BuildConfig(),
+            _logger,
+            authMode: authMode,
+            skipObservabilityPermissions: true);
+
+        AnyLogContains("delegated grants for the signed-in principal + S2S app roles").Should().BeTrue(
+            because: "the blueprint receives the Defender application role in OBO mode even though the agent identity uses delegated grants");
+        AnyLogContains("Global Administrator required for S2S if 403").Should().BeTrue(
+            because: "a non-admin dry run must surface the administrative handoff required for the Defender application role");
+    }
+
+    /// <summary>
     /// S2S mode must show application permissions on the agent identity SP and must not show
     /// delegated grants — there is no user context in S2S so delegated scopes don't apply.
     /// authMode only affects the agent-identity step; the blueprint step is independent.
