@@ -906,6 +906,30 @@ public class BatchPermissionsOrchestratorTests : IDisposable
             because: "a GCC rerun must replace stale commercial Observability state");
     }
 
+    [Fact]
+    public void UpdateResourceConsents_ApplicationOnlySpec_DoesNotRecordDelegatedConsent()
+    {
+        var config = new Agent365Config();
+        var specs = new[]
+        {
+            new ResourcePermissionSpec(
+                ConfigConstants.DefenderApiAppId,
+                "Defender API",
+                [],
+                SetInheritable: true,
+                AppRoleScopes: [ConfigConstants.DefenderApiRealtimeProtectionScope]),
+        };
+        var inheritedResults = new Dictionary<string, (bool configured, bool alreadyExisted)>
+        {
+            [ConfigConstants.DefenderApiAppId] = (true, false),
+        };
+
+        BatchPermissionsOrchestrator.UpdateResourceConsents(config, specs, inheritedResults);
+
+        config.ResourceConsents.Should().BeEmpty(
+            because: "application-role outcomes are tracked separately and must not be persisted as verified delegated consent with an empty scope list");
+    }
+
     /// <summary>
     /// Non-admin path: GrantAdminConsentAsync builds the unified consent URL via the catch-all
     /// spec loop and returns it for hand-off. When a spec's appId is in knownMcpAudienceAppIds,

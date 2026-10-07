@@ -30,7 +30,7 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 
 #### Existing agents: grant Defender API permissions
 
-Agents provisioned before this release need `RealtimeProtection.Evaluate.All` on the blueprint app for the Defender security integration: **delegated** for `--authmode obo`, **application** for `--authmode s2s`, or both for `--authmode both`. Re-run `a365 setup all --authmode <mode>` as a Global Administrator; this stamps the Defender inheritable-permission entry and grants the permission required by that auth mode. Adding only the API permission in the Entra portal is insufficient for older blueprints that do not yet have the Defender inheritable-permission entry.
+Agents provisioned before this release should have a Global Administrator re-run `a365 setup all --authmode <mode>` to stamp Defender inheritance and grant `RealtimeProtection.Evaluate.All` as delegated for `obo`, application for `s2s`, or both for `both`, because portal-only grants do not add inheritance to older blueprints.
 
 ### Added
 

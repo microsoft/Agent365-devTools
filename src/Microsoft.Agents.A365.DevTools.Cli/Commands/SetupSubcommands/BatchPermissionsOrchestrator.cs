@@ -960,7 +960,10 @@ internal static class BatchPermissionsOrchestrator
         IReadOnlyList<ResourcePermissionSpec> specs,
         Dictionary<string, (bool configured, bool alreadyExisted)> inheritedResults)
     {
-        var configuredObservabilityAppIds = specs
+        var delegatedSpecs = specs
+            .Where(spec => spec.Scopes.Length > 0)
+            .ToList();
+        var configuredObservabilityAppIds = delegatedSpecs
             .Where(spec => ConfigConstants.IsObservabilityApiAppId(spec.ResourceAppId))
             .Select(spec => spec.ResourceAppId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -972,7 +975,7 @@ internal static class BatchPermissionsOrchestrator
                 !configuredObservabilityAppIds.Contains(resourceConsent.ResourceAppId));
         }
 
-        foreach (var spec in specs)
+        foreach (var spec in delegatedSpecs)
         {
             inheritedResults.TryGetValue(spec.ResourceAppId, out var inherited);
 
