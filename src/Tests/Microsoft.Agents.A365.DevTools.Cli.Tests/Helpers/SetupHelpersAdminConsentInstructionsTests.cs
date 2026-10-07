@@ -162,6 +162,26 @@ public class SetupHelpersAdminConsentInstructionsTests
                 because: "manual GCC consent instructions must target the GCC Observability resource");
     }
 
+    [Theory]
+    [InlineData("Delegated", true, false)]
+    [InlineData("Application", false, true)]
+    [InlineData("Both", true, true)]
+    public void GetNonDwAdminConsentSpecs_DefenderPermissionsMatchAuthMode(
+        string modeName,
+        bool expectDelegated,
+        bool expectApplication)
+    {
+        var mode = Enum.Parse<DefenderPermissionMode>(modeName);
+        var specs = SetupHelpers.GetNonDwAdminConsentSpecs("prod", mode)
+            .Where(spec => spec.ResourceName == "Defender API")
+            .ToList();
+
+        specs.Any(spec => spec.PermissionType == "Delegated").Should().Be(expectDelegated,
+            because: $"{mode} must include delegated Defender consent exactly when OBO is enabled");
+        specs.Any(spec => spec.PermissionType == "Application").Should().Be(expectApplication,
+            because: $"{mode} must include the Defender app role exactly when S2S is enabled");
+    }
+
     [Fact]
     public void NonDwAdminConsentSpecs_PowerPlatformApi_IsDelegatedOnly()
     {

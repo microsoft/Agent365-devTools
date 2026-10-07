@@ -84,9 +84,11 @@ internal static class BatchPermissionsOrchestrator
             return (true, true, true, null);
         }
 
-        // Filter out specs with no scopes — they would produce empty OAuth2 grants (HTTP 400).
-        // This can happen when the MCP manifest is missing or contains no required scopes.
-        var effectiveSpecs = specs.Where(s => s.Scopes.Length > 0).ToList();
+        // Application-only specs must remain so S2S mode can assign app roles without creating
+        // an empty OAuth2 grant.
+        var effectiveSpecs = specs
+            .Where(s => s.Scopes.Length > 0 || s.AppRoleScopes is { Length: > 0 })
+            .ToList();
         if (setupResults is not null)
         {
             setupResults.ObservabilityResourceAppId = effectiveSpecs
@@ -97,12 +99,12 @@ internal static class BatchPermissionsOrchestrator
         if (effectiveSpecs.Count < specs.Count)
         {
             var skipped = specs.Count - effectiveSpecs.Count;
-            logger.LogDebug("Skipping {Count} resource spec(s) with no scopes (manifest missing or empty).", skipped);
+            logger.LogDebug("Skipping {Count} resource spec(s) with no delegated scopes or application roles.", skipped);
         }
 
         if (effectiveSpecs.Count == 0)
         {
-            logger.LogInformation("All permission specs have empty scope lists — skipping batch permissions configuration.");
+            logger.LogInformation("All permission specs have empty delegated scope and application role lists — skipping batch permissions configuration.");
             return (true, true, true, null);
         }
 
@@ -415,12 +417,16 @@ internal static class BatchPermissionsOrchestrator
                 continue;
             }
 
+            var permissionValues = spec.Scopes
+                .Concat(spec.AppRoleScopes ?? Array.Empty<string>())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             logger.LogDebug(
-                "   - Configuring inheritable permissions: {ResourceName} [{Scopes}]",
-                spec.ResourceName, string.Join(' ', spec.Scopes));
+                "   - Configuring inheritable permissions: {ResourceName} [{Permissions}]",
+                spec.ResourceName, string.Join(' ', permissionValues));
 
             var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
-                tenantId, blueprintAppId, spec.ResourceAppId, spec.Scopes,
+                tenantId, blueprintAppId, spec.ResourceAppId, permissionValues,
                 requiredScopes: permScopes, ct);
 
             if (alreadyExists || ok)

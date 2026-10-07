@@ -432,6 +432,69 @@ public class SetupHelpersDisplaySetupSummaryTests
     }
 
     [Fact]
+    public void DisplaySetupSummary_NonDwAdminConsentPending_PrefersFilteredAdminConsentUrl()
+    {
+        var logger = new CapturingLogger();
+        const string filteredUrl = "https://login.microsoftonline.com/tenant/v2.0/adminconsent?scope=filtered";
+        const string reconstructedUrl = "https://login.microsoftonline.com/tenant/v2.0/adminconsent?scope=includes-missing-defender";
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            AdminConsentUrl = filteredUrl,
+            CombinedConsentUrl = reconstructedUrl,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(filteredUrl,
+            because: "the orchestrator URL excludes unresolved service principals and is the only safe primary handoff");
+        logger.AllOutput.Should().NotContain(reconstructedUrl,
+            because: "a reconstructed URL can reintroduce a missing resource and fail the entire consent request");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_NonDwGccS2sPending_UsesPendingCloudSpecificSpec()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.S2s,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+            BlueprintS2SOutcome = Cli.Models.GrantOutcome.Failed,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+        };
+        results.PendingBlueprintAppRoleSpecs.Add(new ResourcePermissionSpec(
+            ConfigConstants.GccObservabilityApiAppId,
+            "Observability API",
+            [],
+            SetInheritable: true,
+            AppRoleScopes: [ConfigConstants.ObservabilityApiOtelWriteScope]));
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(ConfigConstants.GccObservabilityApiAppId,
+            because: "manual S2S recovery must use the cloud-aware resource from the failed permission spec");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
+            because: "GCC recovery must not target the commercial Observability application");
+    }
+
+    [Fact]
     public void DisplaySetupSummary_NonDwAdminConsentPending_NoConsentUrl_FallsBackToPortalWalkthrough()
     {
         var logger = new CapturingLogger();

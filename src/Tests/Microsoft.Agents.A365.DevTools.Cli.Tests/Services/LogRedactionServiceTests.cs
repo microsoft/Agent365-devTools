@@ -108,6 +108,17 @@ public class LogRedactionServiceTests
     }
 
     [Fact]
+    public void Redact_DefenderResourceAppId_IsPreserved()
+    {
+        var result = _sut.Redact($"[INF] Defender resource: {ConfigConstants.DefenderApiAppId}", Source);
+
+        result.RedactedContent.Should().Contain(ConfigConstants.DefenderApiAppId,
+            because: "the public Defender resource ID must remain visible for support diagnostics");
+        result.IdsRedacted.Should().Be(0,
+            because: "a well-known first-party resource ID does not identify a tenant or user");
+    }
+
+    [Fact]
     public void Redact_SameGuidAppearsMultipleTimes_SameAliasUsed()
     {
         var guid = "48e7c63c-15f8-42ff-9df9-7adb43889e34";

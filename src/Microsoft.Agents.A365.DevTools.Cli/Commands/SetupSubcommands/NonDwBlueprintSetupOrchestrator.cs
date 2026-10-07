@@ -36,6 +36,16 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null, bool skipObservabilityPermissions = false)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
+        var selectedAuthMode = authMode ?? config.AuthMode;
+        var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
+            ? "obo"
+            : selectedAuthMode.Trim().ToLowerInvariant();
+        var defenderPermissionMode = effectiveMode switch
+        {
+            "s2s" => DefenderPermissionMode.Application,
+            "both" => DefenderPermissionMode.Both,
+            _ => DefenderPermissionMode.Delegated,
+        };
         var observabilityPermissionsEffectivelySkipped =
             skipObservabilityPermissions && !SetupHelpers.CustomPermissionsRequestObservability(config);
         // Dry-run S2S work comes only from fixed specs today; MCP and custom specs carry delegated scopes.
@@ -43,7 +53,8 @@ internal static class NonDwBlueprintSetupOrchestrator
             setInheritable: true,
             isM365,
             config.Environment,
-            includeObservability: !skipObservabilityPermissions)
+            includeObservability: !skipObservabilityPermissions,
+            defenderPermissionMode)
             .Any(s => s.AppRoleScopes is { Length: > 0 });
         // --messaging-endpoint flag (if supplied) wins over the init-only config value for the plan.
         var plannedEndpoint = !string.IsNullOrWhiteSpace(messagingEndpointOverride)
@@ -128,10 +139,6 @@ internal static class NonDwBlueprintSetupOrchestrator
 
         // 3. Inheritable Permissions — the non-DW spec set is stamped on the blueprint so MAC and
         //    dependent systems can see it. The same set is applied to the agent identity SP in step 5.
-        var selectedAuthMode = authMode ?? config.AuthMode;
-        var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
-            ? "obo"
-            : selectedAuthMode.Trim().ToLowerInvariant();
         logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for {Resources} (Global Administrator required; consent URL printed if absent)",
             skipObservabilityPermissions
                 ? "Defender API, Power Platform API, and custom permissions"
@@ -139,14 +146,12 @@ internal static class NonDwBlueprintSetupOrchestrator
         if (observabilityPermissionsEffectivelySkipped)
             logger.LogInformation(sub + "Observability API not requested (registered agents export telemetry with an app-only token)");
 
-        // 4. Blueprint Permission Grants. authMode controls delegated grants, while fixed S2S
-        //    app-role assignments are persisted on the blueprint whenever the specs require them;
+        // 4. Blueprint Permission Grants — Defender follows authMode; other permission specs retain
+        //    their configured grant types.
         //    grouping here keeps all blueprint-side rows (2 Blueprint, 3 Inheritable Permissions,
         //    4 Blueprint Permission Grants) contiguous.
         if (effectiveMode is "obo")
-            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (!fixedSpecsHaveAppRoles
-                ? "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)"
-                : $"delegated grants for the signed-in principal + S2S app roles — attempted programmatically; {AuthenticationConstants.S2SGrantRequiredRoles} required for S2S if 403"));
+            logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + "delegated grants — attempted programmatically for the signed-in principal (403 may indicate additional delegated consent or permissions are required)");
         else if (effectiveMode is "s2s")
             logger.LogInformation(SetupHelpers.DryRunRow(4, "Blueprint Permission Grants") + (!fixedSpecsHaveAppRoles
                 ? "not required  (no S2S app roles to grant)"
@@ -285,6 +290,11 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
         ctx.Results.IsNonDwBlueprintFlow = true;
+        ctx.Results.EffectiveAuthMode = ctx.IsBothMode
+            ? Models.AuthMode.Both
+            : ctx.IsS2sMode
+                ? Models.AuthMode.S2s
+                : Models.AuthMode.Obo;
         ctx.Results.ObservabilityPermissionsSkipped = ctx.ObservabilityPermissionsEffectivelySkipped;
         ctx.Results.TenantId = ctx.Config.TenantId;
         // Bootstrap already printed the "Running..." banner before auth steps; skip here to avoid duplication.
@@ -468,9 +478,14 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Skipped when --agent-registration-only: identity result flags are pre-set by the caller.
         if (!skipIdentityAndPermissions)
         {
-            // Record the auth mode and whether any S2S app role is requested before identity creation,
-            // so the summary stays accurate when the identity step fails.
-            ctx.Results.EffectiveAuthMode = ctx.IsBothMode ? Models.AuthMode.Both : ctx.IsS2sMode ? Models.AuthMode.S2s : Models.AuthMode.Obo;
+            // Keep direct callers of this phase aligned with the top-level orchestrator.
+            ctx.Results.EffectiveAuthMode = ctx.IsBothMode
+                ? Models.AuthMode.Both
+                : ctx.IsS2sMode
+                    ? Models.AuthMode.S2s
+                    : Models.AuthMode.Obo;
+            // Record whether the selected auth mode produced application permissions before
+            // identity creation so the summary stays accurate when that step fails.
             if (ctx.IsS2sMode || ctx.IsBothMode)
                 ctx.Results.NoS2SAppRolesToGrant = !specs.Any(s => s.AppRoleScopes is { Length: > 0 });
 

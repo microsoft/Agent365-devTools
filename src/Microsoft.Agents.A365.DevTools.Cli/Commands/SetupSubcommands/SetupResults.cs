@@ -201,8 +201,8 @@ public class SetupResults
 
     /// <summary>
     /// The effective --authmode value used during the non-DW grant step.
-    /// Null when the non-DW grant step was not reached (e.g. agent identity creation failed) or
-    /// when the run is a DW (AI Teammate) flow — DW does not use --authmode.
+    /// Set at the start of a non-DW run so permission construction and failure summaries share the
+    /// same mode. Null for DW (AI Teammate) flows, which do not use --authmode.
     /// Used by DisplaySetupSummary to compute per-grant-type completion for the "both" mode and to
     /// derive which Action Required items apply.
     /// </summary>

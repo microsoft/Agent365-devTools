@@ -312,12 +312,12 @@ public class BatchPermissionsOrchestratorTests : IDisposable
             .Returns(Task.FromResult((ok: false, alreadyExists: false, error: (string?)"Insufficient privileges")));
     }
 
-    private static ResourcePermissionSpec[] S2SSpec() =>
+    private static ResourcePermissionSpec[] S2SSpec(bool includeDelegatedScope = true) =>
     [
         new ResourcePermissionSpec(
             ConfigConstants.ObservabilityApiAppId,
             "Observability API",
-            new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
+            includeDelegatedScope ? new[] { ConfigConstants.ObservabilityApiOtelWriteScope } : [],
             SetInheritable: false,
             AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope })
     ];
@@ -501,8 +501,11 @@ public class BatchPermissionsOrchestratorTests : IDisposable
     /// DisplaySetupSummary surfaces the S2S hand-off block in the Action Required section —
     /// just like it does for a GA whose Graph API call returns 403.
     /// </summary>
-    [Fact]
-    public async Task ConfigureAllPermissions_NonAdmin_WithS2SSpecs_SetsBlueprintS2SOutcomeFailed()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ConfigureAllPermissions_NonAdmin_WithS2SSpecs_SetsBlueprintS2SOutcomeFailed(
+        bool includeDelegatedScope)
     {
         // Arrange
         _graph.GraphGetAsync(
@@ -534,13 +537,13 @@ public class BatchPermissionsOrchestratorTests : IDisposable
             _graph, _blueprintService,
             new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId },
             blueprintAppId: S2SBlueprintAppId, tenantId: S2STenantId,
-            specs: S2SSpec(), _logger, setupResults, ct: default);
+            specs: S2SSpec(includeDelegatedScope), _logger, setupResults, ct: default);
 
         // Assert
         setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
             because: "a non-admin user cannot complete S2S app role assignment directly — the outcome must be marked Failed so DisplaySetupSummary surfaces the hand-off block");
         setupResults.PendingBlueprintAppRoleSpecs.Should().ContainSingle(s => s.ResourceAppId == ConfigConstants.ObservabilityApiAppId,
-            because: "a non-admin run leaves every requested app role for the summary's hand-off");
+            because: "a non-admin run leaves every requested app role for the summary's hand-off, including application-only specs");
     }
 
     // ──────────────────────────────────────────────────────────────────────────────────────

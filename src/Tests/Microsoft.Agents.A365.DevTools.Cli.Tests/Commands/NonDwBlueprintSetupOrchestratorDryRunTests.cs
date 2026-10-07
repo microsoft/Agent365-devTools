@@ -145,9 +145,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     // ── authMode dry-run output ────────────────────────────────────────────────
 
     /// <summary>
-    /// OBO mode must show delegated (principal-scoped) grants on the agent identity SP.
-    /// authMode controls only the agent-identity grant style; the blueprint step is independent
-    /// and always uses AllPrincipals grants on the blueprint (issue #417).
+    /// OBO mode must show delegated grants without a Defender application-role handoff.
     /// </summary>
     [Fact]
     public void PrintDryRunPlan_AuthModeObo_ShowsDelegatedGrantsOnAgentIdentity()
@@ -158,13 +156,12 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     /// <summary>
-    /// OBO mode still grants fixed application roles on the blueprint independently of the
-    /// principal-scoped delegated grants applied to the agent identity.
+    /// OBO mode requests the Defender delegated permission only.
     /// </summary>
     [Theory]
     [InlineData("obo")]
     [InlineData(null)]
-    public void PrintDryRunPlan_AuthModeObo_ShowsDefenderApplicationRoleGrantOnBlueprint(string? authMode)
+    public void PrintDryRunPlan_AuthModeObo_OmitsDefenderApplicationRoleGrant(string? authMode)
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(
             BuildConfig(),
@@ -172,16 +169,18 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
             authMode: authMode,
             skipObservabilityPermissions: true);
 
-        AnyLogContains("delegated grants for the signed-in principal + S2S app roles").Should().BeTrue(
-            because: "the blueprint receives the Defender application role in OBO mode even though the agent identity uses delegated grants");
-        AnyLogContains("Global Administrator required for S2S if 403").Should().BeTrue(
-            because: "a non-admin dry run must surface the administrative handoff required for the Defender application role");
+        AnyLogContains("delegated grants").Should().BeTrue(
+            because: "OBO mode requires the Defender delegated permission");
+        AnyLogContains("S2S app roles").Should().BeFalse(
+            because: "OBO mode must not request the Defender application role");
+        AnyLogContains("Global Administrator required for S2S if 403").Should().BeFalse(
+            because: "OBO mode has no Defender application-role handoff");
     }
 
     /// <summary>
     /// S2S mode must show application permissions on the agent identity SP and must not show
     /// delegated grants — there is no user context in S2S so delegated scopes don't apply.
-    /// authMode only affects the agent-identity step; the blueprint step is independent.
+    /// Defender follows authMode on both the blueprint and agent identity.
     /// </summary>
     [Fact]
     public void PrintDryRunPlan_AuthModeS2s_ShowsAppPermsOnAgentIdentity_NoDelegatedGrants()
