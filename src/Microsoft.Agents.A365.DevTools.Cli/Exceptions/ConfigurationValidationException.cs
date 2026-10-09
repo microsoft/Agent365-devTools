@@ -55,7 +55,7 @@ public class ConfigurationValidationException : Agent365Exception
             if ((fieldLower.Contains("tenantid") || error.Message.ToLowerInvariant().Contains("guid"))
                 && !contextualHelp.Any(h => h.Contains("GUID")))
             {
-                contextualHelp.Add("TenantId: Must be a valid GUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)");
+                contextualHelp.Add("GUID values must use the format xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx");
             }
         }
 
@@ -63,7 +63,7 @@ public class ConfigurationValidationException : Agent365Exception
         {
             steps.Add("");
             steps.Add("Common Azure naming rules:");
-            steps.AddRange(contextualHelp.Select(h => $"  � {h}"));
+            steps.AddRange(contextualHelp.Select(h => $"  - {h}"));
             steps.Add("");
             steps.Add("See Azure naming conventions: https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules");
         }

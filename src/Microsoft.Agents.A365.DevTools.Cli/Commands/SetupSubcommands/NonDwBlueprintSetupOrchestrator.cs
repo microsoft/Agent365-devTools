@@ -33,7 +33,7 @@ internal static class NonDwBlueprintSetupOrchestrator
     /// Prints a dry-run plan showing all resources that would be created or configured,
     /// using actual names and values from the loaded config. Makes no API calls.
     /// </summary>
-    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null, bool skipObservabilityPermissions = false)
+    public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null, bool skipObservabilityPermissions = false, string? serviceManagementReference = null)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
         var observabilityPermissionsEffectivelySkipped =
@@ -120,6 +120,8 @@ internal static class NonDwBlueprintSetupOrchestrator
         else
         {
             logger.LogInformation(SetupHelpers.DryRunRow(2, "Blueprint") + "create (multi-tenant): {DisplayName}", blueprintDisplayName);
+            if (!string.IsNullOrWhiteSpace(serviceManagementReference))
+                logger.LogInformation(sub + "set serviceManagementReference: {ServiceManagementReference}", serviceManagementReference);
             logger.LogInformation(sub + "create service principal");
             logger.LogInformation(sub + "create client secret");
             logger.LogInformation(sub + "create federated identity credential (FIC)");

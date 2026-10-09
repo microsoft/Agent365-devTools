@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Models;
+
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 
 /// <summary>
@@ -13,4 +15,16 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// This is an orchestration flag — it is NOT tied to whether the current user is an admin.
 /// Standalone 'setup blueprint' uses the default value of false so consent runs normally.
 /// </param>
-internal record BlueprintCreationOptions(bool DeferConsent = false);
+/// <param name="ServiceManagementReference">
+/// Value sent as serviceManagementReference when a new blueprint is created; null omits the field.
+/// </param>
+internal record BlueprintCreationOptions(bool DeferConsent = false, string? ServiceManagementReference = null);
+
+/// <summary>
+/// Creates or reuses the agent blueprint. Production uses
+/// <see cref="BlueprintSubcommand.CreateBlueprintImplementationAsync"/>; tests inject a replacement.
+/// </summary>
+internal delegate Task<BlueprintCreationResult> BlueprintCreator(
+    Agent365Config config,
+    BlueprintCreationOptions options,
+    CancellationToken cancellationToken);

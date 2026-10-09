@@ -37,11 +37,11 @@ public class GraphApiException : Agent365Exception
     public string Operation { get; }
 
     public GraphApiException(string operation, string reason, bool isPermissionIssue = false)
-        : base(
-            errorCode: isPermissionIssue ? "GRAPH_PERMISSION_DENIED" : "GRAPH_API_FAILED",
-            issueDescription: $"Microsoft Graph API operation failed: {operation}",
-            errorDetails: new List<string> { reason },
-            mitigationSteps: isPermissionIssue
+        : this(
+            operation,
+            isPermissionIssue ? ErrorCodes.GraphPermissionDenied : ErrorCodes.GraphApiFailed,
+            new List<string> { reason },
+            isPermissionIssue
                 ? new List<string>
                 {
                     "Ensure you have the required Graph API permissions",
@@ -49,16 +49,37 @@ public class GraphApiException : Agent365Exception
                     "Contact your tenant administrator to grant permissions",
                     $"See documentation: {ConfigConstants.CustomClientAppRegistrationUrl}"
                 }
-                : new List<string>
-                {
-                    "Check your network connection",
-                    "Verify Microsoft Graph API status: https://status.cloud.microsoft",
-                    "Try again in a few minutes",
-                    "Run 'az login' to refresh authentication"
-                })
+                : DefaultMitigationSteps())
+    {
+    }
+
+    /// <summary>
+    /// Creates a Graph failure with an operation-specific error code, details, mitigation steps, and optional context lines.
+    /// </summary>
+    public GraphApiException(
+        string operation,
+        string errorCode,
+        List<string> errorDetails,
+        List<string> mitigationSteps,
+        Dictionary<string, string>? context = null)
+        : base(
+            errorCode: errorCode,
+            issueDescription: $"Microsoft Graph API operation failed: {operation}",
+            errorDetails: errorDetails,
+            mitigationSteps: mitigationSteps,
+            context: context)
     {
         Operation = operation;
     }
+
+    /// <summary>Mitigation steps for Graph failures that are not tied to a specific cause.</summary>
+    public static List<string> DefaultMitigationSteps() => new()
+    {
+        "Check your network connection",
+        "Verify Microsoft Graph API status: https://status.cloud.microsoft",
+        "Try again in a few minutes",
+        "Run 'az login' to refresh authentication"
+    };
 
     public override int ExitCode => 5; // Graph API error
 }

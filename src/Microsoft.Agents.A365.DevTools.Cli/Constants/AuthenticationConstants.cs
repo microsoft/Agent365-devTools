@@ -302,6 +302,11 @@ public static class AuthenticationConstants
     public const string InheritablePermissionsRequiredRoles = "Agent ID Administrator or Global Administrator";
 
     /// <summary>
+    /// Entra roles that can create an agent identity blueprint. The role must be active, not just eligible.
+    /// </summary>
+    public const string BlueprintCreationRequiredRoles = "Agent ID Developer, Agent ID Administrator, or Global Administrator";
+
+    /// <summary>
     /// Scopes requested when acquiring an interactive Graph token for blueprint creation
     /// and inheritable permissions configuration (used by InteractiveGraphAuthService).
     /// Expressed as fully-qualified URIs as required by the Graph SDK credential constructor.

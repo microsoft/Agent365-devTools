@@ -29,6 +29,7 @@ Agents that export telemetry through the delegated (OBO) route need `Agent365.Ob
 Blueprint agents that export telemetry through the app-only S2S endpoint don't need these permissions, and `a365 setup all` no longer requests them for blueprint agents (#501).
 
 ### Added
+- `--service-management-reference` option on `setup blueprint` and `setup all`, and a matching `serviceManagementReference` setting in `a365.config.json`, set `serviceManagementReference` on new agent blueprints for tenants that require it on every new application (#507).
 - `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server, and prompts you to select which ones to grant it to (#500).
 - When more than one Entra application shares the MCP server's name, `a365 develop-mcp grant-agents-access` now lists them all and asks which one to use instead of failing (#500).
 - `a365 develop-mcp grant-agents-access --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere (#500).
@@ -70,6 +71,9 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- Blueprint creation in tenants that require `serviceManagementReference` now fails immediately with guidance to pass `--service-management-reference`, instead of retrying without sponsors and owners and reporting a permission error (#507).
+- Blueprint creation failures now report their actual cause: authorization failures name the active Agent ID role required, and other errors are no longer reported as missing Graph permissions (#507).
+- `setup blueprint` now exits with a non-zero code when blueprint creation fails (#507).
 - `a365 create-instance` now reports an ambiguous government-cloud environment as a configuration error with guidance to select a specific cloud (#478).
 - Setup now warns before replacing a stale stored blueprint ID with the sole application matching the configured display name (#478).
 - Messaging endpoint create and delete overrides now reject non-HTTPS URLs and URLs containing user information, query strings, or fragments (#478).

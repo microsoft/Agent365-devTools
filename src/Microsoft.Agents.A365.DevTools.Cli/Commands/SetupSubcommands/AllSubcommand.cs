@@ -84,7 +84,8 @@ internal static class AllSubcommand
         FederatedCredentialService federatedCredentialService,
         ArmApiService? armApiService = null,
         IConfirmationProvider? confirmationProvider = null,
-        IBootstrapConfigResolver? resolver = null)
+        IBootstrapConfigResolver? resolver = null,
+        BlueprintCreator? blueprintCreatorOverride = null)
     {
         var command = new Command("all",
             "Run complete Agent 365 setup (all steps in sequence)\n" +
@@ -165,6 +166,8 @@ internal static class AllSubcommand
                         "is a post-deploy artifact, so it can be set later with\n" +
                         "'a365 setup blueprint --endpoint-only --messaging-endpoint <url>'.");
 
+        var serviceManagementReferenceOption = ServiceManagementReferenceOption.Create();
+
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipInfrastructureOption);
@@ -177,6 +180,7 @@ internal static class AllSubcommand
         command.AddOption(authModeOption);
         command.AddOption(skipSpProvisioningOption);
         command.AddOption(messagingEndpointOption);
+        command.AddOption(serviceManagementReferenceOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -218,6 +222,12 @@ internal static class AllSubcommand
                  msgEndpointUri.Scheme != Uri.UriSchemeHttps))
             {
                 logger.LogError("Invalid --messaging-endpoint value '{Value}'. Provide a valid HTTPS URL (e.g. https://my-agent.example.com/api/messages).", messagingEndpointFlag);
+                context.ExitCode = 1;
+                return;
+            }
+
+            if (!ServiceManagementReferenceOption.TryGetValue(context.ParseResult, serviceManagementReferenceOption, logger, out var serviceManagementReferenceFlag))
+            {
                 context.ExitCode = 1;
                 return;
             }
@@ -409,7 +419,8 @@ internal static class AllSubcommand
                 {
                     var rawArgs = context.ParseResult.Tokens.Select(t => t.Value).ToArray();
                     var effectiveAuthMode = authMode ?? nonDwConfig.AuthMode;
-                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag, skipObservabilityPermissions);
+                    NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(nonDwConfig, logger, isBootstrap, rawArgs, skipRequirements, isM365, agentRegistrationOnly, effectiveAuthMode, messagingEndpointFlag, skipObservabilityPermissions,
+                        serviceManagementReference: ServiceManagementReferenceHelper.Resolve(serviceManagementReferenceFlag, nonDwConfig));
                     return;
                 }
 
@@ -448,7 +459,9 @@ internal static class AllSubcommand
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
                     nonInteractive: Console.IsInputRedirected,
-                    skipObservabilityPermissions: skipObservabilityPermissions);
+                    skipObservabilityPermissions: skipObservabilityPermissions,
+                    serviceManagementReferenceOverride: serviceManagementReferenceFlag,
+                    blueprintCreatorOverride: blueprintCreatorOverride);
 
                 context.ExitCode = await NonDwBlueprintSetupOrchestrator.ExecuteAsync(nonDwCtx);
                 return;
@@ -468,7 +481,9 @@ internal static class AllSubcommand
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { /* config is optional for dry-run display */ }
-                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365, messagingEndpointFlag);
+                // With --agent-name the real run uses an in-memory config, so only the flag applies.
+                SetupHelpers.PrintDwSetupAllDryRunPlan(logger, skipInfrastructure, skipRequirements, rawArgs, dwDryRunConfig, isM365, messagingEndpointFlag,
+                    serviceManagementReference: ServiceManagementReferenceHelper.Resolve(serviceManagementReferenceFlag, isBootstrap ? null : dwDryRunConfig));
                 return;
             }
 
@@ -593,7 +608,9 @@ internal static class AllSubcommand
                     isM365: isM365,
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
-                    nonInteractive: Console.IsInputRedirected);
+                    nonInteractive: Console.IsInputRedirected,
+                    serviceManagementReferenceOverride: serviceManagementReferenceFlag,
+                    blueprintCreatorOverride: blueprintCreatorOverride);
 
                 // Step 1: Infrastructure (optional, DW only)
                 await ExecuteInfrastructureStepAsync(ctx);
@@ -684,26 +701,29 @@ internal static class AllSubcommand
     {
         try
         {
-            var result = await BlueprintSubcommand.CreateBlueprintImplementationAsync(
-                ctx.Config,
-                ctx.ConfigFile,
-                ctx.Executor,
-                ctx.AuthValidator,
-                ctx.Logger,
-                ctx.SkipInfrastructure,
-                isSetupAll: true,
-                ctx.ConfigService,
-                ctx.BackendConfigurator,
-                ctx.PlatformDetector,
-                ctx.GraphApiService,
-                ctx.BlueprintService,
-                ctx.BlueprintLookupService,
-                ctx.FederatedCredentialService,
-                skipEndpointRegistration: true,
-                correlationId: ctx.CorrelationId,
-                cancellationToken: ctx.CancellationToken,
-                options: new BlueprintCreationOptions(DeferConsent: true),
-                loginHintResolver: ctx.LoginHintResolver);
+            var options = new BlueprintCreationOptions(DeferConsent: true, ServiceManagementReference: ctx.ServiceManagementReference);
+            var result = ctx.BlueprintCreatorOverride is not null
+                ? await ctx.BlueprintCreatorOverride(ctx.Config, options, ctx.CancellationToken)
+                : await BlueprintSubcommand.CreateBlueprintImplementationAsync(
+                    ctx.Config,
+                    ctx.ConfigFile,
+                    ctx.Executor,
+                    ctx.AuthValidator,
+                    ctx.Logger,
+                    ctx.SkipInfrastructure,
+                    isSetupAll: true,
+                    ctx.ConfigService,
+                    ctx.BackendConfigurator,
+                    ctx.PlatformDetector,
+                    ctx.GraphApiService,
+                    ctx.BlueprintService,
+                    ctx.BlueprintLookupService,
+                    ctx.FederatedCredentialService,
+                    skipEndpointRegistration: true,
+                    correlationId: ctx.CorrelationId,
+                    cancellationToken: ctx.CancellationToken,
+                    options: options,
+                    loginHintResolver: ctx.LoginHintResolver);
 
             ctx.Results.BlueprintCreated = result.BlueprintCreated;
             ctx.Results.BlueprintAlreadyExisted = result.BlueprintAlreadyExisted;
@@ -733,10 +753,7 @@ internal static class AllSubcommand
 
             if (!result.BlueprintCreated)
             {
-                throw new GraphApiException(
-                    operation: "Create Agent Blueprint",
-                    reason: "Blueprint creation failed. This typically indicates missing permissions or insufficient privileges.",
-                    isPermissionIssue: true);
+                throw BlueprintCreationFailure.CreateException(result.Failure, options.ServiceManagementReference);
             }
 
             // In bootstrap mode, CreateBlueprintImplementationAsync already sets AgentBlueprintId

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
@@ -69,6 +70,21 @@ internal sealed class SetupContext
     /// config value. Null when the flag was omitted (the step then uses config or an interactive prompt).
     /// </summary>
     public string? MessagingEndpointOverride { get; }
+
+    /// <summary>
+    /// Value from <c>--service-management-reference</c>, already validated and normalized. Null when the flag was omitted.
+    /// </summary>
+    public string? ServiceManagementReferenceOverride { get; }
+
+    /// <summary>
+    /// serviceManagementReference for a newly created blueprint: the flag value, else the config value.
+    /// </summary>
+    public string? ServiceManagementReference => ServiceManagementReferenceHelper.Resolve(ServiceManagementReferenceOverride, Config);
+
+    /// <summary>
+    /// Replaces blueprint creation in tests. Null in production.
+    /// </summary>
+    public BlueprintCreator? BlueprintCreatorOverride { get; }
 
     /// <summary>Null or "obo" — principal-scoped delegated grants; no admin consent needed.</summary>
     public bool IsOboMode => AuthMode is null || string.Equals(AuthMode, "obo", StringComparison.OrdinalIgnoreCase);
@@ -165,7 +181,9 @@ internal sealed class SetupContext
         bool skipSpProvisioning = false,
         string? messagingEndpointOverride = null,
         bool nonInteractive = false,
-        bool skipObservabilityPermissions = false)
+        bool skipObservabilityPermissions = false,
+        string? serviceManagementReferenceOverride = null,
+        BlueprintCreator? blueprintCreatorOverride = null)
     {
         Config = config;
         Results = results;
@@ -181,6 +199,10 @@ internal sealed class SetupContext
         IsM365 = isM365;
         AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.ToLowerInvariant();
         MessagingEndpointOverride = string.IsNullOrWhiteSpace(messagingEndpointOverride) ? null : messagingEndpointOverride.Trim();
+        ServiceManagementReferenceOverride = ServiceManagementReferenceHelper.TryNormalize(serviceManagementReferenceOverride, out var serviceManagementReference)
+            ? serviceManagementReference
+            : null;
+        BlueprintCreatorOverride = blueprintCreatorOverride;
         SkipSpProvisioning = skipSpProvisioning;
         NonInteractive = nonInteractive;
         SkipObservabilityPermissions = skipObservabilityPermissions;

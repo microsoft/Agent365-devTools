@@ -10,6 +10,7 @@
   "webAppName": "your-unique-webapp-name",
   "agentIdentityDisplayName": "Your Agent Display Name",
   "agentBlueprintDisplayName": "Your Blueprint Display Name",
+  "serviceManagementReference": "optional-guid-required-by-some-tenants",
   "agentUserPrincipalName": "agentuser@yourdomain.onmicrosoft.com",
   "agentUserDisplayName": "Your Agent User Display Name",
   "managerEmail": "manager@yourdomain.onmicrosoft.com",
