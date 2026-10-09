@@ -296,7 +296,7 @@ internal static class PermissionsSubcommand
                 if (dryRunConfig is null)
                 {
                     logger.LogInformation("Dry run: a365 setup permissions bot --dry-run");
-                    logger.LogInformation("  Would configure Messaging Bot API OAuth2 grants and inheritable permissions.");
+                    logger.LogInformation("  Would configure Messaging Bot, Observability, Defender, and Power Platform API grants and inheritable permissions.");
                     logger.LogInformation("No changes made. Run without --dry-run to execute.");
                     return;
                 }

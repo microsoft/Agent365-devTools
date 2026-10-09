@@ -30,11 +30,11 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 
 #### Existing agents: grant Defender API permissions
 
-Agents provisioned before this release should have a Global Administrator re-run `a365 setup all --authmode <mode>` to stamp Defender inheritance and grant `RealtimeProtection.Evaluate.All` as delegated for `obo`, application for `s2s`, or both for `both`, because portal-only grants do not add inheritance to older blueprints.
+Agents provisioned before this release should have a Global Administrator re-run `a365 setup all --authmode <mode>` for blueprint agents (delegated for `obo`, application for `s2s`, or both for `both`) or `a365 setup all` without `--authmode` for AI Teammates (both permission types) to stamp Defender inheritance and grant `RealtimeProtection.Evaluate.All` (#485).
 
 ### Added
 
-- `a365 setup all` now grants the Defender API `RealtimeProtection.Evaluate.All` permission according to `--authmode`: delegated for `obo`, application for `s2s`, and both for `both`.
+- `a365 setup all` now grants the Defender API `RealtimeProtection.Evaluate.All` permission according to `--authmode` for blueprint agents (delegated for `obo`, application for `s2s`, both for `both`) and as both delegated and application for AI Teammates (#485).
 - `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server, and prompts you to select which ones to grant it to (#500).
 - When more than one Entra application shares the MCP server's name, `a365 develop-mcp grant-agents-access` now lists them all and asks which one to use instead of failing (#500).
 - `a365 develop-mcp grant-agents-access --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere (#500).

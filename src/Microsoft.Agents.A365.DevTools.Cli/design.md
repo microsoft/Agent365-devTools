@@ -458,8 +458,8 @@ return await new CommandLineBuilder(rootCommand)
 
 | Agent Type | Flag | What it creates |
 |---|---|---|
-| **AI Teammate agent** | `--aiteammate` | Azure infra + Agent Blueprint + batch permissions (5 resources) + messaging endpoint |
-| **Custom Engine Agent / Blueprint** (default) | omit `--aiteammate` | Agent Blueprint + batch permissions (Graph + A365 Tools only) + Agent Instance (Graph API) |
+| **AI Teammate agent** | `--aiteammate` | Azure infra + Agent Blueprint + batch permissions (6 resources) + messaging endpoint |
+| **Custom Engine Agent / Blueprint** (default) | omit `--aiteammate` | Agent Blueprint + baseline permissions (4 resources) + Agent Identity + Agent Registration |
 
 Non-DW blueprint agents do not use Azure Bot Service, so there is no infrastructure step, no manifest zip, and no messaging endpoint registration. The final step is `POST /beta/agentRegistry/agentInstances` instead.
 
@@ -475,14 +475,14 @@ AllSubcommand.ExecuteAsync
   ├── DW path:
   │     ExecuteInfrastructureStepAsync(ctx)     ← DW only
   │     ExecuteBlueprintStepAsync(ctx)           ← shared
-  │     ExecuteBatchPermissionsStepAsync(ctx, dwSpecs)  ← shared (5 resources)
+  │     ExecuteBatchPermissionsStepAsync(ctx, dwSpecs)  ← shared (6 resources)
   │     ExecuteMessagingEndpointStepAsync(ctx)   ← DW only
   │
   └── Non-DW path:
         NonDwBlueprintSetupOrchestrator.ExecuteAsync(ctx)
           ExecuteBlueprintStepAsync(ctx)         ← reuses DW step
-          ExecuteBatchPermissionsStepAsync(ctx, nonDwSpecs)  ← reuses, 2 resources only
-          RegisterAgentInstanceAsync(...)        ← non-DW final step
+          ExecuteBatchPermissionsStepAsync(ctx, nonDwSpecs)  ← reuses, 4 baseline resources
+          Create Agent Identity + Agent Registration         ← non-DW final steps
 ```
 
 `SetupContext.Config` is intentionally mutable — the blueprint step reloads configuration from disk after writing `AgentBlueprintId`, and the updated instance must be visible to all subsequent steps.
@@ -493,10 +493,11 @@ The non-DW spec list is a strict subset of the DW list:
 
 | Resource | DW | Non-DW Blueprint |
 |---|---|---|
-| Microsoft Graph (delegated) | ✓ | — |
-| Agent 365 Tools (delegated) | ✓ | — |
-| Messaging Bot API | ✓ | — |
-| Observability API | ✓ | — |
+| Microsoft Graph (delegated) | ✓ | ✓ |
+| Agent 365 Tools (delegated) | ✓ | ✓ |
+| Messaging Bot API (with `--m365`) | ✓ | ✓ |
+| Observability API | ✓ | — by default |
+| Defender API | delegated + application | follows `--authmode` |
 | Power Platform API | ✓ | ✓ |
 
 ---

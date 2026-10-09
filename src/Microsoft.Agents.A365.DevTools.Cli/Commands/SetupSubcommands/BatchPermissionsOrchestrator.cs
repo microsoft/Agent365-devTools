@@ -692,6 +692,19 @@ internal static class BatchPermissionsOrchestrator
         var specsForUrl = resolvedSpAppIds.Count > 0
             ? specs.Where(s => resolvedSpAppIds.Contains(s.ResourceAppId)).ToList()
             : specs.ToList();
+        var consentRequirements = specsForUrl
+            .Where(spec => spec.Scopes is { Length: > 0 })
+            .Select(spec =>
+            {
+                string? resourceSpId = null;
+                phase1Result?.ResourceSpObjectIds.TryGetValue(spec.ResourceAppId, out resourceSpId);
+                return new AdminConsentRequirement(
+                    spec.ResourceName,
+                    spec.ResourceAppId,
+                    spec.Scopes,
+                    resourceSpId);
+            })
+            .ToList();
 
         var sharedMcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
         var allScopes = specsForUrl
@@ -844,7 +857,8 @@ internal static class BatchPermissionsOrchestrator
                 var found = await AdminConsentHelper.PollAdminConsentAsync(
                     commandExecutor, logger, blueprintAppId,
                     "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct,
-                    graphBaseUrl: graph.GraphBaseUrl);
+                    graphBaseUrl: graph.GraphBaseUrl,
+                    requiredGrants: consentRequirements);
                 consentVerified = found;
                 // Browser was opened regardless — either the grant was directly observed (Verified)
                 // or the timeout elapsed without observing it (AssumedComplete). Either way, setup
@@ -859,7 +873,8 @@ internal static class BatchPermissionsOrchestrator
                 var pollResult = await AdminConsentHelper.PollAdminConsentAsync(
                     graph, logger, tenantId, phase1Result.BlueprintSpObjectId,
                     "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct,
-                    permScopes: AuthenticationConstants.BlueprintOperationScopes);
+                    permScopes: AuthenticationConstants.BlueprintOperationScopes,
+                    requiredGrants: consentRequirements);
                 consentVerified = pollResult == ConsentPollResult.Verified;
                 consentGranted = pollResult != ConsentPollResult.NotDetected;
             }

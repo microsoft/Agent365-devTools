@@ -1260,8 +1260,8 @@ internal static class SetupHelpers
             {
                 nextStepLines.Add(() => logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions"));
                 nextStepLines.Add(() => logger.LogInformation(results.IsM365
-                    ? "  2. Run 'a365 setup permissions bot' to configure Bot API, Observability, and Power Platform permissions"
-                    : "  2. Run 'a365 setup permissions bot' to configure Observability and Power Platform permissions"));
+                    ? "  2. Run 'a365 setup permissions bot' to configure Bot API, Observability, Defender, and Power Platform permissions"
+                    : "  2. Run 'a365 setup permissions bot' to configure Observability, Defender, and Power Platform permissions"));
             }
 
             if (nextStepLines.Count > 0)
