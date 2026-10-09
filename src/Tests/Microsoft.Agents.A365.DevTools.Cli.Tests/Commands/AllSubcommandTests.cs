@@ -428,8 +428,11 @@ public class AllSubcommandTests : IDisposable
     [Theory]
     [InlineData(null, true, false)]
     [InlineData("obo", true, false)]
+    [InlineData(" OBO ", true, false)]
     [InlineData("s2s", false, true)]
+    [InlineData(" S2S ", false, true)]
     [InlineData("both", true, true)]
+    [InlineData(" BOTH ", true, true)]
     public async Task BuildPermissionSpecsAsync_NonDw_DefenderPermissionsMatchAuthMode(
         string? authMode,
         bool expectDelegated,

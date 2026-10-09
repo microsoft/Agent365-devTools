@@ -179,7 +179,7 @@ internal sealed class SetupContext
         AgentInstanceOnly = agentInstanceOnly;
         IsBootstrap = isBootstrap;
         IsM365 = isM365;
-        AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.ToLowerInvariant();
+        AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.Trim().ToLowerInvariant();
         MessagingEndpointOverride = string.IsNullOrWhiteSpace(messagingEndpointOverride) ? null : messagingEndpointOverride.Trim();
         SkipSpProvisioning = skipSpProvisioning;
         NonInteractive = nonInteractive;
