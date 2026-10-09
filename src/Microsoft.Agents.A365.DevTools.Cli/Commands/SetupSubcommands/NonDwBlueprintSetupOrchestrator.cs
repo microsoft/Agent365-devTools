@@ -740,8 +740,8 @@ internal static class NonDwBlueprintSetupOrchestrator
         List<ResourcePermissionSpec> specs)
     {
         var hasS2sSpecs = specs.Any(s => s.AppRoleScopes is { Length: > 0 });
-        // Blueprint agents no longer request OtelWrite, the only app role setup requested, so this
-        // step usually has nothing to grant. Record that so the summary does not report a delegated grant.
+        // Record whether the selected auth mode produced any application permissions so the
+        // summary can distinguish "no S2S work" from a failed grant.
         ctx.Results.NoS2SAppRolesToGrant = !hasS2sSpecs;
         if (hasS2sSpecs && AgentIdentityInheritsBlueprintAppRoles(ctx.Results))
         {

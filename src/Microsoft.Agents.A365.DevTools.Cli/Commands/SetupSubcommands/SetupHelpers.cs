@@ -684,9 +684,8 @@ internal static class SetupHelpers
         // (e.g. admin already granted tenant consent but the per-principal call still failed).
         var pendingDelegatedAction = agentIdDelegatedFailed && !pendingAdminAction;
         var pendingS2SAction = permissionGrantsPending && isS2SFlow;
-        // Blueprint agents no longer request OtelWrite, the only app role setup requested, so an
-        // s2s/both run usually has no S2S grant at all. Say so explicitly: otherwise the row falls
-        // through to the delegated wording, which for s2s-only shows a PENDING with no action item.
+        // Some configurations can have no application-role specs. Say so explicitly; otherwise
+        // an s2s-only row can fall through to delegated wording with no matching action item.
         var noS2SAppRolesToGrant = isNonDw && (isS2sOnlyMode || isBothMode) && results.NoS2SAppRolesToGrant && !isS2SFlow;
 
         if (results.PermissionGrantsSkipped && isNonDw)
@@ -1160,10 +1159,8 @@ internal static class SetupHelpers
             if (hasMissingSpActions)
             {
                 // Issue #429: resources whose SP could not be provisioned in-line during
-                // setup. Each entry is a two-step recovery the operator can complete
-                // without re-running 'a365 setup all': (1) provision the SP via az,
-                // (2) click the per-SP unified-consent URL to grant the blueprint consent
-                // for this resource's scopes. Step 2 is keyed to the BLUEPRINT as client
+                // setup. Every entry provisions the SP via az; delegated specs also include
+                // a per-SP unified-consent URL. The URL is keyed to the BLUEPRINT as client
                 // (not the resource as client — that pattern fails AADSTS65003 for
                 // first-party token-to-self), so it is a normal cross-app consent and
                 // additive to whatever the unified consent URL already granted.
@@ -1171,11 +1168,17 @@ internal static class SetupHelpers
                 {
                     actionCount++;
                     logger.LogInformation("  {N}. Missing service principal — '{Name}' ({AppId}) (Global Administrator required)", actionCount, action.ResourceName, action.ResourceAppId);
-                    logger.LogInformation("     Scopes pending: {Scopes}", string.Join(", ", action.Scopes));
+                    if (action.Scopes.Length > 0)
+                        logger.LogInformation("     Delegated scopes pending: {Scopes}", string.Join(", ", action.Scopes));
+                    if (action.AppRoleScopes.Length > 0)
+                        logger.LogInformation("     Application roles pending: {Roles}", string.Join(", ", action.AppRoleScopes));
                     logger.LogInformation("     Step 1) Provision the SP:");
                     logger.LogInformation("       {AzCommand}", action.AzCreateCommand);
-                    logger.LogInformation("     Step 2) Grant the blueprint consent for this resource (click Accept):");
-                    logger.LogInformation("       {Url}", action.PerSpConsentUrl);
+                    if (!string.IsNullOrWhiteSpace(action.PerSpConsentUrl))
+                    {
+                        logger.LogInformation("     Step 2) Grant the blueprint delegated consent for this resource (click Accept):");
+                        logger.LogInformation("       {Url}", action.PerSpConsentUrl);
+                    }
                 }
             }
         }

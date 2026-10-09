@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -23,9 +24,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// trusts az when an id is present (no Graph re-poll). When the operator declines, az
 /// fails, the GUID guard rejects, or <c>--skip-sp-provisioning</c> is set, the helper
 /// records a <see cref="MissingSpAction"/> on <see cref="SetupResults"/> so the setup
-/// summary's Action Required block surfaces both the az command AND the per-SP
-/// blueprint-as-client consent URL — together they are a complete recovery without
-/// re-running <c>a365 setup all</c>.
+/// summary's Action Required block surfaces the az command and, for delegated specs,
+/// the per-SP blueprint-as-client consent URL.
 /// </para>
 ///
 /// <para>
@@ -145,6 +145,70 @@ public class BatchPermissionsOrchestratorMissingSpTests
             because: "the scope param targets the resource SP that step 1 just created");
         setupResults.Warnings.Should().BeEmpty(
             because: "the rework moved missing-SP messaging out of the noisy main-output Warnings block and into the focused Action Required block at the end");
+    }
+
+    [Fact]
+    public async Task SkipSpProvisioning_ApplicationOnlySpec_RecordsCreateActionWithoutConsentUrl()
+    {
+        using var bypass = TemporarilyDisableSpProvisioningBypass();
+
+        _graph
+            .LookupServicePrincipalByAppIdAsync(
+                TenantId,
+                ConfigConstants.DefenderApiAppId,
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<string?>(null));
+
+        var resolvedSpAppIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var setupResults = new SetupResults();
+        var missing = new[]
+        {
+            new ResourcePermissionSpec(
+                ConfigConstants.DefenderApiAppId,
+                "Defender API",
+                [],
+                SetInheritable: true,
+                AppRoleScopes: [ConfigConstants.DefenderApiRealtimeProtectionScope]),
+        };
+
+        await BatchPermissionsOrchestrator.EnsureMissingResourceSpsAsync(
+            _graph, TenantId, BlueprintAppId, missing, resolvedSpAppIds,
+            permScopes: Array.Empty<string>(),
+            skipSpProvisioning: true,
+            _logger,
+            setupResults: setupResults,
+            ct: CancellationToken.None,
+            commandExecutor: _executor);
+
+        var action = setupResults.MissingSpActions.Should().ContainSingle(
+            because: "an application-only Defender spec still needs an actionable service-principal provisioning handoff").Subject;
+        action.AzCreateCommand.Should().Be($"az ad sp create --id {ConfigConstants.DefenderApiAppId}",
+            because: "the operator must be able to provision the missing Defender service principal before assigning its app role");
+        action.Scopes.Should().BeEmpty(
+            because: "S2S-only Defender requests no delegated consent");
+        action.AppRoleScopes.Should().BeEquivalentTo([ConfigConstants.DefenderApiRealtimeProtectionScope],
+            because: "the recovery action must identify the application role that remains pending");
+        action.PerSpConsentUrl.Should().BeNull(
+            because: "application-only recovery must not emit an empty delegated-consent URL");
+    }
+
+    [Fact]
+    public void FindMissingResourceSpSpecs_IncludesApplicationOnlyDefender()
+    {
+        var defenderSpec = new ResourcePermissionSpec(
+            ConfigConstants.DefenderApiAppId,
+            "Defender API",
+            [],
+            SetInheritable: true,
+            AppRoleScopes: [ConfigConstants.DefenderApiRealtimeProtectionScope]);
+
+        var missing = BatchPermissionsOrchestrator.FindMissingResourceSpSpecs(
+            [defenderSpec],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        missing.Should().ContainSingle().Which.Should().Be(defenderSpec,
+            because: "S2S application-role assignment cannot succeed until the Defender service principal exists");
     }
 
     [Fact]

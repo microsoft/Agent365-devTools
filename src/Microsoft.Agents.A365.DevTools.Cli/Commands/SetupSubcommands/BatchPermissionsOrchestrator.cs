@@ -670,15 +670,13 @@ internal static class BatchPermissionsOrchestrator
         // first-party MCP audiences fail it with AADSTS65003 — token-to-self consent).
         // EnsureMissingResourceSpsAsync mutates the resolvedSpAppIds set on success and
         // records MissingSpActions for the rest so the Action Required block renders the
-        // recovery steps (the az command + a per-SP /v2.0/adminconsent URL keyed to the
-        // blueprint as client). Skips entirely when skipSpProvisioning is true (flag or
+        // az command and, for delegated specs, a per-SP consent URL keyed to the blueprint.
+        // Skips entirely when skipSpProvisioning is true (flag or
         // auto-detected from stdin) or when there is nothing missing. See helper for the
         // full state machine.
         if (resolvedSpAppIds.Count > 0)
         {
-            var missingSpecs = specs
-                .Where(s => s.Scopes is { Length: > 0 } && !resolvedSpAppIds.Contains(s.ResourceAppId))
-                .ToList();
+            var missingSpecs = FindMissingResourceSpSpecs(specs, resolvedSpAppIds);
             await EnsureMissingResourceSpsAsync(
                 graph, tenantId, blueprintAppId, missingSpecs, resolvedSpAppIds, permScopes,
                 skipSpProvisioning, logger, setupResults, ct,
@@ -950,6 +948,15 @@ internal static class BatchPermissionsOrchestrator
         // verified. Caller uses (consentGranted && consentUrl == null) as the 'safe to persist' gate.
         return (consentGranted, consentVerified ? null : consentUrl);
     }
+
+    internal static List<ResourcePermissionSpec> FindMissingResourceSpSpecs(
+        IReadOnlyList<ResourcePermissionSpec> specs,
+        IReadOnlySet<string> resolvedSpAppIds) =>
+        specs
+            .Where(spec =>
+                (spec.Scopes is { Length: > 0 } || spec.AppRoleScopes is { Length: > 0 })
+                && !resolvedSpAppIds.Contains(spec.ResourceAppId))
+            .ToList();
 
     /// <summary>
     /// Updates config.ResourceConsents in-memory for each spec based on phase results.
@@ -1279,11 +1286,11 @@ internal static class BatchPermissionsOrchestrator
     /// <summary>
     /// Records a missing-SP action on <see cref="SetupResults.MissingSpActions"/> so the
     /// setup summary's "Action Required" block renders it as a numbered item. Each entry
-    /// carries the two concrete artifacts the operator needs to complete provisioning
+    /// carries the concrete artifacts the operator needs to complete provisioning
     /// without re-running setup:
     /// <list type="number">
     /// <item><description><c>az ad sp create --id {appId}</c> — provisions the SP in the tenant.</description></item>
-    /// <item><description>Per-SP <c>/v2.0/adminconsent</c> URL keyed to the blueprint as
+    /// <item><description>For delegated scopes only, a per-SP <c>/v2.0/adminconsent</c> URL keyed to the blueprint as
     /// client and this resource's scopes as the request. After step 1 succeeds, clicking
     /// this URL grants the blueprint consent for this one resource additively (does not
     /// wipe other resources' grants), avoiding any need to re-run <c>a365 setup all</c>.</description></item>
@@ -1308,14 +1315,19 @@ internal static class BatchPermissionsOrchestrator
 
         var azCommand = BuildAzAdSpCreateCommand(spec.ResourceAppId);
         var isMcpAudience = knownMcpAudienceAppIds?.Contains(spec.ResourceAppId) ?? false;
-        var perSpConsentUrl = BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec, isMcpAudience, authorityHost);
+        var perSpConsentUrl = spec.Scopes is { Length: > 0 }
+            ? BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec, isMcpAudience, authorityHost)
+            : null;
 
         setupResults?.MissingSpActions.Add(new MissingSpAction(
             ResourceName: spec.ResourceName,
             ResourceAppId: spec.ResourceAppId,
             Scopes: spec.Scopes?.ToArray() ?? Array.Empty<string>(),
             AzCreateCommand: azCommand,
-            PerSpConsentUrl: perSpConsentUrl));
+            PerSpConsentUrl: perSpConsentUrl)
+        {
+            AppRoleScopes = spec.AppRoleScopes?.ToArray() ?? Array.Empty<string>(),
+        });
     }
 
     /// <summary>

@@ -86,8 +86,8 @@ internal sealed class SetupContext
     /// (Global Administrator's directory role carries the required
     /// <c>Application.ReadWrite.All</c>). With this set, missing SPs are excluded from the
     /// unified admin-consent URL and recorded on <see cref="SetupResults.MissingSpActions"/>
-    /// so the setup summary's Action Required block renders them as numbered items, each
-    /// with the <c>az ad sp create</c> command and a per-SP <c>/v2.0/adminconsent</c> URL.
+    /// so the setup summary's Action Required block renders them as numbered items with the
+    /// <c>az ad sp create</c> command and, for delegated specs, a per-SP consent URL.
     /// Set explicitly via <c>--skip-sp-provisioning</c> or implicitly when stdin is
     /// redirected (CI / coding-agent / pipe scenarios).
     /// </summary>

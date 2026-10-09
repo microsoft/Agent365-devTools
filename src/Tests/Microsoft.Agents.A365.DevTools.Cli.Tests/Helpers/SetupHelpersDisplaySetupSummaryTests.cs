@@ -495,6 +495,43 @@ public class SetupHelpersDisplaySetupSummaryTests
     }
 
     [Fact]
+    public void DisplaySetupSummary_ApplicationOnlyMissingSp_ShowsProvisioningWithoutConsentUrl()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.S2s,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+        };
+        results.MissingSpActions.Add(new MissingSpAction(
+            "Defender API",
+            ConfigConstants.DefenderApiAppId,
+            [],
+            $"az ad sp create --id {ConfigConstants.DefenderApiAppId}",
+            null)
+        {
+            AppRoleScopes = [ConfigConstants.DefenderApiRealtimeProtectionScope],
+        });
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain($"az ad sp create --id {ConfigConstants.DefenderApiAppId}",
+            because: "application-only recovery must tell the administrator how to provision the missing Defender service principal");
+        logger.AllOutput.Should().Contain($"Application roles pending: {ConfigConstants.DefenderApiRealtimeProtectionScope}",
+            because: "the handoff must identify the Defender app role that can be assigned after provisioning");
+        logger.AllOutput.Should().NotContain("Step 2)",
+            because: "an application-only spec has no delegated scope and must not emit an empty admin-consent URL");
+    }
+
+    [Fact]
     public void DisplaySetupSummary_NonDwAdminConsentPending_NoConsentUrl_FallsBackToPortalWalkthrough()
     {
         var logger = new CapturingLogger();
