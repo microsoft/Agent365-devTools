@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -23,9 +24,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// trusts az when an id is present (no Graph re-poll). When the operator declines, az
 /// fails, the GUID guard rejects, or <c>--skip-sp-provisioning</c> is set, the helper
 /// records a <see cref="MissingSpAction"/> on <see cref="SetupResults"/> so the setup
-/// summary's Action Required block surfaces both the az command AND the per-SP
-/// blueprint-as-client consent URL — together they are a complete recovery without
-/// re-running <c>a365 setup all</c>.
+/// summary's Action Required block surfaces the az command and, for delegated specs,
+/// the per-SP blueprint-as-client consent URL.
 /// </para>
 ///
 /// <para>
@@ -82,6 +82,7 @@ public class BatchPermissionsOrchestratorMissingSpTests
             .Returns(Task.FromResult<string?>(MailMcpSpObjectId));
 
         var resolvedSpAppIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resolvedSpObjectIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var setupResults = new SetupResults();
         var missing = new[]
         {
@@ -95,10 +96,13 @@ public class BatchPermissionsOrchestratorMissingSpTests
             _logger,
             setupResults: setupResults,
             ct: CancellationToken.None,
-            commandExecutor: _executor);
+            commandExecutor: _executor,
+            resolvedSpObjectIds: resolvedSpObjectIds);
 
         resolvedSpAppIds.Should().Contain(MailMcpAppId,
             because: "the pre-flight Graph lookup found the SP — the operator must have consented to it between Phase 1 and now, so the helper records it and skips the az shell-out");
+        resolvedSpObjectIds.Should().ContainKey(MailMcpAppId).WhoseValue.Should().Be(MailMcpSpObjectId,
+            because: "downstream consent and grant phases need the recovered resource service-principal object ID in the same run");
         setupResults.MissingSpActions.Should().BeEmpty(
             because: "the resource was successfully resolved without any operator intervention — no Action Required entry needed");
         await _executor.DidNotReceive().ExecuteAsync(
@@ -145,6 +149,87 @@ public class BatchPermissionsOrchestratorMissingSpTests
             because: "the scope param targets the resource SP that step 1 just created");
         setupResults.Warnings.Should().BeEmpty(
             because: "the rework moved missing-SP messaging out of the noisy main-output Warnings block and into the focused Action Required block at the end");
+    }
+
+    [Fact]
+    public async Task SkipSpProvisioning_ApplicationOnlySpec_RecordsCreateActionWithoutConsentUrl()
+    {
+        using var bypass = TemporarilyDisableSpProvisioningBypass();
+
+        _graph
+            .LookupServicePrincipalByAppIdAsync(
+                TenantId,
+                ConfigConstants.DefenderApiAppId,
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>())
+            .Returns(Task.FromResult<string?>(null));
+
+        var resolvedSpAppIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var setupResults = new SetupResults();
+        var missing = new[]
+        {
+            new ResourcePermissionSpec(
+                ConfigConstants.DefenderApiAppId,
+                "Defender API",
+                [],
+                SetInheritable: true,
+                AppRoleScopes: [ConfigConstants.DefenderApiRealtimeProtectionScope]),
+        };
+
+        await BatchPermissionsOrchestrator.EnsureMissingResourceSpsAsync(
+            _graph, TenantId, BlueprintAppId, missing, resolvedSpAppIds,
+            permScopes: Array.Empty<string>(),
+            skipSpProvisioning: true,
+            _logger,
+            setupResults: setupResults,
+            ct: CancellationToken.None,
+            commandExecutor: _executor);
+
+        var action = setupResults.MissingSpActions.Should().ContainSingle(
+            because: "an application-only Defender spec still needs an actionable service-principal provisioning handoff").Subject;
+        action.AzCreateCommand.Should().Be($"az ad sp create --id {ConfigConstants.DefenderApiAppId}",
+            because: "the operator must be able to provision the missing Defender service principal before assigning its app role");
+        action.Scopes.Should().BeEmpty(
+            because: "S2S-only Defender requests no delegated consent");
+        action.AppRoleScopes.Should().BeEquivalentTo([ConfigConstants.DefenderApiRealtimeProtectionScope],
+            because: "the recovery action must identify the application role that remains pending");
+        action.PerSpConsentUrl.Should().BeNull(
+            because: "application-only recovery must not emit an empty delegated-consent URL");
+    }
+
+    [Fact]
+    public void FindMissingResourceSpSpecs_IncludesApplicationOnlyDefender()
+    {
+        var defenderSpec = new ResourcePermissionSpec(
+            ConfigConstants.DefenderApiAppId,
+            "Defender API",
+            [],
+            SetInheritable: true,
+            AppRoleScopes: [ConfigConstants.DefenderApiRealtimeProtectionScope]);
+
+        var missing = BatchPermissionsOrchestrator.FindMissingResourceSpSpecs(
+            [defenderSpec],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        missing.Should().ContainSingle().Which.Should().Be(defenderSpec,
+            because: "S2S application-role assignment cannot succeed until the Defender service principal exists");
+    }
+
+    [Fact]
+    public void HasUnresolvedDelegatedSpecs_DetectsMissingDefenderConsent()
+    {
+        var defenderSpec = new ResourcePermissionSpec(
+            ConfigConstants.DefenderApiAppId,
+            "Defender API",
+            [ConfigConstants.DefenderApiRealtimeProtectionScope],
+            SetInheritable: true);
+
+        var hasUnresolved = BatchPermissionsOrchestrator.HasUnresolvedDelegatedSpecs(
+            [defenderSpec],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        hasUnresolved.Should().BeTrue(
+            because: "aggregate consent must remain incomplete until the Defender resource SP can receive its delegated grant");
     }
 
     [Fact]
@@ -253,6 +338,7 @@ public class BatchPermissionsOrchestratorMissingSpTests
         accepting.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(true));
 
         var resolvedSpAppIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resolvedSpObjectIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var setupResults = new SetupResults();
         var missing = new[]
         {
@@ -267,10 +353,13 @@ public class BatchPermissionsOrchestratorMissingSpTests
             setupResults: setupResults,
             ct: CancellationToken.None,
             commandExecutor: _executor,
-            confirmationProvider: accepting);
+            confirmationProvider: accepting,
+            resolvedSpObjectIds: resolvedSpObjectIds);
 
         resolvedSpAppIds.Should().Contain(TeamsMcpAppId,
             because: "az returned the SP JSON with an id — that is authoritative evidence the SP exists, so the caller's URL build must include this resource");
+        resolvedSpObjectIds.Should().ContainKey(TeamsMcpAppId).WhoseValue.Should().Be("d42a47bf-9727-444c-ae57-17bd588613cd",
+            because: "the same-run consent precheck and app-role assignment need the object ID returned by az");
         setupResults.MissingSpActions.Should().BeEmpty(
             because: "the SP was provisioned successfully — no recovery steps belong in Action Required for this resource");
         // The helper trusts az output and does NOT issue a follow-up Graph lookup for the

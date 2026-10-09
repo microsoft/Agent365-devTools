@@ -293,6 +293,30 @@ public class PermissionsSubcommandTests : IDisposable
     }
 
     [Fact]
+    public async Task BotDryRun_WithoutConfig_MentionsDefender()
+    {
+        var root = new RootCommand();
+        root.AddCommand(PermissionsSubcommand.CreateCommand(
+            _mockLogger,
+            _mockAuthValidator,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            _mockConfirmationProvider));
+
+        var result = await root.InvokeAsync("permissions bot --dry-run");
+
+        result.Should().Be(0,
+            because: "the no-config permissions bot dry run must provide a usable generic preview");
+        var messages = _mockLogger.ReceivedCalls()
+            .Select(call => call.GetArguments()[2]?.ToString() ?? string.Empty);
+        messages.Should().Contain(
+            message => message.Contains("Defender", StringComparison.OrdinalIgnoreCase),
+            because: "permissions bot configures Defender and the no-config preview must not omit that user-visible work");
+    }
+
+    [Fact]
     public void BotSubcommand_DescriptionShouldMentionPrerequisites()
     {
         // Act
@@ -307,6 +331,8 @@ public class PermissionsSubcommandTests : IDisposable
 
         // Assert
         botSubcommand.Description.Should().Contain("Prerequisites");
+        botSubcommand.Description.Should().Contain("Defender",
+            because: "the command description must disclose every fixed platform API that permissions bot configures");
     }
 
     [Fact]
@@ -1031,4 +1057,3 @@ public class PermissionsSubcommandTests : IDisposable
 
     #endregion
 }
-

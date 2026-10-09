@@ -84,9 +84,11 @@ internal static class BatchPermissionsOrchestrator
             return (true, true, true, null);
         }
 
-        // Filter out specs with no scopes — they would produce empty OAuth2 grants (HTTP 400).
-        // This can happen when the MCP manifest is missing or contains no required scopes.
-        var effectiveSpecs = specs.Where(s => s.Scopes.Length > 0).ToList();
+        // Application-only specs must remain so S2S mode can assign app roles without creating
+        // an empty OAuth2 grant.
+        var effectiveSpecs = specs
+            .Where(s => s.Scopes.Length > 0 || s.AppRoleScopes is { Length: > 0 })
+            .ToList();
         if (setupResults is not null)
         {
             setupResults.ObservabilityResourceAppId = effectiveSpecs
@@ -97,12 +99,12 @@ internal static class BatchPermissionsOrchestrator
         if (effectiveSpecs.Count < specs.Count)
         {
             var skipped = specs.Count - effectiveSpecs.Count;
-            logger.LogDebug("Skipping {Count} resource spec(s) with no scopes (manifest missing or empty).", skipped);
+            logger.LogDebug("Skipping {Count} resource spec(s) with no delegated scopes or application roles.", skipped);
         }
 
         if (effectiveSpecs.Count == 0)
         {
-            logger.LogInformation("All permission specs have empty scope lists — skipping batch permissions configuration.");
+            logger.LogInformation("All permission specs have empty delegated scope and application role lists — skipping batch permissions configuration.");
             return (true, true, true, null);
         }
 
@@ -134,6 +136,27 @@ internal static class BatchPermissionsOrchestrator
             ? await graph.IsCurrentUserAdminAsync(tenantId, ct)
             : Models.RoleCheckResult.DoesNotHaveRole;
         var isGlobalAdmin = adminCheck == Models.RoleCheckResult.HasRole;
+
+        // Recover missing resource service principals before inheritance and app-role grants.
+        // Successful az provisioning updates both the app-id set and object-id map so every
+        // downstream phase can use the newly created resource in this same run.
+        if (phase1Result != null)
+        {
+            var resolvedSpObjectIds = phase1Result.ResourceSpObjectIds
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            var resolvedSpAppIds = resolvedSpObjectIds.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var missingSpecs = FindMissingResourceSpSpecs(specs, resolvedSpAppIds);
+            await EnsureMissingResourceSpsAsync(
+                graph, tenantId, blueprintAppId, missingSpecs, resolvedSpAppIds, permScopes,
+                skipSpProvisioning, logger, setupResults, ct,
+                commandExecutor: commandExecutor,
+                confirmationProvider: confirmationProvider,
+                knownMcpAudienceAppIds: knownMcpAudienceAppIds,
+                resolvedSpObjectIds: resolvedSpObjectIds);
+            phase1Result = new BlueprintPermissionsResult(
+                phase1Result.BlueprintSpObjectId,
+                resolvedSpObjectIds);
+        }
 
         // --- Phase 2a: Inheritable permissions (Agent ID Admin or GA) ---
         // --- Phase 2b: OAuth2 grants (Global Administrator only) ---
@@ -280,7 +303,7 @@ internal static class BatchPermissionsOrchestrator
 
         // --- Admin consent ---
         var (consentGranted, consentUrl) = await GrantAdminConsentAsync(
-            graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, commandExecutor, adminCheck, confirmationProvider, skipSpProvisioning, knownMcpAudienceAppIds);
+            graph, config, blueprintAppId, tenantId, specs, phase1Result, permScopes, logger, setupResults, ct, commandExecutor, adminCheck, confirmationProvider, knownMcpAudienceAppIds);
 
         // Update in-memory ResourceConsents only when consent was directly verified (consentUrl == null).
         // AssumedComplete returns a non-null consentUrl — do not persist in that case since the grant
@@ -415,12 +438,16 @@ internal static class BatchPermissionsOrchestrator
                 continue;
             }
 
+            var permissionValues = spec.Scopes
+                .Concat(spec.AppRoleScopes ?? Array.Empty<string>())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             logger.LogDebug(
-                "   - Configuring inheritable permissions: {ResourceName} [{Scopes}]",
-                spec.ResourceName, string.Join(' ', spec.Scopes));
+                "   - Configuring inheritable permissions: {ResourceName} [{Permissions}]",
+                spec.ResourceName, string.Join(' ', permissionValues));
 
             var (ok, alreadyExists, err) = await blueprintService.SetInheritablePermissionsAsync(
-                tenantId, blueprintAppId, spec.ResourceAppId, spec.Scopes,
+                tenantId, blueprintAppId, spec.ResourceAppId, permissionValues,
                 requiredScopes: permScopes, ct);
 
             if (alreadyExists || ok)
@@ -604,7 +631,6 @@ internal static class BatchPermissionsOrchestrator
         CommandExecutor? commandExecutor = null,
         Models.RoleCheckResult adminCheck = Models.RoleCheckResult.Unknown,
         IConfirmationProvider? confirmationProvider = null,
-        bool skipSpProvisioning = false,
         IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
     {
         // Hold onto the unfiltered spec list so the PowerShell consent fallback can attempt
@@ -658,36 +684,27 @@ internal static class BatchPermissionsOrchestrator
             ? map.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Find specs whose SP couldn't be resolved in Phase 1 and try to provision them in
-        // place by shelling out to 'az ad sp create --id {appId}' against the operator's
-        // existing az login (the per-app admin-consent URL pattern was removed because
-        // first-party MCP audiences fail it with AADSTS65003 — token-to-self consent).
-        // EnsureMissingResourceSpsAsync mutates the resolvedSpAppIds set on success and
-        // records MissingSpActions for the rest so the Action Required block renders the
-        // recovery steps (the az command + a per-SP /v2.0/adminconsent URL keyed to the
-        // blueprint as client). Skips entirely when skipSpProvisioning is true (flag or
-        // auto-detected from stdin) or when there is nothing missing. See helper for the
-        // full state machine.
-        if (resolvedSpAppIds.Count > 0)
-        {
-            var missingSpecs = specs
-                .Where(s => s.Scopes is { Length: > 0 } && !resolvedSpAppIds.Contains(s.ResourceAppId))
-                .ToList();
-            await EnsureMissingResourceSpsAsync(
-                graph, tenantId, blueprintAppId, missingSpecs, resolvedSpAppIds, permScopes,
-                skipSpProvisioning, logger, setupResults, ct,
-                commandExecutor: commandExecutor,
-                confirmationProvider: confirmationProvider,
-                knownMcpAudienceAppIds: knownMcpAudienceAppIds);
-        }
-
         // Apply the SP-resolution filter only when Phase 1 produced any results. When
         // Phase 1 returned no resolved SPs at all (auth failure earlier), keep the legacy
         // behavior of including every spec — that surfaces the auth failure path rather
         // than silently dropping every scope here.
-        var specsForUrl = resolvedSpAppIds.Count > 0
+        var specsForUrl = phase1Result != null
             ? specs.Where(s => resolvedSpAppIds.Contains(s.ResourceAppId)).ToList()
             : specs.ToList();
+        var hasUnresolvedDelegatedSpecs = HasUnresolvedDelegatedSpecs(specs, resolvedSpAppIds);
+        var consentRequirements = specsForUrl
+            .Where(spec => spec.Scopes is { Length: > 0 })
+            .Select(spec =>
+            {
+                string? resourceSpId = null;
+                phase1Result?.ResourceSpObjectIds.TryGetValue(spec.ResourceAppId, out resourceSpId);
+                return new AdminConsentRequirement(
+                    spec.ResourceName,
+                    spec.ResourceAppId,
+                    spec.Scopes,
+                    resourceSpId);
+            })
+            .ToList();
 
         var sharedMcpResourceAppId = ConfigConstants.GetAgent365ToolsResourceAppId(config.Environment);
         var allScopes = specsForUrl
@@ -708,7 +725,7 @@ internal static class BatchPermissionsOrchestrator
         // the Action Required block from setupResults if S2S work remains.
         if (consentUrl == null)
         {
-            return (true, null);
+            return (granted: !hasUnresolvedDelegatedSpecs, consentUrl: null);
         }
 
         // Section header — mirrors PerformS2SGrantsAsync's "Configuring S2S app role assignments..."
@@ -788,7 +805,7 @@ internal static class BatchPermissionsOrchestrator
                     }
                 }
 
-                if (allConsented)
+                if (allConsented && !hasUnresolvedDelegatedSpecs)
                 {
                     using (logger.Indent())
                         logger.LogInformation("Delegated admin consent already granted for all required scopes");
@@ -796,6 +813,8 @@ internal static class BatchPermissionsOrchestrator
                         setupResults.TenantWideConsentAlreadyExisted = true;
                     return (true, null);
                 }
+                if (allConsented)
+                    return (false, consentUrl);
             }
         }
 
@@ -840,7 +859,8 @@ internal static class BatchPermissionsOrchestrator
                 var found = await AdminConsentHelper.PollAdminConsentAsync(
                     commandExecutor, logger, blueprintAppId,
                     "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct,
-                    graphBaseUrl: graph.GraphBaseUrl);
+                    graphBaseUrl: graph.GraphBaseUrl,
+                    requiredGrants: consentRequirements);
                 consentVerified = found;
                 // Browser was opened regardless — either the grant was directly observed (Verified)
                 // or the timeout elapsed without observing it (AssumedComplete). Either way, setup
@@ -855,7 +875,8 @@ internal static class BatchPermissionsOrchestrator
                 var pollResult = await AdminConsentHelper.PollAdminConsentAsync(
                     graph, logger, tenantId, phase1Result.BlueprintSpObjectId,
                     "All permissions", timeoutSeconds: 180, intervalSeconds: 5, ct,
-                    permScopes: AuthenticationConstants.BlueprintOperationScopes);
+                    permScopes: AuthenticationConstants.BlueprintOperationScopes,
+                    requiredGrants: consentRequirements);
                 consentVerified = pollResult == ConsentPollResult.Verified;
                 consentGranted = pollResult != ConsentPollResult.NotDetected;
             }
@@ -942,8 +963,27 @@ internal static class BatchPermissionsOrchestrator
 
         // Return URL when either polling failed outright OR consent was assumed-complete but not
         // verified. Caller uses (consentGranted && consentUrl == null) as the 'safe to persist' gate.
+        if (hasUnresolvedDelegatedSpecs)
+            return (false, consentUrl);
+
         return (consentGranted, consentVerified ? null : consentUrl);
     }
+
+    internal static List<ResourcePermissionSpec> FindMissingResourceSpSpecs(
+        IReadOnlyList<ResourcePermissionSpec> specs,
+        IReadOnlySet<string> resolvedSpAppIds) =>
+        specs
+            .Where(spec =>
+                (spec.Scopes is { Length: > 0 } || spec.AppRoleScopes is { Length: > 0 })
+                && !resolvedSpAppIds.Contains(spec.ResourceAppId))
+            .ToList();
+
+    internal static bool HasUnresolvedDelegatedSpecs(
+        IReadOnlyList<ResourcePermissionSpec> specs,
+        IReadOnlySet<string> resolvedSpAppIds) =>
+        specs.Any(spec =>
+            spec.Scopes is { Length: > 0 }
+            && !resolvedSpAppIds.Contains(spec.ResourceAppId));
 
     /// <summary>
     /// Updates config.ResourceConsents in-memory for each spec based on phase results.
@@ -954,7 +994,10 @@ internal static class BatchPermissionsOrchestrator
         IReadOnlyList<ResourcePermissionSpec> specs,
         Dictionary<string, (bool configured, bool alreadyExisted)> inheritedResults)
     {
-        var configuredObservabilityAppIds = specs
+        var delegatedSpecs = specs
+            .Where(spec => spec.Scopes.Length > 0)
+            .ToList();
+        var configuredObservabilityAppIds = delegatedSpecs
             .Where(spec => ConfigConstants.IsObservabilityApiAppId(spec.ResourceAppId))
             .Select(spec => spec.ResourceAppId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -966,7 +1009,7 @@ internal static class BatchPermissionsOrchestrator
                 !configuredObservabilityAppIds.Contains(resourceConsent.ResourceAppId));
         }
 
-        foreach (var spec in specs)
+        foreach (var spec in delegatedSpecs)
         {
             inheritedResults.TryGetValue(spec.ResourceAppId, out var inherited);
 
@@ -1062,7 +1105,8 @@ internal static class BatchPermissionsOrchestrator
         CancellationToken ct,
         CommandExecutor? commandExecutor = null,
         IConfirmationProvider? confirmationProvider = null,
-        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null)
+        IReadOnlyCollection<string>? knownMcpAudienceAppIds = null,
+        IDictionary<string, string>? resolvedSpObjectIds = null)
     {
         if (missingSpecs.Count == 0) return;
 
@@ -1084,6 +1128,7 @@ internal static class BatchPermissionsOrchestrator
                     "Resource '{Name}' ({AppId}): service principal found in tenant — no provisioning needed.",
                     spec.ResourceName, spec.ResourceAppId);
                 resolvedSpAppIds.Add(spec.ResourceAppId);
+                resolvedSpObjectIds?[spec.ResourceAppId] = spId;
             }
             else
             {
@@ -1200,6 +1245,7 @@ internal static class BatchPermissionsOrchestrator
                     {
                         logger.LogInformation("Done. Service principal created for '{Name}' (id: {SpId}).", spec.ResourceName, newSpId);
                         resolvedSpAppIds.Add(spec.ResourceAppId);
+                        resolvedSpObjectIds?[spec.ResourceAppId] = newSpId;
                     }
                     else
                     {
@@ -1270,11 +1316,11 @@ internal static class BatchPermissionsOrchestrator
     /// <summary>
     /// Records a missing-SP action on <see cref="SetupResults.MissingSpActions"/> so the
     /// setup summary's "Action Required" block renders it as a numbered item. Each entry
-    /// carries the two concrete artifacts the operator needs to complete provisioning
+    /// carries the concrete artifacts the operator needs to complete provisioning
     /// without re-running setup:
     /// <list type="number">
     /// <item><description><c>az ad sp create --id {appId}</c> — provisions the SP in the tenant.</description></item>
-    /// <item><description>Per-SP <c>/v2.0/adminconsent</c> URL keyed to the blueprint as
+    /// <item><description>For delegated scopes only, a per-SP <c>/v2.0/adminconsent</c> URL keyed to the blueprint as
     /// client and this resource's scopes as the request. After step 1 succeeds, clicking
     /// this URL grants the blueprint consent for this one resource additively (does not
     /// wipe other resources' grants), avoiding any need to re-run <c>a365 setup all</c>.</description></item>
@@ -1299,14 +1345,19 @@ internal static class BatchPermissionsOrchestrator
 
         var azCommand = BuildAzAdSpCreateCommand(spec.ResourceAppId);
         var isMcpAudience = knownMcpAudienceAppIds?.Contains(spec.ResourceAppId) ?? false;
-        var perSpConsentUrl = BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec, isMcpAudience, authorityHost);
+        var perSpConsentUrl = spec.Scopes is { Length: > 0 }
+            ? BuildPerSpBlueprintConsentUrl(tenantId, blueprintAppId, spec, isMcpAudience, authorityHost)
+            : null;
 
         setupResults?.MissingSpActions.Add(new MissingSpAction(
             ResourceName: spec.ResourceName,
             ResourceAppId: spec.ResourceAppId,
             Scopes: spec.Scopes?.ToArray() ?? Array.Empty<string>(),
             AzCreateCommand: azCommand,
-            PerSpConsentUrl: perSpConsentUrl));
+            PerSpConsentUrl: perSpConsentUrl)
+        {
+            AppRoleScopes = spec.AppRoleScopes?.ToArray() ?? Array.Empty<string>(),
+        });
     }
 
     /// <summary>
