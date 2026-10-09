@@ -254,7 +254,7 @@ internal static class PermissionsSubcommand
         IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("bot",
-            "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
+            "Configure Messaging Bot, Observability, Defender, and Power Platform API grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
             "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n" +
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +

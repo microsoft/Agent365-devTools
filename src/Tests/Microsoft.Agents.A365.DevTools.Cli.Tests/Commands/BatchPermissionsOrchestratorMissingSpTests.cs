@@ -82,6 +82,7 @@ public class BatchPermissionsOrchestratorMissingSpTests
             .Returns(Task.FromResult<string?>(MailMcpSpObjectId));
 
         var resolvedSpAppIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resolvedSpObjectIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var setupResults = new SetupResults();
         var missing = new[]
         {
@@ -95,10 +96,13 @@ public class BatchPermissionsOrchestratorMissingSpTests
             _logger,
             setupResults: setupResults,
             ct: CancellationToken.None,
-            commandExecutor: _executor);
+            commandExecutor: _executor,
+            resolvedSpObjectIds: resolvedSpObjectIds);
 
         resolvedSpAppIds.Should().Contain(MailMcpAppId,
             because: "the pre-flight Graph lookup found the SP — the operator must have consented to it between Phase 1 and now, so the helper records it and skips the az shell-out");
+        resolvedSpObjectIds.Should().ContainKey(MailMcpAppId).WhoseValue.Should().Be(MailMcpSpObjectId,
+            because: "downstream consent and grant phases need the recovered resource service-principal object ID in the same run");
         setupResults.MissingSpActions.Should().BeEmpty(
             because: "the resource was successfully resolved without any operator intervention — no Action Required entry needed");
         await _executor.DidNotReceive().ExecuteAsync(
@@ -212,6 +216,23 @@ public class BatchPermissionsOrchestratorMissingSpTests
     }
 
     [Fact]
+    public void HasUnresolvedDelegatedSpecs_DetectsMissingDefenderConsent()
+    {
+        var defenderSpec = new ResourcePermissionSpec(
+            ConfigConstants.DefenderApiAppId,
+            "Defender API",
+            [ConfigConstants.DefenderApiRealtimeProtectionScope],
+            SetInheritable: true);
+
+        var hasUnresolved = BatchPermissionsOrchestrator.HasUnresolvedDelegatedSpecs(
+            [defenderSpec],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        hasUnresolved.Should().BeTrue(
+            because: "aggregate consent must remain incomplete until the Defender resource SP can receive its delegated grant");
+    }
+
+    [Fact]
     public async Task NullCommandExecutor_FallsBackToWarningPathAndDoesNotPrompt()
     {
         // Without an executor the helper has no way to shell out to az; it must behave the
@@ -317,6 +338,7 @@ public class BatchPermissionsOrchestratorMissingSpTests
         accepting.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(true));
 
         var resolvedSpAppIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resolvedSpObjectIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var setupResults = new SetupResults();
         var missing = new[]
         {
@@ -331,10 +353,13 @@ public class BatchPermissionsOrchestratorMissingSpTests
             setupResults: setupResults,
             ct: CancellationToken.None,
             commandExecutor: _executor,
-            confirmationProvider: accepting);
+            confirmationProvider: accepting,
+            resolvedSpObjectIds: resolvedSpObjectIds);
 
         resolvedSpAppIds.Should().Contain(TeamsMcpAppId,
             because: "az returned the SP JSON with an id — that is authoritative evidence the SP exists, so the caller's URL build must include this resource");
+        resolvedSpObjectIds.Should().ContainKey(TeamsMcpAppId).WhoseValue.Should().Be("d42a47bf-9727-444c-ae57-17bd588613cd",
+            because: "the same-run consent precheck and app-role assignment need the object ID returned by az");
         setupResults.MissingSpActions.Should().BeEmpty(
             because: "the SP was provisioned successfully — no recovery steps belong in Action Required for this resource");
         // The helper trusts az output and does NOT issue a follow-up Graph lookup for the

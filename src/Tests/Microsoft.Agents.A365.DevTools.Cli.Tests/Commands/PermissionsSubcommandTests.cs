@@ -331,6 +331,8 @@ public class PermissionsSubcommandTests : IDisposable
 
         // Assert
         botSubcommand.Description.Should().Contain("Prerequisites");
+        botSubcommand.Description.Should().Contain("Defender",
+            because: "the command description must disclose every fixed platform API that permissions bot configures");
     }
 
     [Fact]
