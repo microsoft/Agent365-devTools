@@ -36,12 +36,6 @@ public class McpServerPermissionService
     }
 
     /// <summary>
-    /// Reuses one ambient Graph sign-in across the whole grant-agents-access flow. Every agent
-    /// instance costs a grants read and a grant write, each of which would otherwise re-run MSAL.
-    /// </summary>
-    public virtual IDisposable BeginTokenReuseScope() => _graphApiService.BeginAmbientTokenReuseScope();
-
-    /// <summary>
     /// Resolves the BYO application for an MCP server name and returns its service principal,
     /// which is the resourceId of the permission grant. Returns null when either the application
     /// or its service principal cannot be found.
@@ -62,7 +56,7 @@ public class McpServerPermissionService
 
         var displayName = McpConstants.BuildByoAppDisplayName(serverName);
 
-        var lookup = await _graphApiService.TryFindApplicationAppIdsByDisplayNameAsync(
+        var lookup = await _graphApiService.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(
             tenantId, displayName, ct, UseDeviceCodeAuthentication);
         var appIds = lookup.AppIds;
         if (appIds is null)
@@ -117,7 +111,7 @@ public class McpServerPermissionService
             appId = appIds[0];
         }
 
-        var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdAmbientAsync(
+        var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdForAgentAccessAsync(
             tenantId, appId, ct, UseDeviceCodeAuthentication);
         if (string.IsNullOrWhiteSpace(spObjectId))
         {
@@ -147,7 +141,7 @@ public class McpServerPermissionService
         ArgumentException.ThrowIfNullOrWhiteSpace(blueprintId);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceSpObjectId);
 
-        var instances = await _blueprintService.GetAgentInstancesForBlueprintAmbientAsync(
+        var instances = await _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(
             tenantId, blueprintId, ct, UseDeviceCodeAuthentication);
 
         var statuses = new List<AgentInstancePermissionStatus>(instances.Count);
@@ -155,7 +149,7 @@ public class McpServerPermissionService
         {
             ct.ThrowIfCancellationRequested();
 
-            var grants = await _graphApiService.TryGetOauth2PermissionGrantsAsync(
+            var grants = await _graphApiService.TryGetOauth2PermissionGrantsForAgentAccessAsync(
                 tenantId, instance.IdentitySpId, ct, UseDeviceCodeAuthentication);
             if (grants is null)
             {
@@ -191,7 +185,7 @@ public class McpServerPermissionService
         ArgumentException.ThrowIfNullOrWhiteSpace(agentServicePrincipalObjectId);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceSpObjectId);
 
-        return await _graphApiService.CreateOrUpdateOauth2PermissionGrantAmbientAsync(
+        return await _graphApiService.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
             tenantId,
             agentServicePrincipalObjectId,
             resourceSpObjectId,

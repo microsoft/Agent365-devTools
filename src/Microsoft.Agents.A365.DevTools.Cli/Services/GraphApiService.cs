@@ -7,7 +7,6 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -49,13 +48,6 @@ public class GraphApiService
     // Delay before retrying a 403 from the agent registry (role propagation lag).
     // Injectable so unit tests can pass TimeSpan.Zero and avoid the real 30s wait.
     private readonly TimeSpan _agentRegistryRetryDelay;
-
-    // Ambient tokens are reused only inside an explicit reuse scope (see
-    // BeginAmbientTokenReuseScope). AuthenticationService keeps no in-process cache, so a flow
-    // that makes one Graph call per record otherwise re-runs MSAL once per record.
-    private readonly ConcurrentDictionary<string, (string AccessToken, DateTimeOffset ExpiresOnUtc)> _ambientTokenCache = new();
-    private readonly object _ambientTokenCacheLock = new();
-    private int _ambientTokenReuseDepth;
 
     // Graph path for the copilot agent registrations endpoint.
     // Both RegisterAgentInstanceAsyncV2 and DeleteAgentRegistrationAsync use this path.
@@ -204,45 +196,8 @@ public class GraphApiService
     /// </summary>
     public virtual async Task ClearTokenCacheAsync()
     {
-        _ambientTokenCache.Clear();
         _tokenProvider?.ClearTokenCache();
         await _authService.ClearTokenCacheAsync();
-    }
-
-    /// <summary>
-    /// Reuses the ambient Graph token for the lifetime of the returned scope instead of
-    /// re-running MSAL on every call. Opt-in so it applies only to the flow that asks for it:
-    /// a command that makes one Graph call per record otherwise re-authenticates once per record.
-    /// Nesting is supported; the cached tokens are discarded when the outermost scope is disposed.
-    /// </summary>
-    public virtual IDisposable BeginAmbientTokenReuseScope() => new AmbientTokenReuseScope(this);
-
-    private sealed class AmbientTokenReuseScope : IDisposable
-    {
-        private readonly GraphApiService _service;
-        private bool _disposed;
-
-        internal AmbientTokenReuseScope(GraphApiService service)
-        {
-            _service = service;
-            Interlocked.Increment(ref service._ambientTokenReuseDepth);
-        }
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-
-            // Tokens must not outlive the flow that opted in, or an unrelated later call would
-            // silently inherit this flow's cached identity.
-            if (Interlocked.Decrement(ref _service._ambientTokenReuseDepth) == 0)
-            {
-                lock (_service._ambientTokenCacheLock)
-                {
-                    _service._ambientTokenCache.Clear();
-                }
-            }
-        }
     }
 
     /// <summary>
@@ -263,7 +218,17 @@ public class GraphApiService
             var clientId = GetEffectiveGraphClientId(useDeviceCode);
             var loginHint = await _loginHintResolver(clientId);
 
-            var token = await AcquireGraphAccessTokenAsync(tenantId, resource, clientId, loginHint, forceRefresh, ct, useDeviceCode);
+            // AuthenticationService builds a fresh DeviceCodeCredential per call with no
+            // AuthenticationRecord, so it re-prompts for a device code on every acquisition. The
+            // token provider attempts a silent cache read first, so route device code through it.
+            var token = useDeviceCode && _tokenProvider != null
+                ? await _tokenProvider.GetMgGraphAccessTokenAsync(
+                    tenantId, [AuthenticationConstants.UserReadScope], true, null, ct, loginHint, forceRefresh,
+                    GraphBaseUrlOverride, AuthorityHostOverride)
+                : await _authService.GetAccessTokenAsync(
+                    resource, tenantId, forceRefresh: forceRefresh, clientId: clientId,
+                    useInteractiveBrowser: !useDeviceCode, userId: loginHint, ct: ct,
+                    authorityHost: AuthorityHostOverride);
             if (!string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogDebug("Graph API access token acquired successfully");
@@ -284,85 +249,6 @@ public class GraphApiService
             _logger.LogError(ex, "Error acquiring Graph API access token");
             return null;
         }
-    }
-
-    /// <summary>
-    /// Same as <see cref="GetGraphAccessTokenAsync"/> but serves a token already acquired during
-    /// the current <see cref="BeginAmbientTokenReuseScope"/> scope. Separate from the shared
-    /// method so no other command executes any of the caching logic.
-    /// </summary>
-    internal async Task<string?> GetReusableGraphAccessTokenAsync(string tenantId, bool forceRefresh, CancellationToken ct, bool useDeviceCode)
-    {
-        _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
-        try
-        {
-            var resource = GraphApiConstants.GetResource(_graphBaseUrl);
-            var clientId = GetEffectiveGraphClientId(useDeviceCode);
-            var loginHint = await _loginHintResolver(clientId);
-            var cacheKey = string.Join("::", _authorityHost, tenantId, resource, clientId, loginHint, useDeviceCode);
-
-            if (forceRefresh)
-            {
-                _ambientTokenCache.TryRemove(cacheKey, out _);
-            }
-            else if (_ambientTokenCache.TryGetValue(cacheKey, out var cached) &&
-                     cached.ExpiresOnUtc > DateTimeOffset.UtcNow.AddMinutes(AuthenticationConstants.TokenExpirationBufferMinutes))
-            {
-                _logger.LogDebug("Reusing cached Graph API access token for tenant {TenantId} expiring at {Expiry}", tenantId, cached.ExpiresOnUtc);
-                return cached.AccessToken;
-            }
-
-            var token = await AcquireGraphAccessTokenAsync(tenantId, resource, clientId, loginHint, forceRefresh, ct, useDeviceCode);
-            if (!string.IsNullOrWhiteSpace(token))
-            {
-                // An undecodable expiry means the lifetime is unknown, so the token is used but
-                // not cached rather than risking a stale one served past its expiry.
-                var expiresOn = JwtHelper.TryGetExpiration(token);
-                if (expiresOn is not null)
-                {
-                    // Under the lock the scope cannot close between this check and the write,
-                    // which would leave a token behind for the next unrelated scope to read.
-                    lock (_ambientTokenCacheLock)
-                    {
-                        if (Volatile.Read(ref _ambientTokenReuseDepth) > 0)
-                            _ambientTokenCache[cacheKey] = (token, expiresOn.Value);
-                    }
-                }
-
-                _logger.LogDebug("Graph API access token acquired successfully");
-                return token;
-            }
-            _logger.LogError("Failed to acquire Graph API access token for tenant {TenantId}", tenantId);
-            return null;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error acquiring Graph API access token");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// The MSAL acquisition shared by the plain and token-reusing paths.
-    /// </summary>
-    private async Task<string?> AcquireGraphAccessTokenAsync(
-        string tenantId, string resource, string? clientId, string? loginHint, bool forceRefresh, CancellationToken ct, bool useDeviceCode)
-    {
-        // AuthenticationService builds a fresh DeviceCodeCredential per call with no
-        // AuthenticationRecord, so it re-prompts for a device code on every acquisition. The
-        // token provider attempts a silent cache read first, so route device code through it.
-        return useDeviceCode && _tokenProvider != null
-            ? await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, [AuthenticationConstants.UserReadScope], true, null, ct, loginHint, forceRefresh,
-                GraphBaseUrlOverride, AuthorityHostOverride)
-            : await _authService.GetAccessTokenAsync(
-                resource, tenantId, forceRefresh: forceRefresh, clientId: clientId,
-                useInteractiveBrowser: !useDeviceCode, userId: loginHint, ct: ct,
-                authorityHost: AuthorityHostOverride);
     }
 
 
@@ -423,20 +309,51 @@ public class GraphApiService
         //    Authenticating as that app would make an underconfigured registration unable to
         //    authorize its own repair, so the resolved app and requested scopes are ignored.
         //
+        // 5. GraphAuthenticationMode.McpAgentAccess: authenticate as the Graph Command Line Tools
+        //    app with a fixed scope set. That app is preauthorized for Graph delegated scopes;
+        //    the Ambient app is not, so its '.default' token omits them and the calls 403.
+        //
         // All paths go through MSAL — no az CLI subprocess involved.
 
         string? token;
+        bool useMcpAgentAccess = authenticationMode == GraphAuthenticationMode.McpAgentAccess;
         bool useAmbient = authenticationMode == GraphAuthenticationMode.Ambient;
-        bool hasScopes = !useAmbient && scopes?.Any() == true;
-        bool hasCustomApp = !useAmbient && !string.IsNullOrWhiteSpace(CustomClientAppId);
+        bool hasScopes = !useAmbient && !useMcpAgentAccess && scopes?.Any() == true;
+        bool hasCustomApp = !useAmbient && !useMcpAgentAccess && !string.IsNullOrWhiteSpace(CustomClientAppId);
 
+        // Dedicated branch so no other command's token acquisition is affected. The scope set is
+        // fixed by the mode rather than taken from the caller, so every call in the flow shares
+        // one token-provider cache entry and the whole command costs one sign-in.
+        if (useMcpAgentAccess)
+        {
+            if (_tokenProvider == null)
+            {
+                _logger.LogError("Cannot acquire a Graph token for the agent-access flow — no token provider configured.");
+                return false;
+            }
+
+            var mcpScopes = AuthenticationConstants.McpAgentAccessScopes;
+            var mcpLoginHint = await ResolveLoginHintAsync(useDeviceCode);
+            token = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                tenantId, mcpScopes, useDeviceCode, AuthenticationConstants.GraphPowershellClientId,
+                ct, mcpLoginHint, forceRefresh, GraphBaseUrlOverride, AuthorityHostOverride);
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                _logger.LogError(
+                    "Failed to acquire a Graph token for the agent-access flow (scopes: {Scopes}). " +
+                    "These scopes require administrator consent.",
+                    string.Join(", ", mcpScopes));
+                return false;
+            }
+        }
         // Use the token provider when the caller passed explicit scopes (the call site is asking
         // for a scoped token — clientId can be null until config resolves; production callers that
         // pass scopes do so post-bootstrap) OR when CustomClientAppId is set (the only condition
         // that makes a default-scope token meaningful — without it the token would have no link to
         // the custom app's optional claims). The remaining case (no scopes AND no CustomClientAppId
         // — the bootstrap phase config-resolver lookup) falls through to the legacy path below.
-        if (_tokenProvider != null && (hasScopes || hasCustomApp))
+        else if (_tokenProvider != null && (hasScopes || hasCustomApp))
         {
             var effectiveScopes = hasScopes ? scopes! : [AuthenticationConstants.UserReadScope];
             _logger.LogDebug(
@@ -469,11 +386,7 @@ public class GraphApiService
             // yet (initial app lookup) or when no token provider is configured (tests). Token
             // does NOT carry custom-app optional claims — callers that depend on those must
             // not reach this branch.
-            // Only a flow that opened a reuse scope takes the caching path; every other caller
-            // runs GetGraphAccessTokenAsync exactly as before.
-            token = Volatile.Read(ref _ambientTokenReuseDepth) > 0
-                ? await GetReusableGraphAccessTokenAsync(tenantId, forceRefresh, ct, useDeviceCode)
-                : await GetGraphAccessTokenAsync(tenantId, forceRefresh: forceRefresh, ct: ct, useDeviceCode: useDeviceCode);
+            token = await GetGraphAccessTokenAsync(tenantId, forceRefresh: forceRefresh, ct: ct, useDeviceCode: useDeviceCode);
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -888,13 +801,12 @@ public class GraphApiService
         => LookupServicePrincipalByAppIdCoreAsync(tenantId, appId, ct, scopes, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
 
     /// <summary>
-    /// Looks up a service principal under the ambient identity, for callers that already hold an
-    /// ambient sign-in. Requesting scopes instead would route to the token provider, which falls
-    /// back to an interactive Connect-MgGraph when no client app is configured.
+    /// Looks up a service principal for the grant-agents-access flow, under the Graph Command Line
+    /// Tools app so the token actually carries the Graph scopes the lookup needs.
     /// </summary>
-    public virtual Task<string?> LookupServicePrincipalByAppIdAmbientAsync(
+    public virtual Task<string?> LookupServicePrincipalByAppIdForAgentAccessAsync(
         string tenantId, string appId, CancellationToken ct = default, bool useDeviceCode = false)
-        => LookupServicePrincipalByAppIdCoreAsync(tenantId, appId, ct, scopes: null, useDeviceCode, GraphAuthenticationMode.Ambient);
+        => LookupServicePrincipalByAppIdCoreAsync(tenantId, appId, ct, scopes: null, useDeviceCode, GraphAuthenticationMode.McpAgentAccess);
 
     private async Task<string?> LookupServicePrincipalByAppIdCoreAsync(
         string tenantId, string appId, CancellationToken ct, IEnumerable<string>? scopes, bool useDeviceCode,
@@ -1203,10 +1115,26 @@ public class GraphApiService
     /// not find out" instead of sending the user off to create an application that may already
     /// exist.
     /// </summary>
-    public virtual async Task<ApplicationDisplayNameSearchResult> TryFindApplicationAppIdsByDisplayNameAsync(
+    public virtual Task<ApplicationDisplayNameSearchResult> TryFindApplicationAppIdsByDisplayNameAsync(
         string tenantId, string displayName, CancellationToken ct = default, bool useDeviceCode = false)
+        => TryFindApplicationAppIdsByDisplayNameCoreAsync(
+            tenantId, displayName, ct, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
+
+    /// <summary>
+    /// Same as <see cref="TryFindApplicationAppIdsByDisplayNameAsync"/> but reads under the Graph
+    /// Command Line Tools app, so the whole grant-agents-access flow uses one identity and one
+    /// sign-in.
+    /// </summary>
+    public virtual Task<ApplicationDisplayNameSearchResult> TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(
+        string tenantId, string displayName, CancellationToken ct = default, bool useDeviceCode = false)
+        => TryFindApplicationAppIdsByDisplayNameCoreAsync(
+            tenantId, displayName, ct, useDeviceCode, GraphAuthenticationMode.McpAgentAccess);
+
+    private async Task<ApplicationDisplayNameSearchResult> TryFindApplicationAppIdsByDisplayNameCoreAsync(
+        string tenantId, string displayName, CancellationToken ct, bool useDeviceCode,
+        GraphAuthenticationMode authenticationMode)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, ct: ct, useDeviceCode: useDeviceCode))
+        if (!await EnsureGraphHeadersAsync(tenantId, ct: ct, authenticationMode: authenticationMode, useDeviceCode: useDeviceCode))
             return new ApplicationDisplayNameSearchResult(null, SignInFailed: true);
 
         // OData requires single quotes to be escaped by doubling them: ' → ''
@@ -1375,11 +1303,11 @@ public class GraphApiService
     }
 
     /// <summary>
-    /// Creates or updates the AllPrincipals grant under the ambient identity rather than the
-    /// resolved client app, for callers that decided the grant was needed under that identity.
-    /// A preflight read under one identity and a grant under another 403s on the read alone.
+    /// Creates or updates the AllPrincipals grant for the grant-agents-access flow, under the Graph
+    /// Command Line Tools app. The preflight read and the write must use the same identity, or the
+    /// read alone 403s.
     /// </summary>
-    public virtual async Task<bool> CreateOrUpdateOauth2PermissionGrantAmbientAsync(
+    public virtual async Task<bool> CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
         string tenantId,
         string clientSpObjectId,
         string resourceSpObjectId,
@@ -1397,13 +1325,12 @@ public class GraphApiService
             consentType: "AllPrincipals",
             scopes,
             ct,
-            // Scopes are ignored under Ambient; requesting them would route to the token
-            // provider and cost an extra sign-in.
+            // The mode fixes the scope set, so caller scopes would only fragment the token cache.
             permissionGrantScopes: null,
             requireMatchingConsentType,
             useDeviceCode,
             abortWhenLookupFails,
-            GraphAuthenticationMode.Ambient);
+            GraphAuthenticationMode.McpAgentAccess);
         return success;
     }
 
@@ -1668,11 +1595,30 @@ public class GraphApiService
     /// failed, so callers that decide whether a permission is missing can tell "no grants" apart
     /// from "we could not find out".
     /// </summary>
-    public virtual async Task<List<(string resourceId, string scope, string consentType)>?> TryGetOauth2PermissionGrantsAsync(
+    public virtual Task<List<(string resourceId, string scope, string consentType)>?> TryGetOauth2PermissionGrantsAsync(
         string tenantId,
         string clientSpObjectId,
         CancellationToken ct = default,
         bool useDeviceCode = false)
+        => TryGetOauth2PermissionGrantsCoreAsync(tenantId, clientSpObjectId, ct, useDeviceCode, GraphAuthenticationMode.Ambient);
+
+    /// <summary>
+    /// Same as <see cref="TryGetOauth2PermissionGrantsAsync"/> but reads under the Graph Command
+    /// Line Tools app, so the preflight read and the subsequent grant use one identity.
+    /// </summary>
+    public virtual Task<List<(string resourceId, string scope, string consentType)>?> TryGetOauth2PermissionGrantsForAgentAccessAsync(
+        string tenantId,
+        string clientSpObjectId,
+        CancellationToken ct = default,
+        bool useDeviceCode = false)
+        => TryGetOauth2PermissionGrantsCoreAsync(tenantId, clientSpObjectId, ct, useDeviceCode, GraphAuthenticationMode.McpAgentAccess);
+
+    private async Task<List<(string resourceId, string scope, string consentType)>?> TryGetOauth2PermissionGrantsCoreAsync(
+        string tenantId,
+        string clientSpObjectId,
+        CancellationToken ct,
+        bool useDeviceCode,
+        GraphAuthenticationMode authenticationMode)
     {
         var grants = new List<(string resourceId, string scope, string consentType)>();
 
@@ -1680,7 +1626,7 @@ public class GraphApiService
             tenantId,
             $"/v1.0/oauth2PermissionGrants?$filter=clientId eq '{clientSpObjectId}'",
             ct: ct,
-            authenticationMode: GraphAuthenticationMode.Ambient,
+            authenticationMode: authenticationMode,
             useDeviceCode: useDeviceCode);
         using var doc = response.Json;
 

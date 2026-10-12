@@ -45,7 +45,7 @@ public class McpServerPermissionServiceTests
     {
         var logger = new CapturingLogger<McpServerPermissionService>();
         var service = new McpServerPermissionService(_graph, _blueprintService, logger);
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult(null, SignInFailed: true)));
 
         var result = await service.ResolveServerResourceAsync(TenantId, ServerName);
@@ -62,9 +62,9 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_DoesNotAcquireATokenOnTheSuccessPath()
     {
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([ByoAppId], SignInFailed: false)));
-        _graph.LookupServicePrincipalByAppIdAmbientAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<string?>(ByoSpObjectId));
 
         await _service.ResolveServerResourceAsync(TenantId, ServerName);
@@ -76,9 +76,9 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_LooksUpTheByoSuffixedApplication()
     {
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([ByoAppId], SignInFailed: false)));
-        _graph.LookupServicePrincipalByAppIdAmbientAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<string?>(ByoSpObjectId));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
@@ -97,14 +97,14 @@ public class McpServerPermissionServiceTests
         // Every Graph call in this flow must run under one identity. A scoped token cannot be
         // acquired silently without a configured client app, so requesting one here costs an
         // extra interactive Connect-MgGraph sign-in on top of the one already held.
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([ByoAppId], SignInFailed: false)));
-        _graph.LookupServicePrincipalByAppIdAmbientAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<string?>(ByoSpObjectId));
 
         await _service.ResolveServerResourceAsync(TenantId, ServerName);
 
-        await _graph.Received(1).LookupServicePrincipalByAppIdAmbientAsync(
+        await _graph.Received(1).LookupServicePrincipalByAppIdForAgentAccessAsync(
             TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>());
         await _graph.DidNotReceive().LookupServicePrincipalByAppIdAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>());
@@ -113,13 +113,13 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenApplicationNotFound()
     {
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([], SignInFailed: false)));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
 
         result.Should().BeNull();
-        await _graph.DidNotReceive().LookupServicePrincipalByAppIdAmbientAsync(
+        await _graph.DidNotReceive().LookupServicePrincipalByAppIdForAgentAccessAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
         await _graph.DidNotReceive().GetGraphAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
@@ -130,7 +130,7 @@ public class McpServerPermissionServiceTests
     {
         var logger = new CapturingLogger<McpServerPermissionService>();
         var service = new McpServerPermissionService(_graph, _blueprintService, logger);
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult(null, SignInFailed: false)));
 
         var result = await service.ResolveServerResourceAsync(TenantId, ServerName);
@@ -142,16 +142,16 @@ public class McpServerPermissionServiceTests
             because: "an unreadable directory is not evidence the application is missing");
         await _graph.DidNotReceive().GetGraphAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
-        await _graph.DidNotReceive().LookupServicePrincipalByAppIdAmbientAsync(
+        await _graph.DidNotReceive().LookupServicePrincipalByAppIdForAgentAccessAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
     }
 
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenServicePrincipalMissing()
     {
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([ByoAppId], SignInFailed: false)));
-        _graph.LookupServicePrincipalByAppIdAmbientAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<string?>(null));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
@@ -163,7 +163,7 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenMultipleApplicationsShareTheDisplayName()
     {
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([ByoAppId, "99999999-9999-9999-9999-999999999999"], SignInFailed: false)));
 
         var result = await _service.ResolveServerResourceAsync(TenantId, ServerName);
@@ -171,7 +171,7 @@ public class McpServerPermissionServiceTests
         result.Should().BeNull(
             because: "Entra display names are not unique, and picking an arbitrary match would grant " +
                      "the agent tenant-wide access to a different MCP server than the caller named");
-        await _graph.DidNotReceive().LookupServicePrincipalByAppIdAmbientAsync(
+        await _graph.DidNotReceive().LookupServicePrincipalByAppIdForAgentAccessAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
     }
 
@@ -179,9 +179,9 @@ public class McpServerPermissionServiceTests
     public async Task ResolveServerResourceAsync_OffersEveryMatch_WhenADisplayNameIsAmbiguous()
     {
         const string OtherAppId = "99999999-9999-9999-9999-999999999999";
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([OtherAppId, ByoAppId], SignInFailed: false)));
-        _graph.LookupServicePrincipalByAppIdAmbientAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<string?>(ByoSpObjectId));
 
         IReadOnlyList<string>? offered = null;
@@ -199,7 +199,7 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task ResolveServerResourceAsync_ReturnsNull_WhenTheAmbiguousSelectionIsCancelled()
     {
-        _graph.TryFindApplicationAppIdsByDisplayNameAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([ByoAppId, "99999999-9999-9999-9999-999999999999"], SignInFailed: false)));
 
         var result = await _service.ResolveServerResourceAsync(
@@ -207,7 +207,7 @@ public class McpServerPermissionServiceTests
 
         result.Should().BeNull(
             because: "declining to choose between duplicates must abort rather than fall back to an arbitrary match");
-        await _graph.DidNotReceive().LookupServicePrincipalByAppIdAmbientAsync(
+        await _graph.DidNotReceive().LookupServicePrincipalByAppIdForAgentAccessAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
     }
 
@@ -217,12 +217,12 @@ public class McpServerPermissionServiceTests
         // The instance listing must reuse the sign-in the rest of the flow already holds.
         // Requesting AgentIdentity.Read.All separately falls back to Connect-MgGraph when no
         // client app is configured, adding a second interactive sign-in to the same command.
-        _blueprintService.GetAgentInstancesForBlueprintAmbientAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>([]));
 
         await _service.GetAgentInstanceStatusesAsync(TenantId, BlueprintId, ByoSpObjectId);
 
-        await _blueprintService.Received(1).GetAgentInstancesForBlueprintAmbientAsync(
+        await _blueprintService.Received(1).GetAgentInstancesForBlueprintForAgentAccessAsync(
             TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>());
         await _blueprintService.DidNotReceive().GetAgentInstancesForBlueprintAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<bool>());
@@ -231,12 +231,12 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task GetAgentInstanceStatusesAsync_Throws_WhenTheGrantReadFails()
     {
-        _blueprintService.GetAgentInstancesForBlueprintAmbientAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>(
             [
                 new AgentInstanceInfo { IdentitySpId = AgentSpId, DisplayName = "Agent" },
             ]));
-        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
+        _graph.TryGetOauth2PermissionGrantsForAgentAccessAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<List<(string, string, string)>?>(null));
 
         var act = async () => await _service.GetAgentInstanceStatusesAsync(TenantId, BlueprintId, ByoSpObjectId);
@@ -249,19 +249,19 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task GetAgentInstanceStatusesAsync_FlagsInstancesWithAndWithoutTheScope()
     {
-        _blueprintService.GetAgentInstancesForBlueprintAmbientAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>(
             [
                 new AgentInstanceInfo { IdentitySpId = "sp-granted", DisplayName = "Granted" },
                 new AgentInstanceInfo { IdentitySpId = "sp-missing", DisplayName = "Missing" },
             ]));
 
-        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, "sp-granted", Arg.Any<CancellationToken>())
+        _graph.TryGetOauth2PermissionGrantsForAgentAccessAsync(TenantId, "sp-granted", Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (ByoSpObjectId, $"User.Read {McpConstants.V2ScopeValue}", "AllPrincipals"),
             }));
-        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, "sp-missing", Arg.Any<CancellationToken>())
+        _graph.TryGetOauth2PermissionGrantsForAgentAccessAsync(TenantId, "sp-missing", Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (ByoSpObjectId, "User.Read", "AllPrincipals"),
@@ -277,13 +277,13 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task GetAgentInstanceStatusesAsync_IgnoresPrincipalScopedGrants()
     {
-        _blueprintService.GetAgentInstancesForBlueprintAmbientAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>(
             [
                 new AgentInstanceInfo { IdentitySpId = AgentSpId, DisplayName = "Agent" },
             ]));
 
-        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
+        _graph.TryGetOauth2PermissionGrantsForAgentAccessAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (ByoSpObjectId, McpConstants.V2ScopeValue, "Principal"),
@@ -298,13 +298,13 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task GetAgentInstanceStatusesAsync_IgnoresGrantsAgainstOtherResources()
     {
-        _blueprintService.GetAgentInstancesForBlueprintAmbientAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>(
             [
                 new AgentInstanceInfo { IdentitySpId = AgentSpId, DisplayName = "Agent" },
             ]));
 
-        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
+        _graph.TryGetOauth2PermissionGrantsForAgentAccessAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (OtherResourceSpId, McpConstants.V2ScopeValue, "AllPrincipals"),
@@ -319,13 +319,13 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task GetAgentInstanceStatusesAsync_DoesNotMatchScopeByPrefix()
     {
-        _blueprintService.GetAgentInstancesForBlueprintAmbientAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+        _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>(
             [
                 new AgentInstanceInfo { IdentitySpId = AgentSpId, DisplayName = "Agent" },
             ]));
 
-        _graph.TryGetOauth2PermissionGrantsAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
+        _graph.TryGetOauth2PermissionGrantsForAgentAccessAsync(TenantId, AgentSpId, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<List<(string, string, string)>?>(new List<(string, string, string)>
             {
                 (ByoSpObjectId, $"{McpConstants.V2ScopeValue}.Extra", "AllPrincipals"),
@@ -340,7 +340,7 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task GrantServerScopeAsync_RequestsTheMcpServerScope()
     {
-        _graph.CreateOrUpdateOauth2PermissionGrantAmbientAsync(
+        _graph.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
                 TenantId, AgentSpId, ByoSpObjectId,
                 Arg.Is<IEnumerable<string>>(s => s.SequenceEqual(new[] { McpConstants.V2ScopeValue })),
                 Arg.Any<CancellationToken>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>())
@@ -350,7 +350,7 @@ public class McpServerPermissionServiceTests
 
         granted.Should().BeTrue();
 
-        await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantAmbientAsync(
+        await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(),
             true, Arg.Any<bool>(), true);
@@ -362,7 +362,7 @@ public class McpServerPermissionServiceTests
         // GetAgentInstanceStatusesAsync reads grants with the ambient identity. Granting under a
         // scoped identity makes the grant's own preflight read fail with 403
         // Authorization_RequestDenied, which aborts the grant for every caller (issue #500).
-        _graph.CreateOrUpdateOauth2PermissionGrantAmbientAsync(
+        _graph.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                 Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(),
                 Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>())
@@ -370,7 +370,7 @@ public class McpServerPermissionServiceTests
 
         await _service.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId);
 
-        await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantAmbientAsync(
+        await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(),
             Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>());
@@ -383,7 +383,7 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task GrantServerScopeAsync_ReturnsFalse_WhenGraphRejectsTheGrant()
     {
-        _graph.CreateOrUpdateOauth2PermissionGrantAmbientAsync(
+        _graph.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                 Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(),
                 Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>())

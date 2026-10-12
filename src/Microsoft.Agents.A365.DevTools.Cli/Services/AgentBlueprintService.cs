@@ -186,17 +186,16 @@ public class AgentBlueprintService
             tenantId, blueprintId, cancellationToken, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
 
     /// <summary>
-    /// Same as <see cref="GetAgentInstancesForBlueprintAsync"/> but reuses the caller's ambient
-    /// sign-in. Requesting AgentIdentity.Read.All separately falls back to an interactive
-    /// Connect-MgGraph when no client app is configured, adding a sign-in to the same command.
+    /// Same as <see cref="GetAgentInstancesForBlueprintAsync"/> but reads under the Graph Command
+    /// Line Tools app, so the grant-agents-access flow uses one identity and one sign-in.
     /// </summary>
-    public virtual Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintAmbientAsync(
+    public virtual Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintForAgentAccessAsync(
         string tenantId,
         string blueprintId,
         CancellationToken cancellationToken = default,
         bool useDeviceCode = false)
         => GetAgentInstancesForBlueprintCoreAsync(
-            tenantId, blueprintId, cancellationToken, useDeviceCode, GraphAuthenticationMode.Ambient);
+            tenantId, blueprintId, cancellationToken, useDeviceCode, GraphAuthenticationMode.McpAgentAccess);
 
     private async Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintCoreAsync(
         string tenantId,
