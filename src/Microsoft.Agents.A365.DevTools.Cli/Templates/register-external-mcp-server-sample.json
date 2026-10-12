@@ -18,6 +18,7 @@
   "tenantId": null,
   "serviceTreeId": null,
   "secretLifetimeMonths": null,
+  "connectivity": "private",
   "force": false,
   "externalOAuth": {
     "authorizationUrl": null,
