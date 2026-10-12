@@ -823,7 +823,8 @@ public class GraphApiService
     /// Virtual to allow mocking in unit tests using Moq.
     /// </summary>
     public virtual async Task<string?> LookupServicePrincipalByAppIdAsync(
-        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool useDeviceCode = false)
+        string tenantId, string appId, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool useDeviceCode = false,
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
         // $filter=appId eq is "Default+Advanced" per Graph docs - no ConsistencyLevel header required.
         // The token must have Application.Read.All; pass scopes to ensure MSAL token is used when needed.
@@ -832,6 +833,7 @@ public class GraphApiService
             $"/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id",
             ct,
             scopes,
+            authenticationMode,
             useDeviceCode);
         if (doc == null) return null;
         if (!doc.RootElement.TryGetProperty("value", out var value) || value.GetArrayLength() == 0) return null;

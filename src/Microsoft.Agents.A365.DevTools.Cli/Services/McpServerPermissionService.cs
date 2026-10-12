@@ -118,7 +118,10 @@ public class McpServerPermissionService
         }
 
         var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
-            tenantId, appId, ct, AuthenticationConstants.RequiredPermissionGrantScopes, UseDeviceCodeAuthentication);
+            tenantId, appId, ct, scopes: null, UseDeviceCodeAuthentication,
+            // Same sign-in as the rest of the flow. A scoped token here cannot be acquired
+            // silently without a configured client app, so it costs an extra Connect-MgGraph.
+            GraphAuthenticationMode.Ambient);
         if (string.IsNullOrWhiteSpace(spObjectId))
         {
             _logger.LogError(
@@ -148,7 +151,7 @@ public class McpServerPermissionService
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceSpObjectId);
 
         var instances = await _blueprintService.GetAgentInstancesForBlueprintAsync(
-            tenantId, blueprintId, ct, UseDeviceCodeAuthentication);
+            tenantId, blueprintId, ct, UseDeviceCodeAuthentication, GraphAuthenticationMode.Ambient);
 
         var statuses = new List<AgentInstancePermissionStatus>(instances.Count);
         foreach (var instance in instances)

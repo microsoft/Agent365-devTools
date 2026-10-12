@@ -174,13 +174,19 @@ public class AgentBlueprintService
     /// <param name="tenantId">The tenant ID for authentication.</param>
     /// <param name="blueprintId">The blueprint application ID or object ID.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="useDeviceCode">Use device code authentication.</param>
+    /// <param name="authenticationMode">
+    /// Pass <see cref="GraphAuthenticationMode.Ambient"/> to reuse the caller's existing sign-in
+    /// instead of acquiring a separately scoped token.
+    /// </param>
     /// <returns>List of agent instances linked to the blueprint.</returns>
     /// <exception cref="Exception">Thrown when the Graph query fails.</exception>
     public virtual async Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintAsync(
         string tenantId,
         string blueprintId,
         CancellationToken cancellationToken = default,
-        bool useDeviceCode = false)
+        bool useDeviceCode = false,
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
         var spScopes = new[] { AuthenticationConstants.AgentIdentityReadAllScope };
         var encodedId = Uri.EscapeDataString(blueprintId);
@@ -191,7 +197,8 @@ public class AgentBlueprintService
             $"/beta/servicePrincipals/microsoft.graph.agentIdentity?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,displayName",
             spScopes,
             cancellationToken,
-            useDeviceCode);
+            useDeviceCode,
+            authenticationMode);
 
         // Agent user query requires AgentIdUser.ReadWrite.All, which is intentionally absent from
         // RequiredClientAppPermissions until create-instance is re-enabled. This means agent user
@@ -205,7 +212,8 @@ public class AgentBlueprintService
                 $"/beta/users/microsoft.graph.agentUser?$filter=agentIdentityBlueprintId eq '{encodedId}'&$select=id,identityParentId",
                 userScopes,
                 cancellationToken,
-                useDeviceCode);
+                useDeviceCode,
+                authenticationMode);
         }
         else
         {
@@ -286,7 +294,8 @@ public class AgentBlueprintService
         string initialPath,
         string[] requiredScopes,
         CancellationToken cancellationToken,
-        bool useDeviceCode = false)
+        bool useDeviceCode = false,
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
         var items = new List<JsonElement>();
         string? nextPageUrl = null;
@@ -302,6 +311,7 @@ public class AgentBlueprintService
                 requestPath,
                 cancellationToken,
                 requiredScopes,
+                authenticationMode,
                 useDeviceCode);
 
             if (doc is null)
