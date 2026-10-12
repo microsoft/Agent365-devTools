@@ -12,7 +12,9 @@ This folder contains the workflow components for the `a365 setup` command. The s
 |-----------|------|-------------|
 | **AllSubcommand** | `AllSubcommand.cs` | Orchestrates the complete setup workflow (`a365 setup all`) |
 | **BlueprintSubcommand** | `BlueprintSubcommand.cs` | Creates agent blueprint application registration |
-| **BlueprintCreationOptions** | `BlueprintCreationOptions.cs` | Options record for blueprint creation (e.g. `DeferConsent`) |
+| **BlueprintCreationOptions** | `BlueprintCreationOptions.cs` | Options record for blueprint creation (e.g. `DeferConsent`, `ServiceManagementReference`) |
+| **BlueprintCreationFailure** | `BlueprintCreationFailure.cs` | Classifies a failed blueprint creation (`serviceManagementReference`, permission, other) and builds the matching error and remediation |
+| **ServiceManagementReferenceOption** | `ServiceManagementReferenceOption.cs` | The `--service-management-reference` option shared by `setup blueprint` and `setup all` |
 | **InfrastructureSubcommand** | `InfrastructureSubcommand.cs` | Provisions Azure infrastructure (App Service, etc.) |
 | **PermissionsSubcommand** | `PermissionsSubcommand.cs` | Configures Graph API permissions and admin consent |
 | **BatchPermissionsOrchestrator** | `BatchPermissionsOrchestrator.cs` | Three-phase batch permissions flow used by `setup all` and standalone permission commands |
@@ -126,6 +128,42 @@ Automated messaging endpoint registration is not available for this tenant yet. 
 ```
 
 and the `a365 setup all` summary includes an "Action Required" entry with the Teams Developer Portal URL. The command does not fail — other setup steps still complete.
+
+---
+
+### Service management reference (`--service-management-reference`)
+
+Some tenants require the `serviceManagementReference` property on every new application, including agent blueprints. In those tenants Microsoft Graph rejects blueprint creation with `400 Bad Request` ("ServiceManagementReference field is required for Create, but is missing in the request.") unless a value is supplied. `setup blueprint` and `setup all` accept it with `--service-management-reference` (the same name as `az ad app create --service-management-reference`), or from `serviceManagementReference` in `a365.config.json`:
+
+```bash
+a365 setup all --agent-name MyAgent --service-management-reference <guid>
+a365 setup blueprint --service-management-reference <guid>
+```
+
+```json
+{
+  "serviceManagementReference": "<guid>"
+}
+```
+
+- The option overrides the config key. With `--agent-name`, `a365.config.json` is not read, so pass the option.
+- The value must be a non-zero GUID. An empty, whitespace, or malformed value fails with exit code 1 before any Microsoft Graph call.
+- The value is sent only when a new blueprint is created. Re-running setup against an existing blueprint does not change it.
+- Without a value the create request is unchanged, so tenants without this requirement are unaffected.
+- `--dry-run` shows the value that would be set on a new blueprint.
+
+#### Troubleshooting blueprint creation
+
+When blueprint creation fails, `setup blueprint` and `setup all` end the error with an `Error code:` line that matches one of these codes:
+
+| Error code | Cause | Fix |
+|------------|-------|-----|
+| `SERVICE_MANAGEMENT_REFERENCE_REQUIRED` | Graph rejected the request because the tenant requires `serviceManagementReference` and none was sent. | Re-run with `--service-management-reference <guid>`, or set `serviceManagementReference` in `a365.config.json`. The error includes the troubleshooting link from Graph's response. |
+| `SERVICE_MANAGEMENT_REFERENCE_REJECTED` | Graph rejected the `serviceManagementReference` value that was sent. | Verify the value your tenant expects, then re-run with the correct one. |
+| `GRAPH_PERMISSION_DENIED` | Graph returned 401/403 or `Authorization_RequestDenied`. | Creating a blueprint requires an **active** Agent ID Developer, Agent ID Administrator, or Global Administrator role. Activate an eligible (PIM) assignment, then re-run. |
+| `GRAPH_API_FAILED` | Any other failure. The error includes the HTTP status and Graph error code. | Act on the reported Graph error, then re-run. |
+
+`serviceManagementReference` errors fail immediately. The sponsors/owners fallback retries apply only to other `400 Bad Request` responses.
 
 ---
 

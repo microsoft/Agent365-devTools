@@ -38,6 +38,7 @@ public class Agent365Config
 
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
         ValidateAuthMode(AuthMode, errors);
+        ValidateServiceManagementReference(ServiceManagementReference, errors);
 
         // Validate custom blueprint permissions
         if (CustomBlueprintPermissions != null && CustomBlueprintPermissions.Count > 0)
@@ -83,6 +84,7 @@ public class Agent365Config
             ValidateGuid(ClientAppId, nameof(ClientAppId), errors);
         if (string.IsNullOrWhiteSpace(AgentIdentityDisplayName)) errors.Add("agentIdentityDisplayName is required.");
         ValidateAuthMode(AuthMode, errors);
+        ValidateServiceManagementReference(ServiceManagementReference, errors);
 
         return errors;
     }
@@ -109,6 +111,15 @@ public class Agent365Config
         {
             errors.Add($"authMode '{value}' is invalid. Allowed values: obo, s2s, both.");
         }
+    }
+
+    /// <summary>
+    /// Validates ServiceManagementReference is either absent (null) or a non-zero GUID; blank is rejected rather than ignored.
+    /// </summary>
+    private static void ValidateServiceManagementReference(string? value, List<string> errors)
+    {
+        if (value is null || Helpers.ServiceManagementReferenceHelper.TryNormalize(value, out _)) return;
+        errors.Add($"serviceManagementReference must be a non-zero GUID, but was '{value}'. Remove it if your tenant does not require one.");
     }
 
     // ========================================================================
@@ -257,6 +268,13 @@ public class Agent365Config
     /// </summary>
     [JsonPropertyName("agentBlueprintDisplayName")]
     public string? AgentBlueprintDisplayName { get; init; }
+
+    /// <summary>
+    /// Value (GUID) set as serviceManagementReference when a new agent blueprint is created.
+    /// Only needed in tenants that require it; --service-management-reference overrides it.
+    /// </summary>
+    [JsonPropertyName("serviceManagementReference")]
+    public string? ServiceManagementReference { get; init; }
 
     /// <summary>
     /// User Principal Name (UPN) for the agentic user to be created in Azure AD.
@@ -699,6 +717,7 @@ public class Agent365Config
             NeedAzureOpenAI = this.NeedAzureOpenAI,
             AgentIdentityDisplayName = this.AgentIdentityDisplayName,
             AgentBlueprintDisplayName = this.AgentBlueprintDisplayName,
+            ServiceManagementReference = this.ServiceManagementReference,
             AgentUserPrincipalName = this.AgentUserPrincipalName,
             AgentUserDisplayName = this.AgentUserDisplayName,
             ManagerEmail = this.ManagerEmail,

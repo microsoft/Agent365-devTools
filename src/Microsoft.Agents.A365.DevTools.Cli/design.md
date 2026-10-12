@@ -91,7 +91,7 @@ flowchart LR
 
 | File | Content | Editing |
 |------|---------|---------|
-| `a365.config.json` | Tenant ID, subscription, resource names, project path, `authMode` | User edits |
+| `a365.config.json` | Tenant ID, subscription, resource names, project path, `authMode`, `serviceManagementReference` | User edits |
 | `a365.generated.config.json` | Agent blueprint ID, identity ID, consent status | CLI generates |
 
 ### Configuration File Storage and Portability

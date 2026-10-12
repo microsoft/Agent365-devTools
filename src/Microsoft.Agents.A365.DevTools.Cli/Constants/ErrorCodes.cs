@@ -16,5 +16,9 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Constants
         public const string ClientAppValidationFailed = "CLIENT_APP_VALIDATION_FAILED";
         public const string EvaluationFailed = "EVALUATION_FAILED";
         public const string SchemaDiscoveryFailed = "SCHEMA_DISCOVERY_FAILED";
+        public const string GraphApiFailed = "GRAPH_API_FAILED";
+        public const string GraphPermissionDenied = "GRAPH_PERMISSION_DENIED";
+        public const string ServiceManagementReferenceRequired = "SERVICE_MANAGEMENT_REFERENCE_REQUIRED";
+        public const string ServiceManagementReferenceRejected = "SERVICE_MANAGEMENT_REFERENCE_REJECTED";
     }
 }

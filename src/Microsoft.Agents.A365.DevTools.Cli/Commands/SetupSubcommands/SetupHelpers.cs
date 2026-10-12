@@ -1666,7 +1666,8 @@ internal static class SetupHelpers
         string[] rawArgs,
         Agent365Config? config = null,
         bool isM365 = false,
-        string? messagingEndpointOverride = null)
+        string? messagingEndpointOverride = null,
+        string? serviceManagementReference = null)
     {
         var sub = new string(' ', DryRunValCol);
 
@@ -1697,6 +1698,8 @@ internal static class SetupHelpers
                 logger.LogInformation(DryRunRow(3, "Blueprint") + "create (multi-tenant): {DisplayName}", blueprintDisplayName);
             else
                 logger.LogInformation(DryRunRow(3, "Blueprint") + "create (multi-tenant)");
+            if (!string.IsNullOrWhiteSpace(serviceManagementReference))
+                logger.LogInformation(sub + "set serviceManagementReference: {ServiceManagementReference}", serviceManagementReference);
             logger.LogInformation(sub + "create service principal");
             logger.LogInformation(sub + "create client secret");
             logger.LogInformation(sub + "create federated identity credential (FIC)");

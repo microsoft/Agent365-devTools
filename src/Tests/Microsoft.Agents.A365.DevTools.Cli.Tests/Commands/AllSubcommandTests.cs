@@ -4,6 +4,7 @@
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Exceptions;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
@@ -591,5 +592,110 @@ public class AllSubcommandTests : IDisposable
             because: "GetObservabilityApiAppId throws for ambiguous AzureUSGovernment, so it must be resolved only after an Observability custom entry is detected");
         act().Should().BeFalse(
             because: "non-Observability custom permissions must not opt back into Observability handling");
+    }
+
+    // -----------------------------------------------------------------------
+    // ExecuteBlueprintStepAsync: serviceManagementReference forwarding and failure reporting
+    // -----------------------------------------------------------------------
+
+    private const string FlagReferenceId = "6f0e5d8a-3b1c-4c2d-9e7f-1a2b3c4d5e6f";
+    private const string ConfigReferenceId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+    private static SetupContext BuildBlueprintStepContext(
+        BlueprintCreator blueprintCreator,
+        string? referenceOverride = null,
+        string? configReference = null)
+    {
+        var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+        var graph = Substitute.For<GraphApiService>();
+
+        return new SetupContext(
+            config: new Agent365Config
+            {
+                AiTeammate = false,
+                TenantId = "tenant-id",
+                ClientAppId = "client-app-id",
+                AgentIdentityDisplayName = "Test Agent",
+                AgentBlueprintDisplayName = "Test Blueprint",
+                ServiceManagementReference = configReference,
+            },
+            results: new SetupResults(),
+            logger: NullLogger.Instance,
+            configFile: new FileInfo("a365.config.json"),
+            generatedConfigPath: "a365.generated.config.json",
+            correlationId: "test-correlation-id",
+            skipInfrastructure: true,
+            skipRequirements: true,
+            cancellationToken: CancellationToken.None,
+            configService: Substitute.For<IConfigService>(),
+            executor: executor,
+            backendConfigurator: Substitute.For<ITeamsGraphBackendConfigurator>(),
+            authValidator: Substitute.For<AzureAuthValidator>(NullLogger<AzureAuthValidator>.Instance, executor),
+            platformDetector: Substitute.ForPartsOf<PlatformDetector>(Substitute.For<ILogger<PlatformDetector>>()),
+            graphApiService: graph,
+            blueprintService: Substitute.ForPartsOf<AgentBlueprintService>(Substitute.For<ILogger<AgentBlueprintService>>(), graph),
+            blueprintLookupService: Substitute.ForPartsOf<BlueprintLookupService>(Substitute.For<ILogger<BlueprintLookupService>>(), graph),
+            federatedCredentialService: Substitute.ForPartsOf<FederatedCredentialService>(Substitute.For<ILogger<FederatedCredentialService>>(), graph),
+            clientAppValidator: Substitute.For<IClientAppValidator>(),
+            // Bootstrap mode skips the post-creation config reload from disk.
+            isBootstrap: true,
+            serviceManagementReferenceOverride: referenceOverride,
+            blueprintCreatorOverride: blueprintCreator);
+    }
+
+    [Theory]
+    [InlineData(FlagReferenceId, ConfigReferenceId, FlagReferenceId)]
+    [InlineData(null, ConfigReferenceId, ConfigReferenceId)]
+    [InlineData(null, null, null)]
+    public async Task ExecuteBlueprintStepAsync_ForwardsResolvedReferenceToBlueprintCreation(
+        string? flagValue, string? configValue, string? expected)
+    {
+        var captured = new List<BlueprintCreationOptions>();
+        var ctx = BuildBlueprintStepContext(
+            (config, options, _) =>
+            {
+                captured.Add(options);
+                config.AgentBlueprintId = "blueprint-app-id";
+                config.AgentBlueprintServicePrincipalObjectId = "blueprint-sp-id";
+                return Task.FromResult(new BlueprintCreationResult { BlueprintCreated = true });
+            },
+            flagValue,
+            configValue);
+
+        await AllSubcommand.ExecuteBlueprintStepAsync(ctx);
+
+        var options = captured.Should().ContainSingle().Subject;
+        options.ServiceManagementReference.Should().Be(expected,
+            because: "--service-management-reference overrides serviceManagementReference in a365.config.json, and neither means none is sent");
+        options.DeferConsent.Should().BeTrue(
+            because: "setup all runs consent in its own batch permissions step");
+        ctx.Results.BlueprintCreated.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("ServiceManagementReference", 400, "Request_BadRequest", null, ErrorCodes.ServiceManagementReferenceRequired)]
+    [InlineData("ServiceManagementReference", 400, "Request_BadRequest", FlagReferenceId, ErrorCodes.ServiceManagementReferenceRejected)]
+    [InlineData("PermissionDenied", 403, "Authorization_RequestDenied", null, ErrorCodes.GraphPermissionDenied)]
+    [InlineData("Other", 400, "Request_BadRequest", null, ErrorCodes.GraphApiFailed)]
+    [InlineData("Other", null, null, null, ErrorCodes.GraphApiFailed)]
+    public async Task ExecuteBlueprintStepAsync_WhenCreationFails_ReportsErrorForTheActualCause(
+        string kind, int? statusCode, string? graphErrorCode, string? reference, string expectedErrorCode)
+    {
+        var failure = new BlueprintCreationFailure(
+            Enum.Parse<BlueprintCreationFailureKind>(kind), "Graph rejected the request.", statusCode, graphErrorCode);
+        var ctx = BuildBlueprintStepContext(
+            (_, _, _) => Task.FromResult(new BlueprintCreationResult { BlueprintCreated = false, Failure = failure }),
+            referenceOverride: reference);
+
+        var act = () => AllSubcommand.ExecuteBlueprintStepAsync(ctx);
+
+        var thrown = (await act.Should().ThrowAsync<GraphApiException>()).Which;
+        thrown.ErrorCode.Should().Be(expectedErrorCode,
+            because: "GRAPH_PERMISSION_DENIED is reserved for genuine authorization failures; serviceManagementReference and other failures need their own guidance");
+        thrown.GetFormattedMessage().Should().Contain($"Error code: {expectedErrorCode}",
+            because: "setup all prints this exception's error block, so the code the user acts on must appear there");
+        ctx.Results.BlueprintFailed.Should().BeTrue();
+        ctx.Results.Errors.Should().ContainSingle(e => e.Contains(expectedErrorCode),
+            because: "the setup summary must report the same error code the user is told to act on");
     }
 }

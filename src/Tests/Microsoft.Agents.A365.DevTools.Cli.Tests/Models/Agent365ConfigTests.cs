@@ -1111,4 +1111,78 @@ public class Agent365ConfigTests
     }
 
     #endregion
+
+    #region ServiceManagementReference Tests
+
+    private const string ValidReferenceId = "6f0e5d8a-3b1c-4c2d-9e7f-1a2b3c4d5e6f";
+
+    private static Agent365Config ValidConfigWithReference(string? reference) => new()
+    {
+        TenantId = "12345678-1234-1234-1234-123456789012",
+        ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+        AgentIdentityDisplayName = "Test Agent",
+        ServiceManagementReference = reference
+    };
+
+    [Fact]
+    public void ServiceManagementReference_IsDeserializedFromConfigKey()
+    {
+        var json = $"{{\"serviceManagementReference\": \"{ValidReferenceId}\"}}";
+
+        var config = JsonSerializer.Deserialize<Agent365Config>(json);
+
+        config!.ServiceManagementReference.Should().Be(ValidReferenceId,
+            because: "serviceManagementReference in a365.config.json is an alternative to --service-management-reference");
+    }
+
+    [Fact]
+    public void ServiceManagementReference_IsStaticConfigNotGeneratedState()
+    {
+        var config = ValidConfigWithReference(ValidReferenceId);
+
+        ((Dictionary<string, object?>)config.GetStaticConfig()).Should().ContainKey("serviceManagementReference",
+            because: "serviceManagementReference is user-managed static configuration in a365.config.json");
+        ((Dictionary<string, object?>)config.GetGeneratedConfig()).Should().NotContainKey("serviceManagementReference",
+            because: "a365.generated.config.json holds only CLI-managed state");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(ValidReferenceId)]
+    public void Validate_AbsentOrValidReference_ReturnsNoReferenceError(string? reference)
+    {
+        var config = ValidConfigWithReference(reference);
+
+        config.Validate().Should().BeEmpty(
+            because: "serviceManagementReference is optional, and a non-zero GUID is a valid value");
+        config.ValidateNonDwMinimal().Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("not-a-guid")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public void Validate_BlankOrInvalidReference_ReturnsError(string reference)
+    {
+        var config = ValidConfigWithReference(reference);
+
+        config.Validate().Should().ContainSingle(e => e.StartsWith("serviceManagementReference ", StringComparison.Ordinal),
+            because: "an unusable serviceManagementReference must fail at config load, before any Graph call, instead of being silently dropped");
+        config.ValidateNonDwMinimal().Should().ContainSingle(e => e.StartsWith("serviceManagementReference ", StringComparison.Ordinal),
+            because: "both validators must enforce the same serviceManagementReference rule");
+    }
+
+    [Fact]
+    public void WithCustomBlueprintPermissions_PreservesServiceManagementReference()
+    {
+        var config = ValidConfigWithReference(ValidReferenceId);
+
+        var cloned = config.WithCustomBlueprintPermissions(null);
+
+        cloned.ServiceManagementReference.Should().Be(ValidReferenceId,
+            because: "cloning the static configuration must not drop serviceManagementReference");
+    }
+
+    #endregion
 }

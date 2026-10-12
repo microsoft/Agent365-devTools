@@ -80,6 +80,11 @@ internal class BlueprintCreationResult
     /// Non-null indicates a tenant administrator must complete consent at this URL.
     /// </summary>
     public string? AdminConsentUrl { get; set; }
+
+    /// <summary>
+    /// Why the blueprint was not created; null when <see cref="BlueprintCreated"/> is true.
+    /// </summary>
+    public BlueprintCreationFailure? Failure { get; set; }
 }
 
 /// <summary>
@@ -125,7 +130,8 @@ internal static class BlueprintSubcommand
         BlueprintLookupService blueprintLookupService,
         FederatedCredentialService federatedCredentialService,
         IConfirmationProvider? confirmationProvider = null,
-        IBootstrapConfigResolver? resolver = null)
+        IBootstrapConfigResolver? resolver = null,
+        BlueprintCreator? blueprintCreatorOverride = null)
     {
         var command = new Command("blueprint",
             "Create agent blueprint (Entra ID application registration)\n" +
@@ -182,6 +188,8 @@ internal static class BlueprintSubcommand
                          "No setup steps are performed.\n" +
                          "On Windows, requires the same machine and user account that ran setup.");
 
+        var serviceManagementReferenceOption = ServiceManagementReferenceOption.Create();
+
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
         command.AddOption(verboseOption);
@@ -193,6 +201,7 @@ internal static class BlueprintSubcommand
         command.AddOption(skipRequirementsOption);
         command.AddOption(m365Option);
         command.AddOption(showSecretOption);
+        command.AddOption(serviceManagementReferenceOption);
 
         command.SetHandler(async (System.CommandLine.Invocation.InvocationContext context) =>
         {
@@ -321,6 +330,12 @@ internal static class BlueprintSubcommand
                 return;
             }
 
+            if (!ServiceManagementReferenceOption.TryGetValue(context.ParseResult, serviceManagementReferenceOption, logger, out var serviceManagementReferenceFlag))
+            {
+                context.ExitCode = 1;
+                return;
+            }
+
             // Dry-run: attempt config resolution gracefully so the flag works without a config file.
             if (dryRun)
             {
@@ -336,6 +351,12 @@ internal static class BlueprintSubcommand
                     logger.LogInformation("  - Display Name: (pass --agent-name to preview)");
                 if (!string.IsNullOrWhiteSpace(dryRunConfig?.TenantId))
                     logger.LogInformation("  - Tenant: {TenantId}", dryRunConfig!.TenantId);
+                // Applied only to a new blueprint, so omit it when config already has one (matches 'setup all').
+                var dryRunServiceManagementReference = string.IsNullOrWhiteSpace(dryRunConfig?.AgentBlueprintId)
+                    ? ServiceManagementReferenceHelper.Resolve(serviceManagementReferenceFlag, dryRunConfig)
+                    : null;
+                if (dryRunServiceManagementReference is not null)
+                    logger.LogInformation("  - serviceManagementReference: {ServiceManagementReference}", dryRunServiceManagementReference);
                 logger.LogInformation("  - Would request admin consent for Graph and Connectivity APIs");
                 if (!skipEndpointRegistration)
                     logger.LogInformation("  - Would register messaging endpoint");
@@ -425,27 +446,37 @@ internal static class BlueprintSubcommand
             }
 
             // Normal blueprint creation (with optional endpoint skipping)
-            await CreateBlueprintImplementationAsync(
-                setupConfig,
-                config,
-                executor,
-                authValidator,
-                logger,
-                false,
-                false,
-                configService,
-                backendConfigurator,
-                platformDetector,
-                graphApiService,
-                blueprintService,
-                blueprintLookupService,
-                federatedCredentialService,
-                skipEndpointRegistration,
-                correlationId: correlationId,
-                confirmationProvider: confirmationProvider,
-                isM365: isM365
-                );
+            var creationOptions = new BlueprintCreationOptions(
+                ServiceManagementReference: ServiceManagementReferenceHelper.Resolve(serviceManagementReferenceFlag, setupConfig));
+            var creationResult = blueprintCreatorOverride is not null
+                ? await blueprintCreatorOverride(setupConfig, creationOptions, ct)
+                : await CreateBlueprintImplementationAsync(
+                    setupConfig,
+                    config,
+                    executor,
+                    authValidator,
+                    logger,
+                    false,
+                    false,
+                    configService,
+                    backendConfigurator,
+                    platformDetector,
+                    graphApiService,
+                    blueprintService,
+                    blueprintLookupService,
+                    federatedCredentialService,
+                    skipEndpointRegistration,
+                    correlationId: correlationId,
+                    options: creationOptions,
+                    confirmationProvider: confirmationProvider,
+                    isM365: isM365);
 
+            if (!creationResult.BlueprintCreated)
+            {
+                var creationError = BlueprintCreationFailure.CreateException(creationResult.Failure, creationOptions.ServiceManagementReference);
+                ExceptionHandler.HandleAgent365Exception(creationError, logFilePath: ConfigService.GetCommandLogPath(CommandNames.Setup));
+                context.ExitCode = 1;
+            }
         });
 
         return command;
@@ -584,7 +615,9 @@ internal static class BlueprintSubcommand
             { 
                 BlueprintCreated = false, 
                 EndpointRegistered = false, 
-                EndpointRegistrationAttempted = false 
+                EndpointRegistrationAttempted = false,
+                Failure = BlueprintCreationFailure.Other(
+                    "Could not grant the delegated AgentApplication.Create permission that blueprint creation requires. Review the errors logged above.")
             };
         }
 
@@ -627,7 +660,8 @@ internal static class BlueprintSubcommand
             {
                 BlueprintCreated = false,
                 EndpointRegistered = false,
-                EndpointRegistrationAttempted = false
+                EndpointRegistrationAttempted = false,
+                Failure = blueprintResult.failure
             };
         }
 
@@ -901,9 +935,9 @@ internal static class BlueprintSubcommand
     /// Creates Agent Blueprint application using Graph API
     /// Implements displayName-first discovery for idempotency: always searches by displayName from a365.config.json (the source of truth).
     /// Cached objectIds are only used for dependent resources (FIC, etc.) after blueprint existence is confirmed.
-    /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted, graphPermissionsConfigured, graphInheritablePermissionsFailed, graphInheritablePermissionsError, ficConfigured, ficError, adminConsentUrl)
+    /// Returns: (success, appId, objectId, servicePrincipalId, alreadyExisted, graphPermissionsConfigured, graphInheritablePermissionsFailed, graphInheritablePermissionsError, ficConfigured, ficError, adminConsentUrl, failure)
     /// </summary>
-    public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError, bool ficConfigured, string? ficError, string? adminConsentUrl)> CreateAgentBlueprintAsync(
+    public static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError, bool ficConfigured, string? ficError, string? adminConsentUrl, BlueprintCreationFailure? failure)> CreateAgentBlueprintAsync(
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -1072,7 +1106,13 @@ internal static class BlueprintSubcommand
             {
                 logger.LogError("Existing blueprint found but required identifiers are missing (AppId: {AppId}, ObjectId: {ObjectId})", 
                     existingAppId, existingObjectId);
-                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
+                return BlueprintCreateFailed(BlueprintCreationFailure.Other(
+                    "An existing blueprint was found, but its application ID or object ID is missing."));
+            }
+
+            if (!string.IsNullOrWhiteSpace(options?.ServiceManagementReference))
+            {
+                logger.LogDebug("serviceManagementReference is applied only when a blueprint is created; the existing blueprint is unchanged.");
             }
 
             return await CompleteBlueprintConfigurationAsync(
@@ -1150,30 +1190,6 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Could not retrieve current user for sponsors field: {Message}", ex.Message);
             }
 
-            // Define the application manifest with @odata.type for Agent Identity Blueprint
-            var appManifest = new JsonObject
-            {
-                ["@odata.type"] = "Microsoft.Graph.AgentIdentityBlueprint", // CRITICAL: Required for Agent Blueprint type
-                ["displayName"] = displayName,
-                ["signInAudience"] = "AzureADMultipleOrgs", // Multi-tenant
-                ["managerApplications"] = new JsonArray(AuthenticationConstants.A365ManagerAppId) // required to enable manageability for A365
-            };
-
-            // Add sponsors and owners fields if we have the current user
-            // IMPORTANT: Setting owners during creation is required to avoid 2-call pattern that will fail due to Entra bug fix
-            // See: https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/create-blueprint?tabs=microsoft-graph-api#create-an-agent-identity-blueprint-1
-            if (!string.IsNullOrEmpty(sponsorUserId))
-            {
-                appManifest["sponsors@odata.bind"] = new JsonArray
-                {
-                    $"{graphApiService.GraphBaseUrl}/v1.0/users/{sponsorUserId}"
-                };
-                appManifest["owners@odata.bind"] = new JsonArray
-                {
-                    $"{graphApiService.GraphBaseUrl}/v1.0/users/{sponsorUserId}"
-                };
-            }
-
             var blueprintLoginHint = loginHintResolver != null
                 ? await loginHintResolver()
                 : await InteractiveGraphAuthService.ResolveAzLoginHintAsync();
@@ -1192,7 +1208,8 @@ internal static class BlueprintSubcommand
             if (string.IsNullOrEmpty(graphToken))
             {
                 logger.LogError("Failed to extract access token from Graph client");
-                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
+                return BlueprintCreateFailed(BlueprintCreationFailure.Other(
+                    "Could not acquire a Microsoft Graph access token for blueprint creation."));
             }
 
             // Create the application using Microsoft Graph SDK
@@ -1200,82 +1217,14 @@ internal static class BlueprintSubcommand
             httpClient.DefaultRequestHeaders.Add("ConsistencyLevel", "eventual");
             httpClient.DefaultRequestHeaders.Add("OData-Version", "4.0"); // Required for @odata.type
 
-            var createAppUrl = $"{graphApiService.GraphBaseUrl}/beta/applications";
-
-            logger.LogInformation("Display Name: {DisplayName}", displayName);
-            if (!string.IsNullOrEmpty(sponsorUserId))
+            var createResult = await CreateBlueprintApplicationAsync(
+                httpClient, graphApiService.GraphBaseUrl, displayName, sponsorUserId, options, logger, ct);
+            if (createResult.Application is null)
             {
-                logger.LogInformation("Sponsor and Owner: User ID {UserId}", sponsorUserId);
+                return BlueprintCreateFailed(createResult.Failure);
             }
 
-            var appResponse = await httpClient.PostAsync(
-                createAppUrl,
-                new StringContent(appManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                ct);
-
-            if (!appResponse.IsSuccessStatusCode)
-            {
-                var errorContent = await appResponse.Content.ReadAsStringAsync(ct);
-
-                // If sponsors/owners fields cause error (Bad Request 400), retry selectively.
-                // First drop only sponsors — this preserves ownership if sponsors was the sole cause.
-                // Only drop owners as a last resort, since losing ownership breaks addPassword for non-admins.
-                if (appResponse.StatusCode == System.Net.HttpStatusCode.BadRequest &&
-                    !string.IsNullOrEmpty(sponsorUserId))
-                {
-                    logger.LogWarning("Blueprint creation failed (Bad Request). Error: {Error}. Retrying without sponsors field...", errorContent);
-                    appManifest.Remove("sponsors@odata.bind");
-                    appResponse.Dispose();
-
-                    appResponse = await httpClient.PostAsync(
-                        createAppUrl,
-                        new StringContent(appManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                        ct);
-
-                    if (!appResponse.IsSuccessStatusCode)
-                    {
-                        errorContent = await appResponse.Content.ReadAsStringAsync(ct);
-
-                        if (appResponse.StatusCode == System.Net.HttpStatusCode.BadRequest)
-                        {
-                            logger.LogWarning("Blueprint creation without sponsors also failed (Bad Request). Error: {Error}. Retrying without owners field...", errorContent);
-                            appManifest.Remove("owners@odata.bind");
-                            appResponse.Dispose();
-
-                            appResponse = await httpClient.PostAsync(
-                                createAppUrl,
-                                new StringContent(appManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
-                                ct);
-
-                            if (!appResponse.IsSuccessStatusCode)
-                            {
-                                errorContent = await appResponse.Content.ReadAsStringAsync(ct);
-                                logger.LogError("Failed to create application (all fallbacks exhausted): {Status} - {Error}", appResponse.StatusCode, errorContent);
-                                appResponse.Dispose();
-                                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
-                            }
-
-                            logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation may fail — ensure you have Application Administrator role or the blueprint owner is set correctly.");
-                        }
-                        else
-                        {
-                            logger.LogError("Failed to create application (fallback): {Status} - {Error}", appResponse.StatusCode, errorContent);
-                            appResponse.Dispose();
-                            return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
-                        }
-                    }
-                }
-                else
-                {
-                    logger.LogError("Failed to create application: {Status} - {Error}", appResponse.StatusCode, errorContent);
-                    appResponse.Dispose();
-                    return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
-                }
-            }
-
-            var appJson = await appResponse.Content.ReadAsStringAsync(ct);
-            appResponse.Dispose();
-            var app = JsonNode.Parse(appJson)!.AsObject();
+            var app = createResult.Application;
             var appId = app["appId"]!.GetValue<string>();
             var objectId = app["id"]!.GetValue<string>();
 
@@ -1304,7 +1253,8 @@ internal static class BlueprintSubcommand
             if (!appAvailable)
             {
                 logger.LogError("Application object not available after creation and retries. Aborting setup.");
-                return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
+                return BlueprintCreateFailed(BlueprintCreationFailure.Other(
+                    $"Blueprint application '{appId}' was created but did not become available in the directory in time. Re-run setup to continue with it."));
             }
             
             logger.LogDebug("Application object verified in directory");
@@ -1507,8 +1457,139 @@ internal static class BlueprintSubcommand
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Blueprint creation failed: {Message}", ex.Message);
-            return (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null);
+            return BlueprintCreateFailed(BlueprintCreationFailure.Other(ex.Message));
         }
+    }
+
+    private static (bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError, bool ficConfigured, string? ficError, string? adminConsentUrl, BlueprintCreationFailure? failure) BlueprintCreateFailed(
+        BlueprintCreationFailure? failure) =>
+        (false, null, null, null, alreadyExisted: false, graphPermissionsConfigured: false, graphInheritablePermissionsFailed: false, graphInheritablePermissionsError: null, ficConfigured: false, ficError: null, adminConsentUrl: null, failure);
+
+    /// <summary>
+    /// Builds the Graph create payload for an Agent Identity Blueprint application.
+    /// </summary>
+    internal static JsonObject BuildBlueprintManifest(
+        string displayName,
+        string graphBaseUrl,
+        string? sponsorUserId,
+        string? serviceManagementReference)
+    {
+        var appManifest = new JsonObject
+        {
+            ["@odata.type"] = "Microsoft.Graph.AgentIdentityBlueprint", // CRITICAL: Required for Agent Blueprint type
+            ["displayName"] = displayName,
+            ["signInAudience"] = "AzureADMultipleOrgs", // Multi-tenant
+            ["managerApplications"] = new JsonArray(AuthenticationConstants.A365ManagerAppId) // required to enable manageability for A365
+        };
+
+        // Some tenants reject application creation without serviceManagementReference.
+        if (!string.IsNullOrWhiteSpace(serviceManagementReference))
+        {
+            appManifest[ServiceManagementReferenceConstants.GraphPropertyName] = serviceManagementReference;
+        }
+
+        // Add sponsors and owners fields if we have the current user
+        // IMPORTANT: Setting owners during creation is required to avoid 2-call pattern that will fail due to Entra bug fix
+        // See: https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/create-blueprint?tabs=microsoft-graph-api#create-an-agent-identity-blueprint-1
+        if (!string.IsNullOrEmpty(sponsorUserId))
+        {
+            appManifest["sponsors@odata.bind"] = new JsonArray
+            {
+                $"{graphBaseUrl}/v1.0/users/{sponsorUserId}"
+            };
+            appManifest["owners@odata.bind"] = new JsonArray
+            {
+                $"{graphBaseUrl}/v1.0/users/{sponsorUserId}"
+            };
+        }
+
+        return appManifest;
+    }
+
+    /// <summary>
+    /// POSTs the blueprint application to Graph. Returns the created application, or a structured failure.
+    /// </summary>
+    internal static async Task<(JsonObject? Application, BlueprintCreationFailure? Failure)> CreateBlueprintApplicationAsync(
+        HttpClient httpClient,
+        string graphBaseUrl,
+        string displayName,
+        string? sponsorUserId,
+        BlueprintCreationOptions? options,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var serviceManagementReference = options?.ServiceManagementReference;
+        var appManifest = BuildBlueprintManifest(displayName, graphBaseUrl, sponsorUserId, serviceManagementReference);
+        var createAppUrl = $"{graphBaseUrl}/beta/applications";
+
+        logger.LogInformation("Display Name: {DisplayName}", displayName);
+        if (!string.IsNullOrWhiteSpace(serviceManagementReference))
+        {
+            logger.LogInformation("serviceManagementReference: {ServiceManagementReference}", serviceManagementReference);
+        }
+        if (!string.IsNullOrEmpty(sponsorUserId))
+        {
+            logger.LogInformation("Sponsor and Owner: User ID {UserId}", sponsorUserId);
+        }
+
+        async Task<(bool Succeeded, System.Net.HttpStatusCode Status, string Body)> PostManifestAsync()
+        {
+            using var content = new StringContent(appManifest.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+            using var response = await httpClient.PostAsync(createAppUrl, content, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            return (response.IsSuccessStatusCode, response.StatusCode, body);
+        }
+
+        // Only a 400 that a sponsors/owners retry could fix; a serviceManagementReference error fails the same way without them.
+        static bool CanRetryWithoutSponsorOrOwner(BlueprintCreationFailure failure) =>
+            failure.HttpStatusCode == (int)System.Net.HttpStatusCode.BadRequest &&
+            failure.Kind != BlueprintCreationFailureKind.ServiceManagementReference;
+
+        var (succeeded, status, body) = await PostManifestAsync();
+        if (succeeded)
+        {
+            return (JsonNode.Parse(body)!.AsObject(), null);
+        }
+
+        var failure = BlueprintCreationFailure.FromGraphResponse(status, body);
+
+        // If sponsors/owners fields cause error (Bad Request 400), retry selectively.
+        // First drop only sponsors: this preserves ownership if sponsors was the sole cause.
+        // Only drop owners as a last resort, since losing ownership breaks addPassword for non-admins.
+        if (CanRetryWithoutSponsorOrOwner(failure) && appManifest.ContainsKey("sponsors@odata.bind"))
+        {
+            logger.LogWarning("Blueprint creation failed (Bad Request). Error: {Error}. Retrying without sponsors field...", body);
+            appManifest.Remove("sponsors@odata.bind");
+
+            (succeeded, status, body) = await PostManifestAsync();
+            if (succeeded)
+            {
+                return (JsonNode.Parse(body)!.AsObject(), null);
+            }
+
+            failure = BlueprintCreationFailure.FromGraphResponse(status, body);
+            if (CanRetryWithoutSponsorOrOwner(failure) && appManifest.ContainsKey("owners@odata.bind"))
+            {
+                logger.LogWarning("Blueprint creation without sponsors also failed (Bad Request). Error: {Error}. Retrying without owners field...", body);
+                appManifest.Remove("owners@odata.bind");
+
+                (succeeded, status, body) = await PostManifestAsync();
+                if (succeeded)
+                {
+                    logger.LogWarning("Agent Blueprint created without owner assignment. Client secret creation may fail; ensure you have Application Administrator role or the blueprint owner is set correctly.");
+                    return (JsonNode.Parse(body)!.AsObject(), null);
+                }
+
+                logger.LogError("Failed to create application (all fallbacks exhausted): {Status} - {Error}", status, body);
+                return (null, BlueprintCreationFailure.FromGraphResponse(status, body));
+            }
+
+            logger.LogError("Failed to create application (fallback): {Status} - {Error}", status, body);
+            return (null, failure);
+        }
+
+        logger.LogError("Failed to create application: {Status} - {Error}", status, body);
+        return (null, failure);
     }
 
     /// <summary>
@@ -1578,7 +1659,7 @@ internal static class BlueprintSubcommand
     /// Completes blueprint configuration by validating/creating federated credentials and requesting admin consent.
     /// Called by both existing blueprint and new blueprint paths to ensure consistent configuration.
     /// </summary>
-    private static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError, bool ficConfigured, string? ficError, string? adminConsentUrl)> CompleteBlueprintConfigurationAsync(
+    private static async Task<(bool success, string? appId, string? objectId, string? servicePrincipalId, bool alreadyExisted, bool graphPermissionsConfigured, bool graphInheritablePermissionsFailed, string? graphInheritablePermissionsError, bool ficConfigured, string? ficError, string? adminConsentUrl, BlueprintCreationFailure? failure)> CompleteBlueprintConfigurationAsync(
         ILogger logger,
         CommandExecutor executor,
         GraphApiService graphApiService,
@@ -1801,7 +1882,7 @@ internal static class BlueprintSubcommand
         // Track Graph permissions status - this is critical for agent token exchange
         bool graphPermissionsFailed = !graphInheritablePermissionsConfigured;
         string? adminConsentUrl = !consentSuccess ? consentUrlGraph : null;
-        return (true, appId, objectId, servicePrincipalId, alreadyExisted, consentSuccess, graphPermissionsFailed, graphInheritablePermissionsError, ficConfigured, ficError, adminConsentUrl);
+        return (true, appId, objectId, servicePrincipalId, alreadyExisted, consentSuccess, graphPermissionsFailed, graphInheritablePermissionsError, ficConfigured, ficError, adminConsentUrl, failure: null);
     }
 
     /// <summary>
