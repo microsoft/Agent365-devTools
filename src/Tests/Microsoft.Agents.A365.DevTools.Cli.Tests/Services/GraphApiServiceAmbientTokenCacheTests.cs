@@ -12,24 +12,88 @@ using Xunit;
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services;
 
 /// <summary>
-/// The ambient Graph token must be reused for the lifetime of the process. Commands that read
+/// Inside an ambient token reuse scope the Graph token must be acquired once. Flows that read
 /// per-record state (for example one permission-grant lookup per agent instance) otherwise
-/// re-run MSAL once per record, which re-prompts the user whenever the persistent cache is cold.
+/// re-run MSAL once per record, which re-prompts whenever the persistent cache is cold.
+/// Outside a scope the behavior must be unchanged, so unrelated commands are unaffected.
 /// </summary>
 public class GraphApiServiceAmbientTokenCacheTests
 {
     private const string TenantId = "11111111-1111-1111-1111-111111111111";
 
     [Fact]
-    public async Task GetGraphAccessTokenAsync_SecondCall_ReusesTokenWithoutReauthenticating()
+    public async Task GetGraphAccessTokenAsync_WithoutAReuseScope_AcquiresOnEveryCall()
+    {
+        // Opt-in by design: caching ambient tokens for every caller would change the token
+        // lifetime of commands that never asked for it.
+        var auth = CreateAuthService(MakeJwt(DateTimeOffset.UtcNow.AddHours(1)));
+        var service = CreateService(auth);
+
+        await service.GetGraphAccessTokenAsync(TenantId);
+        await service.GetGraphAccessTokenAsync(TenantId);
+
+        await auth.Received(2).GetAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_InsideAReuseScope_AcquiresOnce()
     {
         var auth = CreateAuthService(MakeJwt(DateTimeOffset.UtcNow.AddHours(1)));
         var service = CreateService(auth);
 
-        var first = await service.GetGraphAccessTokenAsync(TenantId);
-        var second = await service.GetGraphAccessTokenAsync(TenantId);
+        using (service.BeginAmbientTokenReuseScope())
+        {
+            var first = await service.GetGraphAccessTokenAsync(TenantId);
+            var second = await service.GetGraphAccessTokenAsync(TenantId);
+            second.Should().Be(first);
+        }
 
-        second.Should().Be(first);
+        await auth.Received(1).GetAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_AfterTheScopeEnds_AcquiresAgain()
+    {
+        // A token must not outlive the flow that opted in, or a later unrelated call would
+        // silently inherit that flow's cached identity.
+        var auth = CreateAuthService(MakeJwt(DateTimeOffset.UtcNow.AddHours(1)));
+        var service = CreateService(auth);
+
+        using (service.BeginAmbientTokenReuseScope())
+        {
+            await service.GetGraphAccessTokenAsync(TenantId);
+        }
+
+        await service.GetGraphAccessTokenAsync(TenantId);
+
+        await auth.Received(2).GetAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_WithNestedScopes_KeepsReusingUntilTheOutermostEnds()
+    {
+        var auth = CreateAuthService(MakeJwt(DateTimeOffset.UtcNow.AddHours(1)));
+        var service = CreateService(auth);
+
+        using (service.BeginAmbientTokenReuseScope())
+        {
+            using (service.BeginAmbientTokenReuseScope())
+            {
+                await service.GetGraphAccessTokenAsync(TenantId);
+            }
+
+            await service.GetGraphAccessTokenAsync(TenantId);
+        }
+
         await auth.Received(1).GetAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
             Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(),
@@ -42,6 +106,7 @@ public class GraphApiServiceAmbientTokenCacheTests
         var auth = CreateAuthService(MakeJwt(DateTimeOffset.UtcNow.AddHours(1)));
         var service = CreateService(auth);
 
+        using var scope = service.BeginAmbientTokenReuseScope();
         await service.GetGraphAccessTokenAsync(TenantId);
         await service.GetGraphAccessTokenAsync(TenantId, forceRefresh: true);
 
@@ -59,6 +124,7 @@ public class GraphApiServiceAmbientTokenCacheTests
         var auth = CreateAuthService(MakeJwt(DateTimeOffset.UtcNow.AddMinutes(1)));
         var service = CreateService(auth);
 
+        using var scope = service.BeginAmbientTokenReuseScope();
         await service.GetGraphAccessTokenAsync(TenantId);
         await service.GetGraphAccessTokenAsync(TenantId);
 
@@ -76,6 +142,7 @@ public class GraphApiServiceAmbientTokenCacheTests
         var auth = CreateAuthService("not-a-jwt");
         var service = CreateService(auth);
 
+        using var scope = service.BeginAmbientTokenReuseScope();
         await service.GetGraphAccessTokenAsync(TenantId);
         await service.GetGraphAccessTokenAsync(TenantId);
 
@@ -93,6 +160,7 @@ public class GraphApiServiceAmbientTokenCacheTests
         var auth = CreateAuthService(MakeJwt(DateTimeOffset.UtcNow.AddHours(1)));
         var service = CreateService(auth);
 
+        using var scope = service.BeginAmbientTokenReuseScope();
         await service.GetGraphAccessTokenAsync(TenantId);
         await service.ClearTokenCacheAsync();
         await service.GetGraphAccessTokenAsync(TenantId);
@@ -109,6 +177,7 @@ public class GraphApiServiceAmbientTokenCacheTests
         var auth = CreateAuthService(MakeJwt(DateTimeOffset.UtcNow.AddHours(1)));
         var service = CreateService(auth);
 
+        using var scope = service.BeginAmbientTokenReuseScope();
         await service.GetGraphAccessTokenAsync(TenantId);
         await service.GetGraphAccessTokenAsync("22222222-2222-2222-2222-222222222222");
 

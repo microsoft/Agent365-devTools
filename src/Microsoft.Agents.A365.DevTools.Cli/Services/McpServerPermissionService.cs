@@ -36,6 +36,12 @@ public class McpServerPermissionService
     }
 
     /// <summary>
+    /// Reuses one ambient Graph sign-in across the whole grant-agents-access flow. Every agent
+    /// instance costs a grants read and a grant write, each of which would otherwise re-run MSAL.
+    /// </summary>
+    public virtual IDisposable BeginTokenReuseScope() => _graphApiService.BeginAmbientTokenReuseScope();
+
+    /// <summary>
     /// Resolves the BYO application for an MCP server name and returns its service principal,
     /// which is the resourceId of the permission grant. Returns null when either the application
     /// or its service principal cannot be found.

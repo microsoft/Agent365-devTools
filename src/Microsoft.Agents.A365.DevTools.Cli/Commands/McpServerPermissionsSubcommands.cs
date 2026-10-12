@@ -98,6 +98,10 @@ public static class McpServerPermissionsSubcommands
                 return;
             }
 
+            // One sign-in for the whole flow: the lookups, the per-instance permission checks,
+            // and the grants all authenticate as the same user.
+            using var tokenReuse = permissionService.BeginTokenReuseScope();
+
             var resource = await permissionService.ResolveServerResourceAsync(
                 tenantId, serverName, ct,
                 selectAppId: candidates => SelectServerApplication(candidates, serverName, logger, ct));

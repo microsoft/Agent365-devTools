@@ -50,10 +50,11 @@ public class GraphApiService
     // Injectable so unit tests can pass TimeSpan.Zero and avoid the real 30s wait.
     private readonly TimeSpan _agentRegistryRetryDelay;
 
-    // AuthenticationService keeps no in-process cache, so without this every ambient Graph call
-    // re-runs MSAL — a per-record loop re-authenticates once per record, and prompts each time
-    // when the persistent cache is cold.
+    // Ambient tokens are reused only inside an explicit reuse scope (see
+    // BeginAmbientTokenReuseScope). AuthenticationService keeps no in-process cache, so a flow
+    // that makes one Graph call per record otherwise re-runs MSAL once per record.
     private readonly ConcurrentDictionary<string, (string AccessToken, DateTimeOffset ExpiresOnUtc)> _ambientTokenCache = new();
+    private int _ambientTokenReuseDepth;
 
     // Graph path for the copilot agent registrations endpoint.
     // Both RegisterAgentInstanceAsyncV2 and DeleteAgentRegistrationAsync use this path.
@@ -208,6 +209,37 @@ public class GraphApiService
     }
 
     /// <summary>
+    /// Reuses the ambient Graph token for the lifetime of the returned scope instead of
+    /// re-running MSAL on every call. Opt-in so it applies only to the flow that asks for it:
+    /// a command that makes one Graph call per record otherwise re-authenticates once per record.
+    /// Nesting is supported; the cached tokens are discarded when the outermost scope is disposed.
+    /// </summary>
+    public virtual IDisposable BeginAmbientTokenReuseScope() => new AmbientTokenReuseScope(this);
+
+    private sealed class AmbientTokenReuseScope : IDisposable
+    {
+        private readonly GraphApiService _service;
+        private bool _disposed;
+
+        internal AmbientTokenReuseScope(GraphApiService service)
+        {
+            _service = service;
+            Interlocked.Increment(ref service._ambientTokenReuseDepth);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            // Tokens must not outlive the flow that opted in, or an unrelated later call would
+            // silently inherit this flow's cached identity.
+            if (Interlocked.Decrement(ref _service._ambientTokenReuseDepth) == 0)
+                _service._ambientTokenCache.Clear();
+        }
+    }
+
+    /// <summary>
     /// Acquires an access token for Microsoft Graph API via MSAL (WAM on Windows,
     /// browser/device-code on macOS/Linux). Token is cached persistently by
     /// AuthenticationService — no az CLI subprocess involved.
@@ -225,11 +257,13 @@ public class GraphApiService
             var loginHint = await _loginHintResolver(clientId);
 
             var cacheKey = string.Join("::", _authorityHost, tenantId, resource, clientId, loginHint, useDeviceCode);
+            var reuseTokens = Volatile.Read(ref _ambientTokenReuseDepth) > 0;
             if (forceRefresh)
             {
                 _ambientTokenCache.TryRemove(cacheKey, out _);
             }
-            else if (_ambientTokenCache.TryGetValue(cacheKey, out var cached) &&
+            else if (reuseTokens &&
+                     _ambientTokenCache.TryGetValue(cacheKey, out var cached) &&
                      cached.ExpiresOnUtc > DateTimeOffset.UtcNow.AddMinutes(AuthenticationConstants.TokenExpirationBufferMinutes))
             {
                 _logger.LogDebug("Reusing cached Graph API access token for tenant {TenantId} expiring at {Expiry}", tenantId, cached.ExpiresOnUtc);
@@ -254,7 +288,7 @@ public class GraphApiService
                 // An undecodable expiry means the lifetime is unknown, so the token is used but
                 // not cached rather than risking a stale one being served past its expiry.
                 var expiresOn = JwtHelper.TryGetExpiration(token);
-                if (expiresOn is not null)
+                if (reuseTokens && expiresOn is not null)
                     _ambientTokenCache[cacheKey] = (token, expiresOn.Value);
 
                 _logger.LogDebug("Graph API access token acquired successfully");

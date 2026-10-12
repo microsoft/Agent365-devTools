@@ -317,6 +317,26 @@ public class McpServerPermissionsSubcommandsTests
     }
 
     [Fact]
+    public async Task GrantAgentsAccess_OpensOneTokenReuseScopeForTheWholeFlow()
+    {
+        // The lookups, the per-instance permission checks, and the grants must share one sign-in.
+        // Without the scope each Graph call re-runs MSAL, so the user is prompted per instance.
+        var scope = Substitute.For<IDisposable>();
+        _permissionService.BeginTokenReuseScope().Returns(scope);
+        SetupResolvedResource();
+        SetupInstances(new AgentInstancePermissionStatus(AgentSpId, "Missing", HasScope: false));
+        _permissionService.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        var exitCode = await ListCommand().InvokeAsync(
+            ["--agent-blueprint-id", BlueprintId, "--mcp-server-name", ServerName, "--tenant-id", TenantId, "--yes"]);
+
+        exitCode.Should().Be(0);
+        _permissionService.Received(1).BeginTokenReuseScope();
+        scope.Received(1).Dispose();
+    }
+
+    [Fact]
     public async Task GrantAgentsAccess_WithYes_FailedGrantExitsWithOne()
     {
         SetupResolvedResource();
