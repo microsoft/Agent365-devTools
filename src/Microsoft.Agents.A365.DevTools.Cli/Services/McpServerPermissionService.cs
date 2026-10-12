@@ -117,11 +117,8 @@ public class McpServerPermissionService
             appId = appIds[0];
         }
 
-        var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
-            tenantId, appId, ct, scopes: null, UseDeviceCodeAuthentication,
-            // Same sign-in as the rest of the flow. A scoped token here cannot be acquired
-            // silently without a configured client app, so it costs an extra Connect-MgGraph.
-            GraphAuthenticationMode.Ambient);
+        var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdAmbientAsync(
+            tenantId, appId, ct, UseDeviceCodeAuthentication);
         if (string.IsNullOrWhiteSpace(spObjectId))
         {
             _logger.LogError(
@@ -150,8 +147,8 @@ public class McpServerPermissionService
         ArgumentException.ThrowIfNullOrWhiteSpace(blueprintId);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceSpObjectId);
 
-        var instances = await _blueprintService.GetAgentInstancesForBlueprintAsync(
-            tenantId, blueprintId, ct, UseDeviceCodeAuthentication, GraphAuthenticationMode.Ambient);
+        var instances = await _blueprintService.GetAgentInstancesForBlueprintAmbientAsync(
+            tenantId, blueprintId, ct, UseDeviceCodeAuthentication);
 
         var statuses = new List<AgentInstancePermissionStatus>(instances.Count);
         foreach (var instance in instances)
@@ -194,23 +191,19 @@ public class McpServerPermissionService
         ArgumentException.ThrowIfNullOrWhiteSpace(agentServicePrincipalObjectId);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceSpObjectId);
 
-        return await _graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+        return await _graphApiService.CreateOrUpdateOauth2PermissionGrantAmbientAsync(
             tenantId,
             agentServicePrincipalObjectId,
             resourceSpObjectId,
             [McpConstants.V2ScopeValue],
             ct,
-            // Scopes are ignored under Ambient; the grant must run as the same identity that read
-            // the state in GetAgentInstanceStatusesAsync, or its preflight read 403s on its own.
-            permissionGrantScopes: null,
             // Never patch a user-scoped grant in place of the tenant-wide one this command
             // reports on, or the agent would still be missing the permission (issue #500).
             requireMatchingConsentType: true,
             UseDeviceCodeAuthentication,
             // A failed read is not "no grant" — creating from unknown state can report success
             // on "Permission entry already exists" without merging the scope (issue #500).
-            abortWhenLookupFails: true,
-            GraphAuthenticationMode.Ambient);
+            abortWhenLookupFails: true);
     }
 
     /// <summary>

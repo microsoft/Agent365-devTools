@@ -59,6 +59,12 @@ internal static class JwtHelper
                 ? DateTimeOffset.FromUnixTimeSeconds(seconds)
                 : null;
         }
+        catch (ArgumentOutOfRangeException)
+        {
+            // An out-of-range exp must not propagate: the caller has a usable token and would
+            // otherwise discard it as an acquisition failure.
+            return null;
+        }
         catch (FormatException)
         {
             return null;

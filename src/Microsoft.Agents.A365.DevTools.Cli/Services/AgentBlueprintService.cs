@@ -175,18 +175,35 @@ public class AgentBlueprintService
     /// <param name="blueprintId">The blueprint application ID or object ID.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <param name="useDeviceCode">Use device code authentication.</param>
-    /// <param name="authenticationMode">
-    /// Pass <see cref="GraphAuthenticationMode.Ambient"/> to reuse the caller's existing sign-in
-    /// instead of acquiring a separately scoped token.
-    /// </param>
     /// <returns>List of agent instances linked to the blueprint.</returns>
     /// <exception cref="Exception">Thrown when the Graph query fails.</exception>
-    public virtual async Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintAsync(
+    public virtual Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintAsync(
         string tenantId,
         string blueprintId,
         CancellationToken cancellationToken = default,
-        bool useDeviceCode = false,
-        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
+        bool useDeviceCode = false)
+        => GetAgentInstancesForBlueprintCoreAsync(
+            tenantId, blueprintId, cancellationToken, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
+
+    /// <summary>
+    /// Same as <see cref="GetAgentInstancesForBlueprintAsync"/> but reuses the caller's ambient
+    /// sign-in. Requesting AgentIdentity.Read.All separately falls back to an interactive
+    /// Connect-MgGraph when no client app is configured, adding a sign-in to the same command.
+    /// </summary>
+    public virtual Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintAmbientAsync(
+        string tenantId,
+        string blueprintId,
+        CancellationToken cancellationToken = default,
+        bool useDeviceCode = false)
+        => GetAgentInstancesForBlueprintCoreAsync(
+            tenantId, blueprintId, cancellationToken, useDeviceCode, GraphAuthenticationMode.Ambient);
+
+    private async Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintCoreAsync(
+        string tenantId,
+        string blueprintId,
+        CancellationToken cancellationToken,
+        bool useDeviceCode,
+        GraphAuthenticationMode authenticationMode)
     {
         var spScopes = new[] { AuthenticationConstants.AgentIdentityReadAllScope };
         var encodedId = Uri.EscapeDataString(blueprintId);

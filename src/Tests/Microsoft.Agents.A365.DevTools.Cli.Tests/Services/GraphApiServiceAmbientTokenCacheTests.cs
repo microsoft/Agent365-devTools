@@ -46,8 +46,8 @@ public class GraphApiServiceAmbientTokenCacheTests
 
         using (service.BeginAmbientTokenReuseScope())
         {
-            var first = await service.GetGraphAccessTokenAsync(TenantId);
-            var second = await service.GetGraphAccessTokenAsync(TenantId);
+            var first = await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
+            var second = await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
             second.Should().Be(first);
         }
 
@@ -67,10 +67,10 @@ public class GraphApiServiceAmbientTokenCacheTests
 
         using (service.BeginAmbientTokenReuseScope())
         {
-            await service.GetGraphAccessTokenAsync(TenantId);
+            await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
         }
 
-        await service.GetGraphAccessTokenAsync(TenantId);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
 
         await auth.Received(2).GetAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
@@ -88,10 +88,10 @@ public class GraphApiServiceAmbientTokenCacheTests
         {
             using (service.BeginAmbientTokenReuseScope())
             {
-                await service.GetGraphAccessTokenAsync(TenantId);
+                await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
             }
 
-            await service.GetGraphAccessTokenAsync(TenantId);
+            await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
         }
 
         await auth.Received(1).GetAccessTokenAsync(
@@ -107,8 +107,8 @@ public class GraphApiServiceAmbientTokenCacheTests
         var service = CreateService(auth);
 
         using var scope = service.BeginAmbientTokenReuseScope();
-        await service.GetGraphAccessTokenAsync(TenantId);
-        await service.GetGraphAccessTokenAsync(TenantId, forceRefresh: true);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: true, CancellationToken.None, useDeviceCode: false);
 
         await auth.Received(2).GetAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
@@ -125,8 +125,8 @@ public class GraphApiServiceAmbientTokenCacheTests
         var service = CreateService(auth);
 
         using var scope = service.BeginAmbientTokenReuseScope();
-        await service.GetGraphAccessTokenAsync(TenantId);
-        await service.GetGraphAccessTokenAsync(TenantId);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
 
         await auth.Received(2).GetAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
@@ -143,10 +143,42 @@ public class GraphApiServiceAmbientTokenCacheTests
         var service = CreateService(auth);
 
         using var scope = service.BeginAmbientTokenReuseScope();
-        await service.GetGraphAccessTokenAsync(TenantId);
-        await service.GetGraphAccessTokenAsync(TenantId);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
 
         await auth.Received(2).GetAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_WithoutAReuseScope_DoesNotInspectTheToken()
+    {
+        // Nothing cache-related may run for commands that did not opt in. Decoding the token
+        // outside a scope is wasted work whose failure modes would reach unrelated commands.
+        var auth = CreateAuthService("not-a-jwt");
+        var service = CreateService(auth);
+
+        var token = await service.GetGraphAccessTokenAsync(TenantId);
+
+        token.Should().Be("not-a-jwt",
+            because: "a token that cannot be decoded is still a valid token to return");
+    }
+
+    [Fact]
+    public async Task GetGraphAccessTokenAsync_WithOutOfRangeExpiry_StillReturnsTheToken()
+    {
+        // An unparseable expiry must not be reported as an acquisition failure: the caller
+        // holds a working token and would otherwise fall through to a sign-in prompt.
+        var auth = CreateAuthService(MakeJwtWithRawExp(long.MaxValue));
+        var service = CreateService(auth);
+
+        using var scope = service.BeginAmbientTokenReuseScope();
+        var token = await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
+
+        token.Should().NotBeNull();
+        await auth.Received(1).GetAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
             Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(),
             Arg.Any<CancellationToken>(), Arg.Any<string?>());
@@ -161,9 +193,9 @@ public class GraphApiServiceAmbientTokenCacheTests
         var service = CreateService(auth);
 
         using var scope = service.BeginAmbientTokenReuseScope();
-        await service.GetGraphAccessTokenAsync(TenantId);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
         await service.ClearTokenCacheAsync();
-        await service.GetGraphAccessTokenAsync(TenantId);
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
 
         await auth.Received(2).GetAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
@@ -178,8 +210,8 @@ public class GraphApiServiceAmbientTokenCacheTests
         var service = CreateService(auth);
 
         using var scope = service.BeginAmbientTokenReuseScope();
-        await service.GetGraphAccessTokenAsync(TenantId);
-        await service.GetGraphAccessTokenAsync("22222222-2222-2222-2222-222222222222");
+        await service.GetReusableGraphAccessTokenAsync(TenantId, forceRefresh: false, CancellationToken.None, useDeviceCode: false);
+        await service.GetReusableGraphAccessTokenAsync("22222222-2222-2222-2222-222222222222", forceRefresh: false, CancellationToken.None, useDeviceCode: false);
 
         await auth.Received(2).GetAccessTokenAsync(
             Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
@@ -209,6 +241,13 @@ public class GraphApiServiceAmbientTokenCacheTests
     private static string MakeJwt(DateTimeOffset expiresOn)
     {
         var payload = JsonSerializer.SerializeToUtf8Bytes(new { exp = expiresOn.ToUnixTimeSeconds() });
+        var encoded = Convert.ToBase64String(payload).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        return $"{Base64Url("{\"alg\":\"none\"}")}.{encoded}.signature";
+    }
+
+    private static string MakeJwtWithRawExp(long exp)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new { exp });
         var encoded = Convert.ToBase64String(payload).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         return $"{Base64Url("{\"alg\":\"none\"}")}.{encoded}.signature";
     }
