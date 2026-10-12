@@ -32,6 +32,7 @@ This folder contains data models used throughout the CLI. Models are organized b
 |-------|------|-------------|
 | **DataverseEnvironment** | `DataverseEnvironment.cs` | Dataverse environment information |
 | **DataverseMcpServer** | `DataverseMcpServer.cs` | MCP server in Dataverse |
+| **PublishedMcpServer** | `PublishedMcpServer.cs` | MCP server published to tenant scope from a Dataverse environment |
 | **PublishMcpServerRequest** | `PublishMcpServerRequest.cs` | MCP server publish request |
 | **PublishMcpServerResponse** | `PublishMcpServerResponse.cs` | MCP server publish response |
 | **ToolingManifest** | `ToolingManifest.cs` | MCP tooling manifest structure |

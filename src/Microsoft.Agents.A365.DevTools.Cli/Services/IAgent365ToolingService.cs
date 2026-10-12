@@ -32,6 +32,13 @@ public interface IAgent365ToolingService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Lists MCP servers published to tenant scope from every Dataverse environment the caller can access
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Response containing list of published MCP servers</returns>
+    Task<PublishedMcpServersResponse?> ListPublishedServersAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Publishes an MCP server to a Dataverse environment via the platform's v2 publish endpoint,
     /// which performs the full elevation orchestration (PPMI provisioning and MOS upload).
     /// </summary>

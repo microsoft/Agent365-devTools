@@ -292,6 +292,15 @@ public class Agent365ToolingService : IAgent365ToolingService
     }
 
     /// <summary>
+    /// Builds URL for listing MCP servers published to tenant scope across all accessible Dataverse environments
+    /// </summary>
+    private string BuildListPublishedMcpServersUrl(string environment)
+    {
+        var baseUrl = BuildAgent365ToolsBaseUrl(environment);
+        return $"{baseUrl}/agents/dataverse/publishedMcpServers";
+    }
+
+    /// <summary>
     /// Builds URL for publishing an MCP server to a Dataverse environment. Hits the platform's v2
     /// publish endpoint, which performs the full elevation orchestration (PPMI provisioning and MOS
     /// upload).
@@ -503,6 +512,52 @@ public class Agent365ToolingService : IAgent365ToolingService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to list MCP servers for environment {EnvId}", environmentId);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<PublishedMcpServersResponse?> ListPublishedServersAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var endpointUrl = BuildListPublishedMcpServersUrl(_environment);
+            var correlationId = Internal.HttpClientFactory.GenerateCorrelationId();
+
+            _logger.LogDebug("Listing published MCP servers (CorrelationId: {CorrelationId})", correlationId);
+            _logger.LogDebug("Environment: {Env}", _environment);
+            _logger.LogDebug("Endpoint URL: {Url}", endpointUrl);
+
+            var audience = ConfigConstants.GetAgent365ToolsResourceAppId(_environment);
+            _logger.LogDebug("Acquiring access token for audience: {Audience}", audience);
+
+            var loginHint = await AzCliHelper.ResolveLoginHintAsync();
+            var authToken = await _authService.GetAccessTokenAsync(
+                audience, userId: loginHint, ct: cancellationToken, authorityHost: _authorityHost);
+            if (string.IsNullOrWhiteSpace(authToken))
+            {
+                _logger.LogError("Failed to acquire authentication token");
+                return null;
+            }
+
+            using var httpClient = Internal.HttpClientFactory.CreateAuthenticatedClient(authToken, correlationId: correlationId);
+
+            LogRequest("GET", endpointUrl);
+
+            using var response = await httpClient.GetAsync(endpointUrl, cancellationToken);
+
+            var (isSuccess, responseContent) = await ValidateResponseAsync(response, "list published MCP servers", cancellationToken);
+            if (!isSuccess)
+            {
+                return null;
+            }
+
+            return JsonDeserializationHelper.DeserializeWithDoubleSerialization<PublishedMcpServersResponse>(
+                responseContent, _logger);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list published MCP servers");
             return null;
         }
     }

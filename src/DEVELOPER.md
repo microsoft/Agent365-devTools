@@ -86,6 +86,7 @@ The CLI provides a `develop-mcp` command for managing Model Context Protocol (MC
 
 **Server Management:**
 - `a365 develop-mcp list-servers -e <environment-id>` — List MCP servers in a specific Dataverse environment
+- `a365 develop-mcp list-published-servers` — List MCP servers published to tenant scope from all accessible Dataverse environments
 - `a365 develop-mcp publish -e <environment-id> -s <server-name>` — Publish an MCP server to a Dataverse environment
 - `a365 develop-mcp unpublish -e <environment-id> -s <server-name>` — Unpublish an MCP server from a Dataverse environment
 
@@ -111,6 +112,9 @@ a365 develop-mcp list-environments
 
 # List servers in a specific environment  
 a365 develop-mcp list-servers -e "Default-12345678-1234-1234-1234-123456789abc"
+
+# List servers published to tenant scope from every environment you can access
+a365 develop-mcp list-published-servers
 
 # Publish a server with alias and display name
 a365 develop-mcp publish \
