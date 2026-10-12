@@ -201,8 +201,8 @@ public class SetupResults
 
     /// <summary>
     /// The effective --authmode value used during the non-DW grant step.
-    /// Null when the non-DW grant step was not reached (e.g. agent identity creation failed) or
-    /// when the run is a DW (AI Teammate) flow — DW does not use --authmode.
+    /// Set at the start of a non-DW run so permission construction and failure summaries share the
+    /// same mode. Null for DW (AI Teammate) flows, which do not use --authmode.
     /// Used by DisplaySetupSummary to compute per-grant-type completion for the "both" mode and to
     /// derive which Action Required items apply.
     /// </summary>
@@ -326,8 +326,8 @@ public class SetupResults
     /// Resources whose service principal could not be provisioned in-line during setup
     /// (operator declined the per-SP prompt, az ad sp create failed, or
     /// <c>--skip-sp-provisioning</c> was set). Each entry is a fully-actionable pair: the
-    /// <c>az ad sp create</c> command to provision the SP plus the per-SP unified-consent
-    /// URL that grants the blueprint consent for this resource's scopes. The setup
+    /// <c>az ad sp create</c> command to provision the SP plus, when delegated scopes are
+    /// requested, the per-SP unified-consent URL that grants blueprint consent. The setup
     /// summary's "Action Required" block renders these as numbered items so the operator
     /// can complete provisioning without re-running setup.
     /// </summary>
@@ -339,19 +339,22 @@ public class SetupResults
 
 /// <summary>
 /// One entry in <see cref="SetupResults.MissingSpActions"/>. Resource identity plus the
-/// two concrete commands/URLs the operator needs to complete provisioning manually:
+/// concrete commands/URLs the operator needs to complete provisioning manually:
 /// (1) the <c>az ad sp create</c> command that creates the SP in the tenant, and
-/// (2) the per-SP <c>/v2.0/adminconsent</c> URL that grants the blueprint consent for
-/// this resource's delegated scopes once the SP exists.
+/// (2) when delegated scopes are requested, the per-SP <c>/v2.0/adminconsent</c> URL.
 /// </summary>
 /// <param name="ResourceName">Human-readable display name (e.g. "Work IQ Teams MCP").</param>
 /// <param name="ResourceAppId">Application ID of the resource (the GUID).</param>
 /// <param name="Scopes">Delegated scopes the blueprint needs on this resource.</param>
 /// <param name="AzCreateCommand">Copy-paste-able <c>az ad sp create --id ...</c>.</param>
-/// <param name="PerSpConsentUrl">Per-SP unified-consent URL keyed to the blueprint as client and the resource scopes as the request.</param>
+/// <param name="PerSpConsentUrl">Per-SP delegated-consent URL, or null for application-only specs.</param>
 public sealed record MissingSpAction(
     string ResourceName,
     string ResourceAppId,
     string[] Scopes,
     string AzCreateCommand,
-    string PerSpConsentUrl);
+    string? PerSpConsentUrl)
+{
+    /// <summary>Application roles awaiting assignment after the resource SP is provisioned.</summary>
+    public string[] AppRoleScopes { get; init; } = [];
+}

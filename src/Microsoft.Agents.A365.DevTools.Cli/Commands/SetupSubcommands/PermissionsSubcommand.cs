@@ -254,7 +254,7 @@ internal static class PermissionsSubcommand
         IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("bot",
-            "Configure Messaging Bot API OAuth2 grants and inheritable permissions\n" +
+            "Configure Messaging Bot, Observability, Defender, and Power Platform API grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
             "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n" +
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
@@ -296,7 +296,7 @@ internal static class PermissionsSubcommand
                 if (dryRunConfig is null)
                 {
                     logger.LogInformation("Dry run: a365 setup permissions bot --dry-run");
-                    logger.LogInformation("  Would configure Messaging Bot API OAuth2 grants and inheritable permissions.");
+                    logger.LogInformation("  Would configure Messaging Bot, Observability, Defender, and Power Platform API grants and inheritable permissions.");
                     logger.LogInformation("No changes made. Run without --dry-run to execute.");
                     return;
                 }
@@ -306,6 +306,7 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("  - Blueprint: {BlueprintId}", dryRunConfig.AgentBlueprintId);
                 logger.LogInformation("  - Messaging Bot API: {Scope}", ConfigConstants.MessagingBotApiAdminConsentScope);
                 logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
+                logger.LogInformation("  - Defender API: {DefenderScope} (delegated + application)", ConfigConstants.DefenderApiRealtimeProtectionScope);
                 logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 logger.LogInformation("No changes made. Run without --dry-run to execute.");
                 return;
@@ -848,6 +849,7 @@ internal static class PermissionsSubcommand
             envAtgAppId,
             ConfigConstants.MessagingBotApiAppId,
             observabilityAppId,
+            ConfigConstants.DefenderApiAppId,
             PowerPlatformConstants.PowerPlatformApiResourceAppId,
             AuthenticationConstants.MicrosoftGraphResourceAppId,
         };

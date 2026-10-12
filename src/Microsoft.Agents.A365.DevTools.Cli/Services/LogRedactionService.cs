@@ -60,6 +60,7 @@ public sealed class LogRedactionService : ILogRedactionService
         "00000003-0000-0000-c000-000000000000", // Microsoft Graph
         "5a807f24-c9de-44ee-a3a7-329e88a00ffc", // Agent 365 Messaging Bot API
         "9b975845-388f-4429-889e-eab1ef63949c", // Agent 365 Observability API
+        ConfigConstants.DefenderApiAppId,
         ConfigConstants.GccObservabilityApiAppId,
         ConfigConstants.GccHighObservabilityApiAppId,
         ConfigConstants.DodObservabilityApiAppId,

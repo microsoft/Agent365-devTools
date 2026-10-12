@@ -1020,7 +1020,14 @@ internal static class AllSubcommand
         // names so V2 audiences read as e.g. "mcp_MailTools" rather than "Agent 365 Tools".
         var specs = await SetupHelpers.BuildConfiguredPermissionSpecsAsync(
             ctx.Config, setInheritable: true, isM365: ctx.IsM365, scopesByAudience, serverNamesByAudience,
-            includeObservability: !ctx.SkipObservabilityPermissions);
+            includeObservability: !ctx.SkipObservabilityPermissions,
+            defenderPermissionMode: ctx.Results.IsNonDwBlueprintFlow
+                ? ctx.IsS2sMode
+                    ? DefenderPermissionMode.Application
+                    : ctx.IsBothMode
+                        ? DefenderPermissionMode.Both
+                        : DefenderPermissionMode.Delegated
+                : DefenderPermissionMode.Both);
 
         // Return the full scopesByAudience map alongside the V1-compat mcpScopes so V2
         // callers (ApplyConsentUrlsIfNeeded) can route per-server audiences to the bare

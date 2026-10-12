@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,8 +20,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 public enum ConsentPollResult
 {
     /// <summary>
-    /// An oauth2PermissionGrant for the client SP was observed in Graph. Safe to mark
-    /// consent as granted in persisted state.
+    /// Every requested AllPrincipals resource grant and scope was observed in Graph. Safe
+    /// to mark consent as granted in persisted state.
     /// </summary>
     Verified,
 
@@ -37,6 +39,15 @@ public enum ConsentPollResult
     /// </summary>
     NotDetected
 }
+
+/// <summary>
+/// One resource grant that must be observed before admin-consent polling can report success.
+/// </summary>
+public sealed record AdminConsentRequirement(
+    string ResourceName,
+    string ResourceAppId,
+    IReadOnlyCollection<string> Scopes,
+    string? ResourceSpObjectId = null);
 
 /// <summary>
 /// Helper methods for admin consent flows that use az cli to poll Graph resources.
@@ -68,7 +79,7 @@ public static class AdminConsentHelper
     private static readonly AsyncLocal<bool> _bypassConsentChecks = new();
 
     /// <summary>
-    /// Polls Azure AD/Graph (via az rest) to detect an oauth2 permission grant for the provided appId.
+    /// Polls Azure AD/Graph (via az rest) until every requested resource grant is present.
     /// Mirrors the behavior previously implemented in A365SetupRunner.PollAdminConsentAsync.
     /// </summary>
     public static async Task<bool> PollAdminConsentAsync(
@@ -79,7 +90,8 @@ public static class AdminConsentHelper
         int timeoutSeconds,
         int intervalSeconds,
         CancellationToken ct,
-        string? graphBaseUrl = null)
+        string? graphBaseUrl = null,
+        IReadOnlyCollection<AdminConsentRequirement>? requiredGrants = null)
     {
         if (BypassConsentChecksForTests)
             return true;
@@ -87,6 +99,7 @@ public static class AdminConsentHelper
         var start = DateTime.UtcNow;
         var baseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
         string? spId = null;
+        var resolvedRequirements = requiredGrants?.ToList();
         int lastProgressReportSeconds = 0;
 
         logger.LogInformation(
@@ -129,6 +142,21 @@ public static class AdminConsentHelper
 
                 if (spId != null)
                 {
+                    if (resolvedRequirements is { Count: > 0 })
+                    {
+                        for (var i = 0; i < resolvedRequirements.Count; i++)
+                        {
+                            var requirement = resolvedRequirements[i];
+                            if (!string.IsNullOrWhiteSpace(requirement.ResourceSpObjectId))
+                                continue;
+
+                            var resourceSpId = await LookupSpObjectIdByAppIdAsync(
+                                executor, requirement.ResourceAppId, baseUrl, ct);
+                            if (!string.IsNullOrWhiteSpace(resourceSpId))
+                                resolvedRequirements[i] = requirement with { ResourceSpObjectId = resourceSpId };
+                        }
+                    }
+
                     var grants = await executor.ExecuteAsync("az",
                         $"rest --method GET --url \"{baseUrl}/v1.0/oauth2PermissionGrants?$filter=clientId eq '{spId}'\"",
                         captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
@@ -139,7 +167,10 @@ public static class AdminConsentHelper
                         {
                             using var gdoc = JsonDocument.Parse(grants.StandardOutput);
                             var arr = gdoc.RootElement.GetProperty("value");
-                            if (arr.GetArrayLength() > 0)
+                            var consentComplete = resolvedRequirements is { Count: > 0 }
+                                ? GrantsSatisfyRequirements(arr, resolvedRequirements)
+                                : arr.GetArrayLength() > 0;
+                            if (consentComplete)
                             {
                                 logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
                                 return true;
@@ -194,7 +225,8 @@ public static class AdminConsentHelper
         int timeoutSeconds,
         int intervalSeconds,
         CancellationToken ct,
-        IEnumerable<string>? permScopes = null)
+        IEnumerable<string>? permScopes = null,
+        IReadOnlyCollection<AdminConsentRequirement>? requiredGrants = null)
     {
         if (BypassConsentChecksForTests)
         {
@@ -237,11 +269,16 @@ public static class AdminConsentHelper
                     permScopes);
 
                 if (grantsDoc != null &&
-                    grantsDoc.RootElement.TryGetProperty("value", out var arr) &&
-                    arr.GetArrayLength() > 0)
+                    grantsDoc.RootElement.TryGetProperty("value", out var arr))
                 {
-                    logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
-                    return ConsentPollResult.Verified;
+                    var consentComplete = requiredGrants is { Count: > 0 }
+                        ? GrantsSatisfyRequirements(arr, requiredGrants)
+                        : arr.GetArrayLength() > 0;
+                    if (consentComplete)
+                    {
+                        logger.LogInformation("Consent granted ({ScopeDescriptor}).", scopeDescriptor);
+                        return ConsentPollResult.Verified;
+                    }
                 }
 
                 logger.LogDebug("No consent grants found for blueprint SP {ClientSpId} yet.", clientSpId);
@@ -259,6 +296,54 @@ public static class AdminConsentHelper
             logger.LogDebug("Polling for admin consent was cancelled for SP {ClientSpId} ({Scope}).", clientSpId, scopeDescriptor);
             throw;
         }
+    }
+
+    internal static bool GrantsSatisfyRequirements(
+        JsonElement grants,
+        IReadOnlyCollection<AdminConsentRequirement> requirements)
+    {
+        if (requirements.Count == 0)
+            return grants.GetArrayLength() > 0;
+
+        var scopesByResourceSp = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var grant in grants.EnumerateArray())
+        {
+            if (!grant.TryGetProperty("consentType", out var consentType)
+                || !string.Equals(consentType.GetString(), "AllPrincipals", StringComparison.OrdinalIgnoreCase)
+                || !grant.TryGetProperty("resourceId", out var resourceIdElement)
+                || string.IsNullOrWhiteSpace(resourceIdElement.GetString()))
+            {
+                continue;
+            }
+
+            var resourceId = resourceIdElement.GetString()!;
+            if (!scopesByResourceSp.TryGetValue(resourceId, out var grantedScopes))
+            {
+                grantedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                scopesByResourceSp[resourceId] = grantedScopes;
+            }
+
+            if (!grant.TryGetProperty("scope", out var scopeElement))
+                continue;
+
+            foreach (var scope in (scopeElement.GetString() ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                grantedScopes.Add(scope);
+            }
+        }
+
+        foreach (var requirement in requirements)
+        {
+            if (string.IsNullOrWhiteSpace(requirement.ResourceSpObjectId)
+                || !scopesByResourceSp.TryGetValue(requirement.ResourceSpObjectId, out var grantedScopes)
+                || !requirement.Scopes.All(grantedScopes.Contains))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
