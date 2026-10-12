@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
 
@@ -24,6 +25,28 @@ public class ArmApiService : IDisposable
     internal const string ArmResource = "https://management.core.windows.net/";
     private const string ResourceGroupApiVersion = "2021-04-01";
     private const string AppServiceApiVersion = "2022-03-01";
+
+    // Stable first: the module's own ARM templates deploy enterprise policies at 2020-10-30.
+    private static readonly string[] EnterprisePolicyApiVersions = ["2020-10-30", "2020-10-30-preview"];
+
+    // ARM's vocabulary for "this api-version is not one I serve here". Anything else in a 400 is
+    // about the request itself and must not be retried against the next version.
+    private static readonly HashSet<string> UnsupportedApiVersionCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "NoRegisteredProviderFound",
+        "InvalidApiVersionParameter",
+        "UnsupportedApiVersion",
+    };
+
+    // ArmBaseUrl has no trailing slash and the ARM bearer is a default request header, so an id
+    // that does not begin with "/subscriptions/" retargets the request: "@evil.example/x" makes
+    // "management.azure.com" userinfo and the attacker's host the target. The segment classes are
+    // an allowlist of ARM name characters rather than a delimiter blocklist, because Uri
+    // normalizes "%2e%2e" and "\" before the request goes out -- so anything the pattern admits
+    // that Uri rewrites would break "what was validated is what gets requested".
+    private static readonly Regex EnterprisePolicyArmIdPattern = new(
+        @"^/subscriptions/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/resourceGroups/(?!\.{1,2}(?:/|\z))[-\w.()]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/(?!\.{1,2}\z)[-\w.()]+\z",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private readonly ILogger<ArmApiService> _logger;
     private readonly HttpClient _httpClient;
@@ -243,4 +266,165 @@ public class ArmApiService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads a Microsoft.PowerPlatform/enterprisePolicies resource and returns its
+    /// <c>properties.systemId</c> — the only identifier the Business App Platform accepts when
+    /// linking a policy to an environment. Shaped
+    /// <c>/regions/{region}/providers/Microsoft.PowerPlatform/enterprisePolicies/{guid}</c>,
+    /// which is not derivable from the ARM resource id.
+    ///
+    /// This read happens in the CLI, using the admin's own Azure session, so the Agent 365
+    /// service never needs delegated ARM access. Holding the whole policy object here is also what
+    /// lets the kind check happen with a useful message: every enterprise policy kind carries a
+    /// systemId, so a CMK or Identity policy would otherwise sail through to BAP and come back as a
+    /// generic upstream rejection.
+    ///
+    /// Returns null when the policy cannot be read, is not a NetworkInjection policy, or has no
+    /// systemId; the message is logged.
+    /// </summary>
+    public virtual async Task<string?> GetEnterprisePolicySystemIdAsync(
+        string policyArmId,
+        string tenantId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(policyArmId))
+            throw new ArgumentException("Policy ARM id is required.", nameof(policyArmId));
+
+        if (!EnterprisePolicyArmIdPattern.IsMatch(policyArmId))
+        {
+            _logger.LogError(
+                "'{PolicyArmId}' is not an enterprise policy ARM id. Expected " +
+                "/subscriptions/{{subscriptionId}}/resourceGroups/{{group}}/providers/" +
+                "Microsoft.PowerPlatform/enterprisePolicies/{{name}}, as returned by " +
+                "New-SubnetInjectionEnterprisePolicy.",
+                policyArmId);
+            return null;
+        }
+
+        if (!await EnsureArmHeadersAsync(tenantId, ct))
+            return null;
+
+        // The stable and the preview version both ship on this RP and differ by tenant rollout, so
+        // a rejected api-version is a routine outcome rather than a failure worth surfacing.
+        foreach (var apiVersion in EnterprisePolicyApiVersions)
+        {
+            var url = $"{ArmBaseUrl}{policyArmId}?api-version={apiVersion}";
+            _logger.LogDebug("ARM GET enterprise policy (api-version {ApiVersion})", apiVersion);
+
+            try
+            {
+                using var response = await _retryHelper.ExecuteWithRetryAsync(
+                    ct => _httpClient.GetAsync(url, ct), cancellationToken: ct);
+
+                if (response.StatusCode == HttpStatusCode.BadRequest)
+                {
+                    // Only an api-version complaint is worth retrying on the next version. Any
+                    // other 400 is about this request, and discarding it ends the loop in
+                    // "Azure rejected every supported api-version", which sends the admin after
+                    // the wrong problem.
+                    var badRequestBody = await response.Content.ReadAsStringAsync(ct);
+                    string? errorCode = null;
+                    string? errorMessage = null;
+
+                    try
+                    {
+                        using var errorDoc = JsonDocument.Parse(badRequestBody);
+                        if (errorDoc.RootElement.TryGetProperty("error", out var error))
+                        {
+                            errorCode = error.TryGetProperty("code", out var c) ? c.GetString() : null;
+                            errorMessage = error.TryGetProperty("message", out var m) ? m.GetString() : null;
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // A non-JSON 400 came from something in front of ARM. Fall through and
+                        // treat it as a real rejection rather than an api-version miss.
+                    }
+
+                    if (UnsupportedApiVersionCodes.Contains(errorCode ?? string.Empty))
+                    {
+                        _logger.LogDebug("ARM rejected api-version {ApiVersion}; trying the next one", apiVersion);
+                        continue;
+                    }
+
+                    _logger.LogError(
+                        "Could not read enterprise policy {PolicyArmId}. Azure returned 400 ({Code}): {Message}",
+                        policyArmId,
+                        errorCode ?? "no error code",
+                        errorMessage ?? "No error detail was returned.");
+                    return null;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError(
+                        "Could not read enterprise policy {PolicyArmId}. Azure returned {StatusCode}. " +
+                        "Check that the policy exists and that you have read access to it.",
+                        policyArmId,
+                        response.StatusCode);
+                    return null;
+                }
+
+                var body = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(body);
+
+                // Every enterprise policy kind has a systemId, so without this the wrong kind reaches
+                // BAP and returns a generic rejection that names nothing the admin can act on.
+                var kind = doc.RootElement.TryGetProperty("kind", out var kindElement)
+                    ? kindElement.GetString()
+                    : null;
+
+                if (!string.Equals(kind, "NetworkInjection", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError(
+                        "Enterprise policy {PolicyArmId} is of kind '{Kind}', not NetworkInjection. " +
+                        "Supply a subnet injection policy, as returned by New-SubnetInjectionEnterprisePolicy.",
+                        policyArmId,
+                        string.IsNullOrWhiteSpace(kind) ? "unknown" : kind);
+                    return null;
+                }
+
+                if (!doc.RootElement.TryGetProperty("properties", out var properties) ||
+                    !properties.TryGetProperty("systemId", out var systemId))
+                {
+                    _logger.LogError(
+                        "Enterprise policy {PolicyArmId} has no systemId. The policy may still be provisioning.",
+                        policyArmId);
+                    return null;
+                }
+
+                var value = systemId.GetString();
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    _logger.LogError(
+                        "Enterprise policy {PolicyArmId} has an empty systemId. The policy may still be provisioning.",
+                        policyArmId);
+                    return null;
+                }
+
+                _logger.LogDebug("Resolved enterprise policy systemId");
+                return value;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // RetryHelper rethrows cancellation deliberately. Swallowing it here would report
+                // Ctrl+C as "policy not found" and let the caller carry on as if the read had
+                // simply come back empty.
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (NetworkHelper.IsConnectionResetByProxy(ex))
+                    _logger.LogWarning(NetworkHelper.ConnectionResetWarning);
+                else
+                    _logger.LogError(ex, "Failed to read enterprise policy {PolicyArmId}", policyArmId);
+                return null;
+            }
+        }
+
+        _logger.LogError(
+            "Azure rejected every supported enterprise policy api-version reading {PolicyArmId}.",
+            policyArmId);
+        return null;
+    }
 }
