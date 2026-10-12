@@ -69,6 +69,29 @@ public class EntraAppProvisionerTests
         result!.AppName.Should().Be($"{ServerName}-RemoteProxy");
     }
 
+    /// <summary>
+    /// If a follow-up step throws after the app registration already exists (e.g. Graph throttles the
+    /// secret creation), the app is orphaned with no caller-side cleanup. The provisioner must delete
+    /// the orphan and rethrow so the publish aborts rather than proceed with a half-created app.
+    /// </summary>
+    [Fact]
+    public async Task CreateProxyAppAsync_WhenSecretCreationThrows_DeletesOrphanAppAndRethrows()
+    {
+        _graph.CreateEntraAppAsync(TenantId, $"{ServerName}-A365Proxy", serviceTreeId: null, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<(string ObjectId, string ClientId)?>((AppObjectId, AppClientId)));
+        _graph.AddAppPasswordAsync(TenantId, AppObjectId)
+            .Returns<string?>(_ => throw new InvalidOperationException("graph throttled"));
+        _graph.DeleteEntraAppAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(true));
+
+        var act = async () => await _provisioner.CreateProxyAppAsync(
+            ServerName, TenantId, suffix: "A365Proxy", roleDisplay: "A365 Proxy", serviceTreeId: null);
+
+        await act.Should().ThrowAsync<InvalidOperationException>(
+            because: "a provisioning failure after the app is created must propagate so publish aborts instead of continuing with a half-created app");
+        await _graph.Received(1).DeleteEntraAppAsync(TenantId, AppObjectId, Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task CreateProxyAppAsync_WhenCreateAppReturnsNull_ReturnsNullAndLogsError()
     {

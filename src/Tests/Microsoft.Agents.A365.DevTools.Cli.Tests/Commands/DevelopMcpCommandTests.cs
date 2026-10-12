@@ -124,8 +124,10 @@ public class DevelopMcpCommandTests
         var options = subcommand.Options.ToList();
 
         // Verify all expected options exist. Tenant ID is auto-detected from the current az login
-        // session, so publish does not expose --tenant-id; ServiceTree tagging is not required for
-        // publish since it targets Dataverse environments rather than Microsoft corp tenants.
+        // session, so publish does not expose --tenant-id. Publish now registers the A365 proxy and
+        // Public Clients Entra apps in the operator's own tenant (via az login) — which may be a
+        // ServiceTree-enrolled Microsoft corp tenant — so it exposes --service-tree-id and
+        // --secret-lifetime-months, mirroring register.
         var optionNames = options.Select(o => o.Name).ToList();
         optionNames.Should().Contain("environment-id");
         optionNames.Should().Contain("server-name");
@@ -135,10 +137,16 @@ public class DevelopMcpCommandTests
             "tenant-id",
             because: "tenant id is auto-detected from the current 'az login' session; exposing " +
                      "--tenant-id would imply per-publish tenant targeting that the executor does not support.");
-        optionNames.Should().NotContain(
+        optionNames.Should().Contain(
             "service-tree-id",
-            because: "publish targets a customer's Dataverse env, not a Microsoft corp tenant — " +
-                     "the ServiceTree tagging that --service-tree-id provides is not applicable here.");
+            because: "publish creates Entra app registrations in the operator's own tenant, which may " +
+                     "be ServiceTree-enrolled; those registrations are rejected without a " +
+                     "serviceManagementReference, so --service-tree-id must be available (reviewer request on #499, same as #496).");
+        optionNames.Should().Contain(
+            "secret-lifetime-months",
+            because: "the A365 proxy app's client secret must fit under the tenant's appManagementPolicies " +
+                     "lifetime cap or publish fails in strict tenants; --secret-lifetime-months lets the " +
+                     "operator set a compliant lifetime, mirroring register.");
         optionNames.Should().Contain("dry-run");
 
         // Verify critical aliases for Azure CLI compliance
@@ -153,6 +161,11 @@ public class DevelopMcpCommandTests
 
         var displayNameOption = options.FirstOrDefault(o => o.Name == "display-name");
         displayNameOption!.Aliases.Should().Contain("-d");
+
+        var secretLifetimeOption = options.FirstOrDefault(o => o.Name == "secret-lifetime-months");
+        secretLifetimeOption!.Aliases.Should().Contain(
+            "-l",
+            because: "register exposes --secret-lifetime-months as -l; publish must use the same alias for consistency.");
     }
 
     [Fact]
