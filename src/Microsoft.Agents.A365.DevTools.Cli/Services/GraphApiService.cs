@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -48,6 +49,11 @@ public class GraphApiService
     // Delay before retrying a 403 from the agent registry (role propagation lag).
     // Injectable so unit tests can pass TimeSpan.Zero and avoid the real 30s wait.
     private readonly TimeSpan _agentRegistryRetryDelay;
+
+    // AuthenticationService keeps no in-process cache, so without this every ambient Graph call
+    // re-runs MSAL — a per-record loop re-authenticates once per record, and prompts each time
+    // when the persistent cache is cold.
+    private readonly ConcurrentDictionary<string, (string AccessToken, DateTimeOffset ExpiresOnUtc)> _ambientTokenCache = new();
 
     // Graph path for the copilot agent registrations endpoint.
     // Both RegisterAgentInstanceAsyncV2 and DeleteAgentRegistrationAsync use this path.
@@ -196,6 +202,7 @@ public class GraphApiService
     /// </summary>
     public virtual async Task ClearTokenCacheAsync()
     {
+        _ambientTokenCache.Clear();
         _tokenProvider?.ClearTokenCache();
         await _authService.ClearTokenCacheAsync();
     }
@@ -211,12 +218,25 @@ public class GraphApiService
     /// </param>
     public virtual async Task<string?> GetGraphAccessTokenAsync(string tenantId, bool forceRefresh = false, CancellationToken ct = default, bool useDeviceCode = false)
     {
-        _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
         try
         {
             var resource = GraphApiConstants.GetResource(_graphBaseUrl);
             var clientId = GetEffectiveGraphClientId(useDeviceCode);
             var loginHint = await _loginHintResolver(clientId);
+
+            var cacheKey = string.Join("::", _authorityHost, tenantId, resource, clientId, loginHint, useDeviceCode);
+            if (forceRefresh)
+            {
+                _ambientTokenCache.TryRemove(cacheKey, out _);
+            }
+            else if (_ambientTokenCache.TryGetValue(cacheKey, out var cached) &&
+                     cached.ExpiresOnUtc > DateTimeOffset.UtcNow.AddMinutes(AuthenticationConstants.TokenExpirationBufferMinutes))
+            {
+                _logger.LogDebug("Reusing cached Graph API access token for tenant {TenantId} expiring at {Expiry}", tenantId, cached.ExpiresOnUtc);
+                return cached.AccessToken;
+            }
+
+            _logger.LogDebug("Acquiring Graph API access token for tenant {TenantId}", tenantId);
 
             // AuthenticationService builds a fresh DeviceCodeCredential per call with no
             // AuthenticationRecord, so it re-prompts for a device code on every acquisition. The
@@ -231,6 +251,12 @@ public class GraphApiService
                     authorityHost: AuthorityHostOverride);
             if (!string.IsNullOrWhiteSpace(token))
             {
+                // An undecodable expiry means the lifetime is unknown, so the token is used but
+                // not cached rather than risking a stale one being served past its expiry.
+                var expiresOn = JwtHelper.TryGetExpiration(token);
+                if (expiresOn is not null)
+                    _ambientTokenCache[cacheKey] = (token, expiresOn.Value);
+
                 _logger.LogDebug("Graph API access token acquired successfully");
                 return token;
             }
@@ -604,9 +630,9 @@ public class GraphApiService
     /// <summary>
     /// POST to Graph but always return HTTP response details (status, body, parsed JSON)
     /// </summary>
-    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool forceRefresh = false, bool useDeviceCode = false)
+    public virtual async Task<GraphResponse> GraphPostWithResponseAsync(string tenantId, string relativePath, object payload, CancellationToken ct = default, IEnumerable<string>? scopes = null, bool forceRefresh = false, bool useDeviceCode = false, GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
-        if (!await EnsureGraphHeadersAsync(tenantId, forceRefresh: forceRefresh, scopes: scopes, ct: ct, useDeviceCode: useDeviceCode))
+        if (!await EnsureGraphHeadersAsync(tenantId, forceRefresh: forceRefresh, scopes: scopes, ct: ct, authenticationMode: authenticationMode, useDeviceCode: useDeviceCode))
         {
             return new GraphResponse { IsSuccess = false, StatusCode = 0, ReasonPhrase = "NoAuth", Body = "Failed to acquire token" };
         }
@@ -1220,7 +1246,8 @@ public class GraphApiService
         IEnumerable<string>? permissionGrantScopes = null,
         bool requireMatchingConsentType = false,
         bool useDeviceCode = false,
-        bool abortWhenLookupFails = false)
+        bool abortWhenLookupFails = false,
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
         var (success, _, _) = await CreateOrUpdateOauth2PermissionGrantCoreAsync(
             tenantId,
@@ -1233,7 +1260,8 @@ public class GraphApiService
             permissionGrantScopes,
             requireMatchingConsentType,
             useDeviceCode,
-            abortWhenLookupFails);
+            abortWhenLookupFails,
+            authenticationMode);
         return success;
     }
 
@@ -1303,6 +1331,10 @@ public class GraphApiService
     /// query → create-or-merge flow. The only differences are the OData filter, the payload
     /// shape (Principal includes principalId), and the in-code matching for Principal grants.
     /// </summary>
+    /// <param name="authenticationMode">
+    /// Must match the identity the caller used to decide the grant is needed. A preflight read
+    /// under one identity and a grant under another produces a 403 on the read path alone.
+    /// </param>
     private async Task<(bool Success, int StatusCode, string? ErrorCode)> CreateOrUpdateOauth2PermissionGrantCoreAsync(
         string tenantId,
         string clientSpObjectId,
@@ -1314,7 +1346,8 @@ public class GraphApiService
         IEnumerable<string>? permissionGrantScopes,
         bool requireMatchingConsentType = false,
         bool useDeviceCode = false,
-        bool abortWhenLookupFails = false)
+        bool abortWhenLookupFails = false,
+        GraphAuthenticationMode authenticationMode = GraphAuthenticationMode.ResolvedClientApp)
     {
         int lastStatusCode = 0;
         string? lastErrorCode = null;
@@ -1339,6 +1372,7 @@ public class GraphApiService
             $"/v1.0/oauth2PermissionGrants?$filter={existingFilter}",
             ct,
             permissionGrantScopes,
+            authenticationMode,
             useDeviceCode))
         {
             if (listDoc is null && abortWhenLookupFails)
@@ -1414,7 +1448,7 @@ public class GraphApiService
             const int baseDelaySeconds = 5;
             for (int attempt = 0; attempt < maxRetries; attempt++)
             {
-                var grantResponse = await GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes, useDeviceCode: useDeviceCode);
+                var grantResponse = await GraphPostWithResponseAsync(tenantId, "/v1.0/oauth2PermissionGrants", payload, ct, permissionGrantScopes, useDeviceCode: useDeviceCode, authenticationMode: authenticationMode);
                 // Dispose the error JSON immediately — only IsSuccess and Body are needed below.
                 grantResponse.Json?.Dispose();
                 lastStatusCode = grantResponse.StatusCode;
@@ -1466,7 +1500,7 @@ public class GraphApiService
         currentSet.UnionWith(desiredSet);
         var merged = string.Join(' ', currentSet);
 
-        var patchOk = await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes, useDeviceCode);
+        var patchOk = await GraphPatchAsync(tenantId, $"/v1.0/oauth2PermissionGrants/{existingId}", new { scope = merged }, ct, permissionGrantScopes, authenticationMode, useDeviceCode);
         return (patchOk, 0, null);
     }
 

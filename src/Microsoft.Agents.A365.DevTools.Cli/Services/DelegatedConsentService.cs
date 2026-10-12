@@ -306,7 +306,9 @@ public sealed class DelegatedConsentService
 
             _logger.LogInformation("    Acquiring fresh Graph API token...");
 
-            var token = await _graphService.GetGraphAccessTokenAsync(tenantId);
+            // forceRefresh: the caller just re-authenticated to pick up new consent, so a cached
+            // token from before the sign-out would defeat the purpose of this path.
+            var token = await _graphService.GetGraphAccessTokenAsync(tenantId, forceRefresh: true, ct: cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(token))
             {

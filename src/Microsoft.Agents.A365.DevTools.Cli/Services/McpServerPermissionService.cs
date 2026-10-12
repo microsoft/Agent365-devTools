@@ -191,14 +191,17 @@ public class McpServerPermissionService
             resourceSpObjectId,
             [McpConstants.V2ScopeValue],
             ct,
-            AuthenticationConstants.RequiredPermissionGrantScopes,
+            // Scopes are ignored under Ambient; the grant must run as the same identity that read
+            // the state in GetAgentInstanceStatusesAsync, or its preflight read 403s on its own.
+            permissionGrantScopes: null,
             // Never patch a user-scoped grant in place of the tenant-wide one this command
             // reports on, or the agent would still be missing the permission (issue #500).
             requireMatchingConsentType: true,
             UseDeviceCodeAuthentication,
             // A failed read is not "no grant" — creating from unknown state can report success
             // on "Permission entry already exists" without merging the scope (issue #500).
-            abortWhenLookupFails: true);
+            abortWhenLookupFails: true,
+            GraphAuthenticationMode.Ambient);
     }
 
     /// <summary>

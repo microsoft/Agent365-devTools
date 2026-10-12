@@ -70,6 +70,8 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
+- `a365 develop-mcp grant-agents-access` no longer fails with "Insufficient privileges to complete the operation" when granting a permission, because the grant now runs as the same sign-in identity used to check which agent instances are missing it (#500).
+- Commands that check many agent instances no longer sign in once per instance (#500).
 - `a365 create-instance` now reports an ambiguous government-cloud environment as a configuration error with guidance to select a specific cloud (#478).
 - Setup now warns before replacing a stale stored blueprint ID with the sole application matching the configured display name (#478).
 - Messaging endpoint create and delete overrides now reject non-HTTPS URLs and URLs containing user information, query strings, or fragments (#478).

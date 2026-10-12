@@ -41,6 +41,35 @@ internal static class JwtHelper
     }
 
     /// <summary>
+    /// Returns the token's expiry from the numeric <c>exp</c> claim, or null when it cannot be
+    /// decoded. Callers that cache a token must treat null as "do not cache".
+    /// </summary>
+    internal static DateTimeOffset? TryGetExpiration(string? jwt)
+    {
+        if (string.IsNullOrWhiteSpace(jwt)) return null;
+        try
+        {
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return null;
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            using var doc = JsonDocument.Parse(Convert.FromBase64String(payload));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            return doc.RootElement.TryGetProperty("exp", out var exp) && exp.TryGetInt64(out var seconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(seconds)
+                : null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Attempts to decode a space-delimited claim (e.g. the v2.0 <c>scp</c> delegated-scope
     /// claim) into a case-insensitive set. Malformed tokens, invalid JSON, absent claims, and
     /// non-string claims return a failure reason instead of being conflated with an empty claim.

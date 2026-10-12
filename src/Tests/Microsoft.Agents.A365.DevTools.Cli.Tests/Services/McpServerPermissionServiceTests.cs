@@ -308,7 +308,7 @@ public class McpServerPermissionServiceTests
                 TenantId, AgentSpId, ByoSpObjectId,
                 Arg.Is<IEnumerable<string>>(s => s.SequenceEqual(new[] { McpConstants.V2ScopeValue })),
                 Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(),
-                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>())
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(true));
 
         var granted = await _service.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId);
@@ -318,7 +318,30 @@ public class McpServerPermissionServiceTests
         await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(),
-            true, Arg.Any<bool>(), true);
+            true, Arg.Any<bool>(), true, Arg.Any<GraphAuthenticationMode>());
+    }
+
+    [Fact]
+    public async Task GrantServerScopeAsync_GrantsUnderTheSameIdentityThatReadTheState()
+    {
+        // GetAgentInstanceStatusesAsync reads grants with the ambient identity. Granting under a
+        // scoped identity makes the grant's own preflight read fail with 403
+        // Authorization_RequestDenied, which aborts the grant for every caller (issue #500).
+        _graph.CreateOrUpdateOauth2PermissionGrantAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<GraphAuthenticationMode>())
+            .Returns(Task.FromResult(true));
+
+        await _service.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId);
+
+        await _graph.Received(1).CreateOrUpdateOauth2PermissionGrantAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(),
+            // Scopes are ignored under Ambient, and passing them would reintroduce a second
+            // interactive sign-in for a token the grant does not use.
+            Arg.Is<IEnumerable<string>?>(s => s == null),
+            Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), GraphAuthenticationMode.Ambient);
     }
 
     [Fact]
@@ -327,7 +350,7 @@ public class McpServerPermissionServiceTests
         _graph.CreateOrUpdateOauth2PermissionGrantAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                 Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(),
-                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>())
+                Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<GraphAuthenticationMode>())
             .Returns(Task.FromResult(false));
 
         var granted = await _service.GrantServerScopeAsync(TenantId, AgentSpId, ByoSpObjectId);
