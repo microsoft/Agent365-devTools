@@ -60,6 +60,34 @@ public class GraphApiServiceAgentAccessAuthTests
             Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
+    /// <summary>
+    /// Stronger form of <see cref="AssertAcquiredAgentAccessTokenAsync"/>: pins the exact number of
+    /// acquisitions and rejects any that used another identity or scope set. Needed for multi-request
+    /// operations, where asserting "at least one matching call" would pass even if the write reverted
+    /// to a different identity than the preflight read.
+    /// </summary>
+    private static async Task AssertEveryAcquisitionUsedAgentAccessAsync(
+        IMicrosoftGraphTokenProvider provider, int expectedCalls)
+    {
+        await provider.Received(expectedCalls).GetMgGraphAccessTokenAsync(
+            TenantId,
+            Arg.Is<IEnumerable<string>>(s => s.SequenceEqual(AuthenticationConstants.McpAgentAccessScopes)),
+            Arg.Any<bool>(),
+            AuthenticationConstants.GraphPowershellClientId,
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
+
+        await provider.DidNotReceive().GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(),
+            Arg.Is<IEnumerable<string>>(s => !s.SequenceEqual(AuthenticationConstants.McpAgentAccessScopes)),
+            Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
+
+        await provider.DidNotReceive().GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(),
+            Arg.Is<string?>(c => c != AuthenticationConstants.GraphPowershellClientId),
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
+    }
+
     private static HttpResponseMessage Ok(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json) };
 
@@ -72,7 +100,7 @@ public class GraphApiServiceAgentAccessAuthTests
 
         await service.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, "Contoso MCP");
 
-        await AssertAcquiredAgentAccessTokenAsync(provider);
+        await AssertEveryAcquisitionUsedAgentAccessAsync(provider, expectedCalls: 1);
     }
 
     [Fact]
@@ -84,7 +112,7 @@ public class GraphApiServiceAgentAccessAuthTests
 
         await service.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, "app-1");
 
-        await AssertAcquiredAgentAccessTokenAsync(provider);
+        await AssertEveryAcquisitionUsedAgentAccessAsync(provider, expectedCalls: 1);
     }
 
     [Fact]
@@ -96,7 +124,7 @@ public class GraphApiServiceAgentAccessAuthTests
 
         await service.TryGetOauth2PermissionGrantsForAgentAccessAsync(TenantId, "client-sp");
 
-        await AssertAcquiredAgentAccessTokenAsync(provider);
+        await AssertEveryAcquisitionUsedAgentAccessAsync(provider, expectedCalls: 1);
     }
 
     [Fact]
@@ -110,10 +138,35 @@ public class GraphApiServiceAgentAccessAuthTests
             Content = new StringContent("""{"id":"grant-1"}""")
         });
 
-        await service.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
+        var granted = await service.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
             TenantId, "client-sp", "resource-sp", ["Server.Read"]);
 
-        await AssertAcquiredAgentAccessTokenAsync(provider);
+        granted.Should().BeTrue();
+        handler.RequestCount.Should().Be(2, because: "the create path is a preflight read followed by a POST");
+        await AssertEveryAcquisitionUsedAgentAccessAsync(provider, expectedCalls: 2);
+    }
+
+    /// <summary>
+    /// The merge path reads then PATCHes. Both must run under the same identity: a read under one
+    /// identity and a write under another 403s on the read alone, which is the original bug.
+    /// </summary>
+    [Fact]
+    public async Task CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync_UsesTheAgentAccessTokenWhenPatchingAnExistingGrant()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, _) = CreateService(handler);
+        handler.QueueResponse(Ok("""{"value":[{"id":"grant-1","consentType":"AllPrincipals","resourceId":"resource-sp","scope":"Other.Read"}]}"""));
+        handler.QueueResponse(Ok("""{"id":"grant-1"}"""));
+
+        var granted = await service.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
+            TenantId, "client-sp", "resource-sp", ["Server.Read"]);
+
+        granted.Should().BeTrue();
+        handler.RequestCount.Should().Be(2, because: "an existing grant missing the scope is read then PATCHed, not re-created");
+        handler.RequestUris[1].ToString().Should().Contain("/oauth2PermissionGrants/grant-1",
+            because: "the second request must target the existing grant by ID, which distinguishes the " +
+                     "PATCH merge path from the POST create path this test is not covering");
+        await AssertEveryAcquisitionUsedAgentAccessAsync(provider, expectedCalls: 2);
     }
 
     [Fact]
