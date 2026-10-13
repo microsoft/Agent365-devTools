@@ -10,20 +10,20 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Helpers;
 internal static class SecretFileGuard
 {
     /// <summary>
-    /// Returns null when <paramref name="path"/> (relative paths resolve against <paramref name="trustedRoot"/>)
+    /// Returns null when <paramref name="path"/> (relative paths resolve against <paramref name="rootDirectory"/>)
     /// is the root or inside it and no entry below the root is a symbolic link or junction;
     /// otherwise returns why a secret must not be written there.
     /// </summary>
-    internal static string? GetUnsafeReason(string trustedRoot, string path)
+    internal static string? GetUnsafeReason(string rootDirectory, string path)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trustedRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         string root;
         string fullPath;
         try
         {
-            root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(trustedRoot));
+            root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory));
             fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path, root));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
