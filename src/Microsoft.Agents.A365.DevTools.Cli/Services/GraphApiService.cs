@@ -826,8 +826,8 @@ public class GraphApiService
         => LookupServicePrincipalByAppIdCoreAsync(tenantId, appId, ct, scopes, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
 
     /// <summary>
-    /// Looks up a service principal for the grant-agents-access flow, under the Graph Command Line
-    /// Tools app so the token actually carries the Graph scopes the lookup needs.
+    /// Looks up a service principal for the grant-agents-access flow, under that flow's client app
+    /// so the token actually carries the Graph scopes the lookup needs.
     /// </summary>
     public virtual Task<string?> LookupServicePrincipalByAppIdForAgentAccessAsync(
         string tenantId, string appId, CancellationToken ct = default, bool useDeviceCode = false)
@@ -1146,9 +1146,8 @@ public class GraphApiService
             tenantId, displayName, ct, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
 
     /// <summary>
-    /// Same as <see cref="TryFindApplicationAppIdsByDisplayNameAsync"/> but reads under the Graph
-    /// Command Line Tools app, so the whole grant-agents-access flow uses one identity and one
-    /// sign-in.
+    /// Same as <see cref="TryFindApplicationAppIdsByDisplayNameAsync"/> but reads under the
+    /// grant-agents-access client app, so the whole flow uses one identity and one sign-in.
     /// </summary>
     public virtual Task<ApplicationDisplayNameSearchResult> TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(
         string tenantId, string displayName, CancellationToken ct = default, bool useDeviceCode = false)
@@ -1328,8 +1327,8 @@ public class GraphApiService
     }
 
     /// <summary>
-    /// Creates or updates the AllPrincipals grant for the grant-agents-access flow, under the Graph
-    /// Command Line Tools app. The preflight read and the write must use the same identity, or the
+    /// Creates or updates the AllPrincipals grant for the grant-agents-access flow, under that
+    /// flow's client app. The preflight read and the write must use the same identity, or the
     /// read alone 403s.
     /// </summary>
     public virtual async Task<bool> CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
@@ -1628,8 +1627,8 @@ public class GraphApiService
         => TryGetOauth2PermissionGrantsCoreAsync(tenantId, clientSpObjectId, ct, useDeviceCode, GraphAuthenticationMode.Ambient);
 
     /// <summary>
-    /// Same as <see cref="TryGetOauth2PermissionGrantsAsync"/> but reads under the Graph Command
-    /// Line Tools app, so the preflight read and the subsequent grant use one identity.
+    /// Same as <see cref="TryGetOauth2PermissionGrantsAsync"/> but reads under the
+    /// grant-agents-access client app, so the preflight read and the subsequent grant use one identity.
     /// </summary>
     public virtual Task<List<(string resourceId, string scope, string consentType)>?> TryGetOauth2PermissionGrantsForAgentAccessAsync(
         string tenantId,
