@@ -22,8 +22,8 @@ public enum GraphAuthenticationMode
     Ambient = 1,
 
     /// <summary>
-    /// Authenticate as the configured client app when one is set, otherwise as
-    /// <see cref="Constants.AuthenticationConstants.GraphPowershellClientId"/>, with the fixed
+    /// Authenticate as <see cref="Constants.AuthenticationConstants.GraphPowershellClientId"/>
+    /// ('Microsoft Graph Command Line Tools') with the fixed
     /// <see cref="Constants.AuthenticationConstants.McpAgentAccessScopes"/> set, for 'develop-mcp grant-agents-access'.
     /// </summary>
     McpAgentAccess = 2

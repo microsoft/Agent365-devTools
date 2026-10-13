@@ -40,11 +40,6 @@ public class GraphApiService
     private string? _loginHint;
     private bool _loginHintResolved;
 
-    // Latched once the configured app fails to produce an agent-access token. Token failures are
-    // not cached, so without this every Graph call in the flow would retry the failing app first
-    // and re-prompt for sign-in.
-    private bool _agentAccessFallbackLatched;
-
     // Resolver delegate for the login hint.
     // Defaults to az CLI first, then AuthenticationService JWT cache as fallback.
     // Injectable via constructor so unit tests can bypass the real az process.
@@ -314,10 +309,11 @@ public class GraphApiService
         //    Authenticating as that app would make an underconfigured registration unable to
         //    authorize its own repair, so the resolved app and requested scopes are ignored.
         //
-        // 5. GraphAuthenticationMode.McpAgentAccess: authenticate as the configured client app when
-        //    one is set, otherwise as the Graph Command Line Tools app, with a fixed scope set.
-        //    The Ambient app is not preauthorized for these scopes, so its '.default' token omits
-        //    them and the calls 403.
+        // 5. GraphAuthenticationMode.McpAgentAccess: authenticate as the Graph Command Line Tools
+        //    app with a fixed scope set. The custom app is deliberately not used — #409 removed
+        //    DelegatedPermissionGrant.ReadWrite.All from it, and preferring it would surface a
+        //    consent prompt that widens it back. The Ambient app is not preauthorized for these
+        //    scopes, so its '.default' token omits them and the calls 403.
         //
         // All paths go through MSAL — no az CLI subprocess involved.
 
@@ -341,40 +337,13 @@ public class GraphApiService
             var mcpScopes = AuthenticationConstants.McpAgentAccessScopes;
             var mcpLoginHint = await ResolveLoginHintAsync(useDeviceCode);
 
-            // Prefer the tenant-owned client app so this command consents the same app as the rest
-            // of the CLI. Without one configured the flow is unchanged: Graph Command Line Tools.
-            var mcpClientId = string.IsNullOrWhiteSpace(CustomClientAppId) || _agentAccessFallbackLatched
-                ? AuthenticationConstants.GraphPowershellClientId
-                : CustomClientAppId;
-            var usingConfiguredApp = !string.Equals(
-                mcpClientId, AuthenticationConstants.GraphPowershellClientId, StringComparison.OrdinalIgnoreCase);
-
-            _logger.LogDebug("Acquiring Graph token for the agent-access flow (clientId: {AppId}, scopes: {Scopes})",
-                mcpClientId, string.Join(", ", mcpScopes));
             token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, mcpScopes, useDeviceCode, mcpClientId,
+                tenantId, mcpScopes, useDeviceCode, AuthenticationConstants.GraphPowershellClientId,
                 ct, mcpLoginHint, forceRefresh, GraphBaseUrlOverride, AuthorityHostOverride);
-
-            // A registration created before this command existed has no
-            // DelegatedPermissionGrant.ReadWrite.All, so retry as the preauthorized Graph Command
-            // Line Tools app rather than fail a flow that worked without any config.
-            if (string.IsNullOrWhiteSpace(token) && usingConfiguredApp)
-            {
-                _logger.LogWarning(
-                    "Could not acquire a Graph token as the configured client app {AppId}. Retrying as 'Microsoft Graph Command Line Tools'.",
-                    mcpClientId);
-                _agentAccessFallbackLatched = true;
-                token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                    tenantId, mcpScopes, useDeviceCode, AuthenticationConstants.GraphPowershellClientId,
-                    ct, mcpLoginHint, forceRefresh, GraphBaseUrlOverride, AuthorityHostOverride);
-            }
 
             if (string.IsNullOrWhiteSpace(token))
             {
-                var attemptedClientId = usingConfiguredApp
-                    ? AuthenticationConstants.GraphPowershellClientId
-                    : mcpClientId;
-                _logger.LogError(ErrorMessages.AgentAccessTokenUnavailable, attemptedClientId, string.Join(", ", mcpScopes));
+                _logger.LogError(ErrorMessages.AgentAccessTokenUnavailable, string.Join(", ", mcpScopes));
                 return false;
             }
         }
@@ -832,8 +801,8 @@ public class GraphApiService
         => LookupServicePrincipalByAppIdCoreAsync(tenantId, appId, ct, scopes, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
 
     /// <summary>
-    /// Looks up a service principal for the grant-agents-access flow, under that flow's client app
-    /// so the token actually carries the Graph scopes the lookup needs.
+    /// Looks up a service principal for the grant-agents-access flow, under the Graph Command Line
+    /// Tools app so the token actually carries the Graph scopes the lookup needs.
     /// </summary>
     public virtual Task<string?> LookupServicePrincipalByAppIdForAgentAccessAsync(
         string tenantId, string appId, CancellationToken ct = default, bool useDeviceCode = false)
@@ -1152,8 +1121,8 @@ public class GraphApiService
             tenantId, displayName, ct, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
 
     /// <summary>
-    /// Same as <see cref="TryFindApplicationAppIdsByDisplayNameAsync"/> but reads under the
-    /// grant-agents-access client app, so the whole flow uses one identity and one sign-in.
+    /// Same as <see cref="TryFindApplicationAppIdsByDisplayNameAsync"/> but reads under the Graph
+    /// Command Line Tools app, so the whole flow uses one identity and one sign-in.
     /// </summary>
     public virtual Task<ApplicationDisplayNameSearchResult> TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(
         string tenantId, string displayName, CancellationToken ct = default, bool useDeviceCode = false)
@@ -1333,8 +1302,8 @@ public class GraphApiService
     }
 
     /// <summary>
-    /// Creates or updates the AllPrincipals grant for the grant-agents-access flow, under that
-    /// flow's client app. The preflight read and the write must use the same identity, or the
+    /// Creates or updates the AllPrincipals grant for the grant-agents-access flow, under the Graph
+    /// Command Line Tools app. The preflight read and the write must use the same identity, or the
     /// read alone 403s.
     /// </summary>
     public virtual async Task<bool> CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
@@ -1633,8 +1602,8 @@ public class GraphApiService
         => TryGetOauth2PermissionGrantsCoreAsync(tenantId, clientSpObjectId, ct, useDeviceCode, GraphAuthenticationMode.Ambient);
 
     /// <summary>
-    /// Same as <see cref="TryGetOauth2PermissionGrantsAsync"/> but reads under the
-    /// grant-agents-access client app, so the preflight read and the subsequent grant use one identity.
+    /// Same as <see cref="TryGetOauth2PermissionGrantsAsync"/> but reads under the Graph Command
+    /// Line Tools app, so the preflight read and the subsequent grant use one identity.
     /// </summary>
     public virtual Task<List<(string resourceId, string scope, string consentType)>?> TryGetOauth2PermissionGrantsForAgentAccessAsync(
         string tenantId,

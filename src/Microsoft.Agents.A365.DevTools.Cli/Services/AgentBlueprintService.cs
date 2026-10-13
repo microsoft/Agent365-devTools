@@ -186,8 +186,8 @@ public class AgentBlueprintService
             tenantId, blueprintId, cancellationToken, useDeviceCode, GraphAuthenticationMode.ResolvedClientApp);
 
     /// <summary>
-    /// Same as <see cref="GetAgentInstancesForBlueprintAsync"/> but reads under the
-    /// grant-agents-access client app, so that flow uses one identity and one sign-in.
+    /// Same as <see cref="GetAgentInstancesForBlueprintAsync"/> but reads under the Graph Command
+    /// Line Tools app, so the grant-agents-access flow uses one identity and one sign-in.
     /// </summary>
     public virtual Task<IReadOnlyList<AgentInstanceInfo>> GetAgentInstancesForBlueprintForAgentAccessAsync(
         string tenantId,
