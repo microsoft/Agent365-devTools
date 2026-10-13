@@ -219,8 +219,11 @@ public class AgentBlueprintService
         // Agent user query requires AgentIdUser.ReadWrite.All, which is intentionally absent from
         // RequiredClientAppPermissions until create-instance is re-enabled. This means agent user
         // cleanup is also disabled — no agent users exist while create-instance is off, so this is safe.
+        // The agent-access flow is excluded because its token carries a fixed scope set that cannot
+        // include this scope, and it never reads AgentUserId.
         List<JsonElement> userItems;
-        if (AuthenticationConstants.RequiredClientAppPermissions.Contains(AuthenticationConstants.AgentIdUserReadWriteAllScope))
+        if (authenticationMode != GraphAuthenticationMode.McpAgentAccess &&
+            AuthenticationConstants.RequiredClientAppPermissions.Contains(AuthenticationConstants.AgentIdUserReadWriteAllScope))
         {
             var userScopes = new[] { AuthenticationConstants.AgentIdUserReadWriteAllScope };
             userItems = await FetchAllPagesAsync(
