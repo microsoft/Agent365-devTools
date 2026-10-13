@@ -61,10 +61,8 @@ public class GraphApiServiceAgentAccessAuthTests
     }
 
     /// <summary>
-    /// Stronger form of <see cref="AssertAcquiredAgentAccessTokenAsync"/>: pins the exact number of
-    /// acquisitions and rejects any that used another identity or scope set. Needed for multi-request
-    /// operations, where asserting "at least one matching call" would pass even if the write reverted
-    /// to a different identity than the preflight read.
+    /// Every acquisition in the operation must use the agent-access scopes and client app, and
+    /// there must be exactly <paramref name="expectedCalls"/> of them.
     /// </summary>
     private static async Task AssertEveryAcquisitionUsedAgentAccessAsync(
         IMicrosoftGraphTokenProvider provider, int expectedCalls)

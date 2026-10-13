@@ -790,9 +790,7 @@ public class AgentBlueprintServiceTests
 
     /// <summary>
     /// The agent-access token carries a fixed scope set that cannot include
-    /// AgentIdUser.ReadWrite.All, so this flow must never issue the agentUser query. It currently
-    /// passes for a second reason — the scope is absent from RequiredClientAppPermissions while
-    /// create-instance is disabled — and becomes load-bearing when that scope is restored.
+    /// AgentIdUser.ReadWrite.All, so this flow must never issue the agentUser query.
     /// </summary>
     [Fact]
     public async Task GetAgentInstancesForBlueprintForAgentAccessAsync_NeverQueriesAgentUsers()
