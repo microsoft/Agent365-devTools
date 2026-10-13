@@ -42,12 +42,12 @@ public static class ErrorMessages
     #region Graph Authentication Messages
 
     /// <summary>
-    /// Formatted with the requested scopes. A null token has several causes, so this names the app
-    /// and who can consent without asserting that missing consent is the reason.
+    /// Formatted with the app ID that was tried and the requested scopes. A null token has several
+    /// causes, so this names the app and who can consent without asserting that missing consent is
+    /// the reason.
     /// </summary>
     public const string AgentAccessTokenUnavailable =
-        "Could not acquire a Microsoft Graph token for 'Microsoft Graph Command Line Tools' " +
-        "(app ID 14d82eec-204b-4c2f-b7e8-296a70dab67e) with scopes: {Scopes}. " +
+        "Could not acquire a Microsoft Graph token for client app {AppId} with scopes: {Scopes}. " +
         "See the preceding authentication error for the cause. If these scopes have not been " +
         "consented to in this tenant, a Global Administrator or Privileged Role Administrator " +
         "must grant them to that enterprise application.";

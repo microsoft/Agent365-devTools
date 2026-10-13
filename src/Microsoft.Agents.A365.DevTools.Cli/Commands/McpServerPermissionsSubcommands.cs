@@ -25,7 +25,9 @@ public static class McpServerPermissionsSubcommands
     /// </summary>
     public static Command CreateGrantAgentsAccessSubcommand(
         ILogger logger,
-        McpServerPermissionService permissionService)
+        McpServerPermissionService permissionService,
+        IConfigService? configService = null,
+        GraphApiService? graphApiService = null)
     {
         var command = new Command(GrantAgentsAccessCommandName,
             $"Grant the '{McpConstants.V2ScopeValue}' permission for an MCP server to agent identities. " +
@@ -97,6 +99,8 @@ public static class McpServerPermissionsSubcommands
                 context.ExitCode = 1;
                 return;
             }
+
+            await ApplyProjectConfigAsync(configService, graphApiService, logger);
 
             var resource = await permissionService.ResolveServerResourceAsync(
                 tenantId, serverName, ct,
@@ -173,6 +177,40 @@ public static class McpServerPermissionsSubcommands
         });
 
         return command;
+    }
+
+    /// <summary>
+    /// Applies a project's a365.config.json when the command is run from an agent project, so this
+    /// command authenticates as the same client app as the rest of the CLI. Outside a project
+    /// nothing is applied and the default client app is used.
+    /// </summary>
+    private static async Task ApplyProjectConfigAsync(
+        IConfigService? configService,
+        GraphApiService? graphApiService,
+        ILogger logger)
+    {
+        if (configService is null || graphApiService is null ||
+            !File.Exists(ConfigConstants.DefaultConfigFileName))
+        {
+            return;
+        }
+
+        try
+        {
+            var config = await configService.LoadAsync(ConfigConstants.DefaultConfigFileName);
+            graphApiService.ConfigureCloudEndpoints(config);
+            if (!string.IsNullOrWhiteSpace(config.ClientAppId))
+            {
+                logger.LogDebug("Using the client app {AppId} configured in {File}.",
+                    config.ClientAppId, ConfigConstants.DefaultConfigFileName);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Config is optional here, so a bad or partial one must not block the command.
+            logger.LogDebug("Could not apply {File} ({Message}). Continuing with the default client app.",
+                ConfigConstants.DefaultConfigFileName, ex.Message);
+        }
     }
 
     /// <summary>

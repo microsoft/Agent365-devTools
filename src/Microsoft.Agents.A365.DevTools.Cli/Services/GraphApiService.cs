@@ -309,9 +309,10 @@ public class GraphApiService
         //    Authenticating as that app would make an underconfigured registration unable to
         //    authorize its own repair, so the resolved app and requested scopes are ignored.
         //
-        // 5. GraphAuthenticationMode.McpAgentAccess: authenticate as the Graph Command Line Tools
-        //    app with a fixed scope set. That app is preauthorized for Graph delegated scopes;
-        //    the Ambient app is not, so its '.default' token omits them and the calls 403.
+        // 5. GraphAuthenticationMode.McpAgentAccess: authenticate as the configured client app when
+        //    one is set, otherwise as the Graph Command Line Tools app, with a fixed scope set.
+        //    The Ambient app is not preauthorized for these scopes, so its '.default' token omits
+        //    them and the calls 403.
         //
         // All paths go through MSAL — no az CLI subprocess involved.
 
@@ -334,13 +335,40 @@ public class GraphApiService
 
             var mcpScopes = AuthenticationConstants.McpAgentAccessScopes;
             var mcpLoginHint = await ResolveLoginHintAsync(useDeviceCode);
+
+            // Prefer the tenant-owned client app so this command consents the same app as the rest
+            // of the CLI. Without one configured the flow is unchanged: Graph Command Line Tools.
+            var mcpClientId = string.IsNullOrWhiteSpace(CustomClientAppId)
+                ? AuthenticationConstants.GraphPowershellClientId
+                : CustomClientAppId;
+            var usingConfiguredApp = !string.Equals(
+                mcpClientId, AuthenticationConstants.GraphPowershellClientId, StringComparison.OrdinalIgnoreCase);
+
+            _logger.LogDebug("Acquiring Graph token for the agent-access flow (clientId: {AppId}, scopes: {Scopes})",
+                mcpClientId, string.Join(", ", mcpScopes));
             token = await _tokenProvider.GetMgGraphAccessTokenAsync(
-                tenantId, mcpScopes, useDeviceCode, AuthenticationConstants.GraphPowershellClientId,
+                tenantId, mcpScopes, useDeviceCode, mcpClientId,
                 ct, mcpLoginHint, forceRefresh, GraphBaseUrlOverride, AuthorityHostOverride);
+
+            // A registration created before this command existed has no
+            // DelegatedPermissionGrant.ReadWrite.All, so retry as the preauthorized Graph Command
+            // Line Tools app rather than fail a flow that worked without any config.
+            if (string.IsNullOrWhiteSpace(token) && usingConfiguredApp)
+            {
+                _logger.LogWarning(
+                    "Could not acquire a Graph token as the configured client app {AppId}. Retrying as 'Microsoft Graph Command Line Tools'.",
+                    mcpClientId);
+                token = await _tokenProvider.GetMgGraphAccessTokenAsync(
+                    tenantId, mcpScopes, useDeviceCode, AuthenticationConstants.GraphPowershellClientId,
+                    ct, mcpLoginHint, forceRefresh, GraphBaseUrlOverride, AuthorityHostOverride);
+            }
 
             if (string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogError(ErrorMessages.AgentAccessTokenUnavailable, string.Join(", ", mcpScopes));
+                var attemptedClientId = usingConfiguredApp
+                    ? AuthenticationConstants.GraphPowershellClientId
+                    : mcpClientId;
+                _logger.LogError(ErrorMessages.AgentAccessTokenUnavailable, attemptedClientId, string.Join(", ", mcpScopes));
                 return false;
             }
         }

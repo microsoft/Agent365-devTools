@@ -137,6 +137,49 @@ public class GraphApiServiceAgentAccessAuthTests
     }
 
     [Fact]
+    public async Task AgentAccessFlow_PrefersTheConfiguredClientApp()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, _) = CreateService(handler);
+        const string configuredAppId = "99999999-9999-9999-9999-999999999999";
+        service.CustomClientAppId = configuredAppId;
+        handler.QueueResponse(Ok("""{"value":[{"id":"sp-1"}]}"""));
+
+        await service.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, "app-1");
+
+        await provider.Received().GetMgGraphAccessTokenAsync(
+            TenantId,
+            Arg.Is<IEnumerable<string>>(s => s.SequenceEqual(AuthenticationConstants.McpAgentAccessScopes)),
+            Arg.Any<bool>(),
+            configuredAppId,
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task AgentAccessFlow_FallsBackToGraphCommandLineToolsWhenTheConfiguredAppCannotGetAToken()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, _) = CreateService(handler);
+        const string configuredAppId = "99999999-9999-9999-9999-999999999999";
+        service.CustomClientAppId = configuredAppId;
+
+        // A registration that predates this command has no DelegatedPermissionGrant.ReadWrite.All,
+        // so its acquisition yields no token.
+        provider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), configuredAppId,
+                Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns((string?)null);
+        handler.QueueResponse(Ok("""{"value":[{"id":"sp-1"}]}"""));
+
+        var result = await service.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, "app-1");
+
+        result.Should().Be("sp-1",
+            because: "the command worked with no config before the configured app was preferred, so a " +
+                     "registration that lacks the scopes must not turn a working flow into a failure");
+        await AssertAcquiredAgentAccessTokenAsync(provider);
+    }
+
+    [Fact]
     public void McpAgentAccessScopes_CoverEveryGraphCallTheFlowMakes()
     {
         AuthenticationConstants.McpAgentAccessScopes.Should().BeEquivalentTo(
