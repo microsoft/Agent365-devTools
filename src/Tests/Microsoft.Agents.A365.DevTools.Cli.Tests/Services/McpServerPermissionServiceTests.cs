@@ -92,11 +92,9 @@ public class McpServerPermissionServiceTests
     }
 
     [Fact]
-    public async Task ResolveServerResourceAsync_LooksUpTheServicePrincipalUnderTheAmbientIdentity()
+    public async Task ResolveServerResourceAsync_LooksUpTheServicePrincipalUnderTheAgentAccessIdentity()
     {
-        // Every Graph call in this flow must run under one identity. A scoped token cannot be
-        // acquired silently without a configured client app, so requesting one here costs an
-        // extra interactive Connect-MgGraph sign-in on top of the one already held.
+        // Every Graph call in this flow must use the same identity and token.
         _graph.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, ByoDisplayName, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new GraphApiService.ApplicationDisplayNameSearchResult([ByoAppId], SignInFailed: false)));
         _graph.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, ByoAppId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
@@ -212,11 +210,9 @@ public class McpServerPermissionServiceTests
     }
 
     [Fact]
-    public async Task GetAgentInstanceStatusesAsync_ListsInstancesUnderTheAmbientIdentity()
+    public async Task GetAgentInstanceStatusesAsync_ListsInstancesUnderTheAgentAccessIdentity()
     {
-        // The instance listing must reuse the sign-in the rest of the flow already holds.
-        // Requesting AgentIdentity.Read.All separately falls back to Connect-MgGraph when no
-        // client app is configured, adding a second interactive sign-in to the same command.
+        // Every Graph call in this flow must use the same identity and token.
         _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(TenantId, BlueprintId, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult<IReadOnlyList<AgentInstanceInfo>>([]));
 
@@ -359,9 +355,8 @@ public class McpServerPermissionServiceTests
     [Fact]
     public async Task GrantServerScopeAsync_GrantsUnderTheSameIdentityThatReadTheState()
     {
-        // GetAgentInstanceStatusesAsync reads grants with the ambient identity. Granting under a
-        // scoped identity makes the grant's own preflight read fail with 403
-        // Authorization_RequestDenied, which aborts the grant for every caller (issue #500).
+        // The grant's own preflight read must use the identity that read the state, or it fails
+        // with 403 Authorization_RequestDenied and aborts the grant (issue #500).
         _graph.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
                 Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(),

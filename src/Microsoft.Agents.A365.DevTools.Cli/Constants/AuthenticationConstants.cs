@@ -244,11 +244,7 @@ public static class AuthenticationConstants
     public const string DelegatedPermissionGrantReadWriteAllScope = "DelegatedPermissionGrant.ReadWrite.All";
 
     /// <summary>
-    /// Scope set for 'develop-mcp grant-agents-access'. Every Graph call in that flow requests this
-    /// same set so the token provider serves them all from one cache entry — one sign-in per run.
-    /// Requested against <see cref="GraphPowershellClientId"/>, which is preauthorized for Graph
-    /// delegated scopes; a '.default' token from <see cref="PowershellClientId"/> carries only
-    /// whatever the tenant already consented to that app and silently omits these.
+    /// Fixed scope set for 'develop-mcp grant-agents-access'; one cache entry means one sign-in per run.
     /// </summary>
     public static readonly string[] McpAgentAccessScopes = new[]
     {

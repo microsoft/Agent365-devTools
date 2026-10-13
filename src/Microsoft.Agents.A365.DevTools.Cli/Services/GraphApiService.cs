@@ -340,10 +340,7 @@ public class GraphApiService
 
             if (string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogError(
-                    "Failed to acquire a Graph token for the agent-access flow (scopes: {Scopes}). " +
-                    "These scopes require administrator consent.",
-                    string.Join(", ", mcpScopes));
+                _logger.LogError(ErrorMessages.AgentAccessTokenUnavailable, string.Join(", ", mcpScopes));
                 return false;
             }
         }

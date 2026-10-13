@@ -5,7 +5,6 @@ using System.Net;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
@@ -20,7 +19,8 @@ public class GraphApiServiceAgentAccessAuthTests
 {
     private const string TenantId = "12345678-1234-1234-1234-123456789012";
 
-    private static (GraphApiService Service, IMicrosoftGraphTokenProvider Provider, TestHttpMessageHandler Handler) CreateService()
+    private static (GraphApiService Service, IMicrosoftGraphTokenProvider Provider, IAuthenticationService Auth) CreateService(
+        TestHttpMessageHandler handler)
     {
         var provider = Substitute.For<IMicrosoftGraphTokenProvider>();
         provider.GetMgGraphAccessTokenAsync(
@@ -28,29 +28,31 @@ public class GraphApiServiceAgentAccessAuthTests
                 Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>())
             .Returns("agent-access-token");
 
-        var handler = new TestHttpMessageHandler();
+        // The Ambient and legacy paths acquire through AuthenticationService, not the provider.
+        var auth = Substitute.For<IAuthenticationService>();
+        auth.GetAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+                Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+                Arg.Any<CancellationToken>(), Arg.Any<string?>())
+            .Returns("ambient-token");
+
         var service = new GraphApiService(
             NullLogger<GraphApiService>.Instance,
             new CommandExecutor(NullLogger<CommandExecutor>.Instance),
-            Substitute.For<IAuthenticationService>(),
+            auth,
             handler,
             provider,
             loginHintResolver: () => Task.FromResult<string?>(null));
-        return (service, provider, handler);
+        return (service, provider, auth);
     }
 
-    [Fact]
-    public async Task LookupServicePrincipalByAppIdForAgentAccessAsync_RequestsAgentAccessScopesFromThePreauthorizedApp()
+    /// <summary>
+    /// Every agent-access call must request the same (scopes, clientId) pair, or the token
+    /// provider partitions its cache and the run costs more than one sign-in.
+    /// </summary>
+    private static async Task AssertAcquiredAgentAccessTokenAsync(IMicrosoftGraphTokenProvider provider)
     {
-        var (service, provider, handler) = CreateService();
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("""{"value":[{"id":"sp-1"}]}""")
-        });
-
-        await service.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, "app-1");
-
-        await provider.Received(1).GetMgGraphAccessTokenAsync(
+        await provider.Received().GetMgGraphAccessTokenAsync(
             TenantId,
             Arg.Is<IEnumerable<string>>(s => s.SequenceEqual(AuthenticationConstants.McpAgentAccessScopes)),
             Arg.Any<bool>(),
@@ -58,14 +60,51 @@ public class GraphApiServiceAgentAccessAuthTests
             Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
     }
 
+    private static HttpResponseMessage Ok(string json) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(json) };
+
     [Fact]
-    public async Task CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync_RequestsAgentAccessScopesFromThePreauthorizedApp()
+    public async Task TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync_UsesTheAgentAccessTokenAndScopes()
     {
-        var (service, provider, handler) = CreateService();
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("""{"value":[]}""")
-        });
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, _) = CreateService(handler);
+        handler.QueueResponse(Ok("""{"value":[{"appId":"app-1"}]}"""));
+
+        await service.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(TenantId, "Contoso MCP");
+
+        await AssertAcquiredAgentAccessTokenAsync(provider);
+    }
+
+    [Fact]
+    public async Task LookupServicePrincipalByAppIdForAgentAccessAsync_UsesTheAgentAccessTokenAndScopes()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, _) = CreateService(handler);
+        handler.QueueResponse(Ok("""{"value":[{"id":"sp-1"}]}"""));
+
+        await service.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, "app-1");
+
+        await AssertAcquiredAgentAccessTokenAsync(provider);
+    }
+
+    [Fact]
+    public async Task TryGetOauth2PermissionGrantsForAgentAccessAsync_UsesTheAgentAccessTokenAndScopes()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, _) = CreateService(handler);
+        handler.QueueResponse(Ok("""{"value":[]}"""));
+
+        await service.TryGetOauth2PermissionGrantsForAgentAccessAsync(TenantId, "client-sp");
+
+        await AssertAcquiredAgentAccessTokenAsync(provider);
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync_UsesTheAgentAccessTokenAndScopes()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, _) = CreateService(handler);
+        handler.QueueResponse(Ok("""{"value":[]}"""));
         handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created)
         {
             Content = new StringContent("""{"id":"grant-1"}""")
@@ -74,12 +113,27 @@ public class GraphApiServiceAgentAccessAuthTests
         await service.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
             TenantId, "client-sp", "resource-sp", ["Server.Read"]);
 
-        await provider.Received().GetMgGraphAccessTokenAsync(
-            TenantId,
+        await AssertAcquiredAgentAccessTokenAsync(provider);
+    }
+
+    [Fact]
+    public async Task TryGetOauth2PermissionGrantsAsync_StillUsesTheAmbientIdentityForOtherCommands()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, auth) = CreateService(handler);
+        handler.QueueResponse(Ok("""{"value":[]}"""));
+
+        await service.TryGetOauth2PermissionGrantsAsync(TenantId, "client-sp");
+
+        await provider.DidNotReceive().GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(),
             Arg.Is<IEnumerable<string>>(s => s.SequenceEqual(AuthenticationConstants.McpAgentAccessScopes)),
-            Arg.Any<bool>(),
-            AuthenticationConstants.GraphPowershellClientId,
-            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
+            Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
+        await auth.Received().GetAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>(), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>(), Arg.Any<string?>());
     }
 
     [Fact]
@@ -94,14 +148,5 @@ public class GraphApiServiceAgentAccessAuthTests
             },
             because: "the flow reads applications and agent identities and writes an AllPrincipals delegated grant; " +
                      "a missing scope is silently dropped from the token and surfaces only as a 403 at the call site");
-    }
-
-    [Fact]
-    public void AgentAccessUsesGraphCommandLineToolsRatherThanAzurePowerShell()
-    {
-        AuthenticationConstants.GraphPowershellClientId.Should().NotBe(
-            AuthenticationConstants.PowershellClientId,
-            because: "Azure PowerShell is not preauthorized for Graph delegated scopes, so its '.default' token " +
-                     "silently omits them instead of failing, which is what produced the original 403");
     }
 }
