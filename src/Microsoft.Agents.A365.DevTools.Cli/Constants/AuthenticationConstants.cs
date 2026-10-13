@@ -239,7 +239,9 @@ public static class AuthenticationConstants
 
     /// <summary>
     /// Delegated scope for reading and writing delegated permission grants
-    /// (GET/POST /v1.0/oauth2PermissionGrants).
+    /// (GET/POST /v1.0/oauth2PermissionGrants). Deliberately absent from
+    /// <see cref="RequiredClientAppPermissions"/>: #409 removed it to keep the custom app
+    /// least-privilege, so flows needing it authenticate as Graph Command Line Tools instead.
     /// </summary>
     public const string DelegatedPermissionGrantReadWriteAllScope = "DelegatedPermissionGrant.ReadWrite.All";
 

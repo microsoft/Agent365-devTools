@@ -40,6 +40,11 @@ public class GraphApiService
     private string? _loginHint;
     private bool _loginHintResolved;
 
+    // Latched once the configured app fails to produce an agent-access token. Token failures are
+    // not cached, so without this every Graph call in the flow would retry the failing app first
+    // and re-prompt for sign-in.
+    private bool _agentAccessFallbackLatched;
+
     // Resolver delegate for the login hint.
     // Defaults to az CLI first, then AuthenticationService JWT cache as fallback.
     // Injectable via constructor so unit tests can bypass the real az process.
@@ -338,7 +343,7 @@ public class GraphApiService
 
             // Prefer the tenant-owned client app so this command consents the same app as the rest
             // of the CLI. Without one configured the flow is unchanged: Graph Command Line Tools.
-            var mcpClientId = string.IsNullOrWhiteSpace(CustomClientAppId)
+            var mcpClientId = string.IsNullOrWhiteSpace(CustomClientAppId) || _agentAccessFallbackLatched
                 ? AuthenticationConstants.GraphPowershellClientId
                 : CustomClientAppId;
             var usingConfiguredApp = !string.Equals(
@@ -358,6 +363,7 @@ public class GraphApiService
                 _logger.LogWarning(
                     "Could not acquire a Graph token as the configured client app {AppId}. Retrying as 'Microsoft Graph Command Line Tools'.",
                     mcpClientId);
+                _agentAccessFallbackLatched = true;
                 token = await _tokenProvider.GetMgGraphAccessTokenAsync(
                     tenantId, mcpScopes, useDeviceCode, AuthenticationConstants.GraphPowershellClientId,
                     ct, mcpLoginHint, forceRefresh, GraphBaseUrlOverride, AuthorityHostOverride);

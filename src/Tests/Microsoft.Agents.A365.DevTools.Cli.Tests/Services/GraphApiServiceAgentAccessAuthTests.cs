@@ -232,6 +232,36 @@ public class GraphApiServiceAgentAccessAuthTests
         await AssertAcquiredAgentAccessTokenAsync(provider);
     }
 
+    /// <summary>
+    /// Token failures are not cached, so without a latch every Graph call in the run would retry
+    /// the failing configured app first and re-prompt for sign-in — the multi-prompt symptom this
+    /// flow exists to remove (issue #500).
+    /// </summary>
+    [Fact]
+    public async Task AgentAccessFlow_AttemptsTheConfiguredAppOnlyOnceAcrossTheRun()
+    {
+        using var handler = new TestHttpMessageHandler();
+        var (service, provider, _) = CreateService(handler);
+        const string configuredAppId = "99999999-9999-9999-9999-999999999999";
+        service.CustomClientAppId = configuredAppId;
+
+        provider.GetMgGraphAccessTokenAsync(
+                Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), configuredAppId,
+                Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns((string?)null);
+        handler.QueueResponse(Ok("""{"value":[{"id":"sp-1"}]}"""));
+        handler.QueueResponse(Ok("""{"value":[{"id":"sp-2"}]}"""));
+        handler.QueueResponse(Ok("""{"value":[{"id":"sp-3"}]}"""));
+
+        await service.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, "app-1");
+        await service.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, "app-2");
+        await service.LookupServicePrincipalByAppIdForAgentAccessAsync(TenantId, "app-3");
+
+        await provider.Received(1).GetMgGraphAccessTokenAsync(
+            Arg.Any<string>(), Arg.Any<IEnumerable<string>>(), Arg.Any<bool>(), configuredAppId,
+            Arg.Any<CancellationToken>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<string?>(), Arg.Any<string?>());
+    }
+
     [Fact]
     public void McpAgentAccessScopes_CoverEveryGraphCallTheFlowMakes()
     {
