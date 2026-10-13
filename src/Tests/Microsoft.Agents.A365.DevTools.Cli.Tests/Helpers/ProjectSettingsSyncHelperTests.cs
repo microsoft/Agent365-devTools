@@ -4,6 +4,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -734,5 +735,174 @@ public class ProjectSettingsSyncHelperTests : IDisposable
         Assert.Equal("blueprint-node-id", Val("agent365Observability__clientId"));
         Assert.Equal("node-secret", Val("agent365Observability__clientSecret"));
         Assert.Contains(lines, l => l.StartsWith("ENABLE_A365_OBSERVABILITY_EXPORTER=", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Secret destinations: a365.config.json is often committed, so deploymentProjectPath must not be
+    // able to send a bearer token or the blueprint client secret outside the config's directory.
+    // ---------------------------------------------------------------------------------------------
+
+    private const string BearerToken = "bearer-token-value";
+    private const string BlueprintSecret = "blueprint-secret-value";
+
+    /// <summary>
+    /// Symlink creation needs Developer Mode or elevation on Windows; Linux CI always exercises these tests.
+    /// </summary>
+    private static bool TryCreateSymlink(Action create)
+    {
+        try
+        {
+            create();
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static Agent365Config SecretConfig(string deploymentProjectPath) => new()
+    {
+        DeploymentProjectPath = deploymentProjectPath,
+        TenantId = "5369a35c-46a5-4677-8ff9-2e65587654e7",
+        AgentBlueprintId = "73cfe0a9-87bb-4cfd-bfe1-4309c487d56c",
+        AgentBlueprintClientSecret = BlueprintSecret,
+        AgentBlueprintClientSecretProtected = false
+    };
+
+    [Fact]
+    public async Task SaveBearerToken_NodeProjectInsideConfigDirectory_WritesToken()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        var projectDir = Path.Combine(configDir, "agent");
+        WriteFile(projectDir, "package.json", "{}");
+        var envPath = WriteFile(projectDir, ".env", "BEARER_TOKEN=\n");
+
+        await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(
+            BearerToken, new Agent365Config { DeploymentProjectPath = "agent" }, configDir, CreateLogger());
+
+        File.ReadAllLines(envPath).Should().Contain($"BEARER_TOKEN={BearerToken}",
+            because: "get-token still saves the token into a project inside the a365.config.json directory");
+    }
+
+    [Fact]
+    public async Task SaveBearerToken_DotNetProjectInsideConfigDirectory_WritesToken()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        WriteFile(configDir, "Agent.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var launchSettingsPath = WriteFile(Path.Combine(configDir, "Properties"), "launchSettings.json",
+            "{ \"profiles\": { \"dev\": { \"environmentVariables\": { \"BEARER_TOKEN\": \"\" } } } }");
+
+        await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(
+            BearerToken, new Agent365Config(), configDir, CreateLogger());
+
+        ReadJson(launchSettingsPath)["profiles"]!["dev"]!["environmentVariables"]!["BEARER_TOKEN"]!
+            .GetValue<string>().Should().Be(BearerToken,
+                because: "an unset deploymentProjectPath means the a365.config.json directory, which is trusted");
+    }
+
+    [Fact]
+    public async Task SaveBearerToken_ProjectOutsideConfigDirectory_DoesNotWriteToken()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        Directory.CreateDirectory(configDir);
+        var outsideProject = Path.Combine(_tempRoot, "outside");
+        WriteFile(outsideProject, "package.json", "{}");
+        var envPath = WriteFile(outsideProject, ".env", "BEARER_TOKEN=\n");
+
+        await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(
+            BearerToken, new Agent365Config { DeploymentProjectPath = outsideProject }, configDir, CreateLogger());
+
+        File.ReadAllText(envPath).Should().NotContain(BearerToken,
+            because: "a committed deploymentProjectPath must not direct the bearer token outside the a365.config.json directory");
+    }
+
+    [Fact]
+    public async Task SaveBearerToken_RelativeTraversalOutsideConfigDirectory_DoesNotWriteToken()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        Directory.CreateDirectory(configDir);
+        var outsideProject = Path.Combine(_tempRoot, "outside");
+        WriteFile(outsideProject, "Agent.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var launchSettingsPath = WriteFile(Path.Combine(outsideProject, "Properties"), "launchSettings.json",
+            "{ \"profiles\": { \"dev\": { \"environmentVariables\": { \"BEARER_TOKEN\": \"\" } } } }");
+
+        await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(
+            BearerToken, new Agent365Config { DeploymentProjectPath = Path.Combine("..", "outside") }, configDir, CreateLogger());
+
+        File.ReadAllText(launchSettingsPath).Should().NotContain(BearerToken,
+            because: "'..' in deploymentProjectPath must not escape the a365.config.json directory");
+    }
+
+    [Fact]
+    public async Task SaveBearerToken_SymlinkedEnvFile_DoesNotWriteThroughLink()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        WriteFile(configDir, "package.json", "{}");
+        var target = WriteFile(Path.Combine(_tempRoot, "outside"), "captured.env", "BEARER_TOKEN=\n");
+        if (!TryCreateSymlink(() => File.CreateSymbolicLink(Path.Combine(configDir, ".env"), target)))
+            return;
+
+        await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(
+            BearerToken, new Agent365Config(), configDir, CreateLogger());
+
+        File.ReadAllText(target).Should().NotContain(BearerToken,
+            because: "a committed .env symlink must not redirect the bearer token to the link target");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProjectOutsideConfigDirectory_DoesNotWriteSecrets()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        var cfgPath = WriteFile(configDir, "a365.config.json", "{}");
+        var genPath = WriteFile(configDir, "a365.generated.config.json", "{}");
+        var outsideProject = Path.Combine(_tempRoot, "outside");
+        WriteFile(outsideProject, "package.json", "{}");
+
+        var written = await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
+            MockConfigService(SecretConfig(outsideProject)).Object, CreatePlatformDetector(), CreateLogger());
+
+        written.Should().BeFalse(because: "settings sync is skipped when deploymentProjectPath leaves the config directory");
+        File.Exists(Path.Combine(outsideProject, ".env")).Should().BeFalse(
+            because: "the blueprint client secret must not be written outside the a365.config.json directory");
+        File.Exists(Path.Combine(configDir, ".env")).Should().BeFalse(
+            because: "an untrusted deploymentProjectPath must not fall back to stamping secrets elsewhere");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SymlinkedEnvFile_DoesNotWriteThroughLink()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        var cfgPath = WriteFile(configDir, "a365.config.json", "{}");
+        var genPath = WriteFile(configDir, "a365.generated.config.json", "{}");
+        WriteFile(configDir, "package.json", "{}");
+        var target = Path.Combine(_tempRoot, "outside", "captured.env");
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        if (!TryCreateSymlink(() => File.CreateSymbolicLink(Path.Combine(configDir, ".env"), target)))
+            return;
+
+        var written = await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
+            MockConfigService(SecretConfig(string.Empty)).Object, CreatePlatformDetector(), CreateLogger());
+
+        written.Should().BeFalse(because: "settings sync refuses to write through a symbolic link");
+        File.Exists(target).Should().BeFalse(
+            because: "writing through a dangling .env symlink would create the secret file at the link target");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RelativeProjectPath_ResolvesAgainstConfigDirectory()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        var cfgPath = WriteFile(configDir, "a365.config.json", "{}");
+        var genPath = WriteFile(configDir, "a365.generated.config.json", "{}");
+        var projectDir = Path.Combine(configDir, "src", "agent");
+        WriteFile(projectDir, "package.json", "{}");
+
+        var written = await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
+            MockConfigService(SecretConfig(Path.Combine("src", "agent"))).Object, CreatePlatformDetector(), CreateLogger());
+
+        written.Should().BeTrue(because: "a project below the a365.config.json directory is a trusted destination");
+        File.ReadAllText(Path.Combine(projectDir, ".env")).Should().Contain(BlueprintSecret,
+            because: "relative deploymentProjectPath values resolve against the a365.config.json directory");
     }
 }

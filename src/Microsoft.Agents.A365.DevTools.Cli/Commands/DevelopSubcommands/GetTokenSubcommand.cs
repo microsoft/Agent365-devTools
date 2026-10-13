@@ -190,7 +190,7 @@ internal static class GetTokenSubcommand
 
                     await AcquireAndDisplayTokenAsync(
                         resourceAppId, resourceDisplayName, resourceUrl,
-                        scopes, appId, setupConfig,
+                        scopes, appId, setupConfig, config.DirectoryName ?? Environment.CurrentDirectory,
                         outputFormat, verbose, forceRefresh, deviceCode, authService, logger);
                 }
                 else if (isCustomResource)
@@ -225,7 +225,7 @@ internal static class GetTokenSubcommand
                     logger.LogInformation("Reading MCP server configuration from: {Path}", manifestPath);
 
                     await AcquireAndDisplayManifestTokensAsync(
-                        manifestPath, appId, setupConfig,
+                        manifestPath, appId, setupConfig, config.DirectoryName ?? Environment.CurrentDirectory,
                         outputFormat, verbose, forceRefresh, deviceCode, authService, logger);
                 }
             }
@@ -344,6 +344,7 @@ internal static class GetTokenSubcommand
         string[] requestedScopes,
         string? appId,
         Agent365Config? setupConfig,
+        string configDirectory,
         string outputFormat,
         bool verbose,
         bool forceRefresh,
@@ -371,7 +372,7 @@ internal static class GetTokenSubcommand
 
         DisplayResults(new List<McpServerTokenResult> { result }, outputFormat, verbose, logger);
 
-        await SaveAndReportTokenAsync(result.Token!, setupConfig, logger);
+        await SaveAndReportTokenAsync(result.Token!, setupConfig, configDirectory, logger);
         logger.LogInformation("Token acquired successfully!");
     }
 
@@ -382,6 +383,7 @@ internal static class GetTokenSubcommand
         string manifestPath,
         string? appId,
         Agent365Config? setupConfig,
+        string configDirectory,
         string outputFormat,
         bool verbose,
         bool forceRefresh,
@@ -432,12 +434,12 @@ internal static class GetTokenSubcommand
             {
                 // V2 per-server audience — write one entry per server name
                 foreach (var serverName in serverNames)
-                    await SaveAndReportTokenAsync(result.Token!, setupConfig, logger, serverUniqueName: serverName);
+                    await SaveAndReportTokenAsync(result.Token!, setupConfig, configDirectory, logger, serverUniqueName: serverName);
             }
             else if (!firstTokenSaved)
             {
                 // V1 shared audience or ATG seed entry — write as BEARER_TOKEN (backward compat)
-                await SaveAndReportTokenAsync(result.Token!, setupConfig, logger, serverUniqueName: null);
+                await SaveAndReportTokenAsync(result.Token!, setupConfig, configDirectory, logger, serverUniqueName: null);
                 firstTokenSaved = true;
             }
             anySaved = true;
@@ -463,15 +465,16 @@ internal static class GetTokenSubcommand
         ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT")
         ?? "prod";
 
-    private static async Task SaveAndReportTokenAsync(
+    internal static async Task SaveAndReportTokenAsync(
         string token,
         Agent365Config? setupConfig,
+        string configDirectory,
         ILogger logger,
         string? serverUniqueName = null)
     {
         if (setupConfig != null)
         {
-            await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, logger, serverUniqueName);
+            await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, configDirectory, logger, serverUniqueName);
         }
         else
         {
@@ -481,7 +484,8 @@ internal static class GetTokenSubcommand
             logger.LogInformation("");
             logger.LogInformation("Note: To use this token in your samples, manually add it to:");
             logger.LogInformation("  - .NET projects: Properties/launchSettings.json > profiles > environmentVariables > {Key}", envVarKey);
-            logger.LogInformation("  - Python/Node.js projects: .env file as {Key}={Token}", envVarKey, token);
+            // Never interpolate the token: log lines are also persisted to the CLI log file.
+            logger.LogInformation("  - Python/Node.js projects: .env file as {Key}=<token> (use --output raw to print the token)", envVarKey);
             logger.LogInformation("");
         }
     }
