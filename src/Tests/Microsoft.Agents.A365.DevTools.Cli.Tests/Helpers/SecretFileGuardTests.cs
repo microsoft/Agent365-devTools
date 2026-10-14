@@ -76,6 +76,30 @@ public class SecretFileGuardTests : IDisposable
     }
 
     [Fact]
+    public void GetUnsafeReason_CaseOnlyAliasOfRoot_IsUnsafe()
+    {
+        var caseAlias = Path.Combine(_baseDir, "REPO");
+
+        SecretFileGuard.GetUnsafeReason(_root, Path.Combine(caseAlias, ".env")).Should().NotBeNull(
+            because: "on a case-sensitive volume 'REPO' is a sibling of 'repo', so containment must compare exact case");
+        SecretFileGuard.GetUnsafeReason(_root, Path.Combine("..", "REPO", ".env")).Should().NotBeNull(
+            because: "a committed relative path must not reach a case-only sibling of the config directory");
+    }
+
+    [Fact]
+    public void GetUnsafeReason_DriveLetterCaseDiffers_IsSafeOnWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var fullRoot = Path.GetFullPath(_root);
+        var otherCaseDrive = (char.IsUpper(fullRoot[0]) ? char.ToLowerInvariant(fullRoot[0]) : char.ToUpperInvariant(fullRoot[0])) + fullRoot[1..];
+
+        SecretFileGuard.GetUnsafeReason(_root, Path.Combine(otherCaseDrive, ".env")).Should().BeNull(
+            because: "Windows drive letters are case-insensitive on every volume, so 'c:' and 'C:' name the same directory");
+    }
+
+    [Fact]
     public void GetUnsafeReason_NetworkSharePath_IsUnsafe()
     {
         SecretFileGuard.GetUnsafeReason(_root, "//attacker.example/share/project").Should().NotBeNull(

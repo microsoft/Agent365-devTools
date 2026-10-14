@@ -23,26 +23,27 @@ internal static class SecretFileGuard
         string fullPath;
         try
         {
-            root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory));
-            fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path, root));
+            root = NormalizeDriveLetter(Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory)));
+            fullPath = NormalizeDriveLetter(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path, root)));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return $"'{path}' is not a valid path";
         }
 
-        var relativePath = Path.GetRelativePath(root, fullPath);
-        if (relativePath == ".")
+        if (string.Equals(fullPath, root, StringComparison.Ordinal))
         {
             return null;
         }
 
-        if (Path.IsPathRooted(relativePath) ||
-            relativePath == ".." ||
-            relativePath.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        // Exact-case containment: case-sensitive volumes exist on every OS, so a case-only alias may be a different directory.
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(rootPrefix, StringComparison.Ordinal))
         {
             return $"'{fullPath}' is outside the directory that contains a365.config.json ('{root}')";
         }
+
+        var relativePath = fullPath.Substring(rootPrefix.Length);
 
         // A committed symlink or junction below the root could redirect the write anywhere.
         var current = root;
@@ -81,4 +82,10 @@ internal static class SecretFileGuard
             throw new IOException($"Refusing to write a project file because {unsafeReason}.");
         }
     }
+
+    // Drive letters are case-insensitive on every Windows volume, unlike directory names.
+    private static string NormalizeDriveLetter(string path)
+        => OperatingSystem.IsWindows() && path.Length >= 2 && path[1] == ':' && char.IsAsciiLetter(path[0])
+            ? char.ToUpperInvariant(path[0]) + path[1..]
+            : path;
 }
