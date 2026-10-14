@@ -152,10 +152,9 @@ public sealed class A365CreateInstanceRunner
         // token acquisition target the correct national cloud (commercial by default).
         var configuredGraphBaseUrl = GetConfig("graphBaseUrl");
         var configuredAuthorityHost = GetConfig("authorityHost");
-        string observabilityResourceAppId;
         try
         {
-            observabilityResourceAppId = ConfigConstants.GetObservabilityApiAppId(environment);
+            ConfigConstants.EnsureUnambiguousEnvironment(environment);
             _graphService.GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(
                 environment,
                 string.IsNullOrWhiteSpace(configuredGraphBaseUrl) ? null : configuredGraphBaseUrl);
@@ -352,13 +351,6 @@ public sealed class A365CreateInstanceRunner
                         {
                             "McpServers.Mail.All",
                             "McpServersMetadata.Read.All"
-                        }),
-                    [observabilityResourceAppId] = (
-                        "Observability API",
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            "user_impersonation",
-                            ConfigConstants.ObservabilityApiOtelWriteScope
                         }),
                     [ConfigConstants.MessagingBotApiAppId] = (
                         "Messaging Bot API",

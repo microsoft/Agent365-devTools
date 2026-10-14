@@ -99,6 +99,30 @@ public class ConfigConstantsTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("prod")]
+    [InlineData("gcc")]
+    [InlineData("gcc-high")]
+    [InlineData("dod")]
+    public void EnsureUnambiguousEnvironment_AcceptsSpecificClouds(string? environment)
+    {
+        var act = () => ConfigConstants.EnsureUnambiguousEnvironment(environment);
+
+        act.Should().NotThrow(
+            because: "each of these environments identifies the resources of exactly one cloud");
+    }
+
+    [Fact]
+    public void EnsureUnambiguousEnvironment_WithAzureGovernmentCloud_ThrowsWithGuidance()
+    {
+        var act = () => ConfigConstants.EnsureUnambiguousEnvironment("AzureUSGovernment");
+
+        act.Should().Throw<ArgumentException>(
+                because: "create-instance must stop before granting permissions in a cloud it cannot identify")
+            .WithMessage("*Set the environment to gcc, gcc-high, or dod.*");
+    }
+
+    [Theory]
     [InlineData("http://graph.example")]
     [InlineData("https://user@graph.example")]
     [InlineData("https://graph.example/path")]

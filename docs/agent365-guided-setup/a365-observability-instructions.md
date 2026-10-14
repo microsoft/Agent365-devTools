@@ -13,6 +13,8 @@ Add Agent 365 observability to your agent at any point after `a365 setup all` ha
 > **Source of truth:** For non-AI-Teammate blueprint agents, use the `plugins/agent365/skills/instrument-observability` skill from [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills). The skill contains the current, verified code for the app-only S2S exporter in .NET, Node.js, and Python.
 
 > **Blueprint telemetry model:** Every non-AI-Teammate blueprint agent exports telemetry through the S2S route (`/observabilityService/...`) with an app-only token for the exporting agent identity. Set the SDK route flag (`UseS2SEndpoint`, `useS2SEndpoint`, or `a365_use_s2s_endpoint`), wire an app-only token resolver, and do **not** use delegated Observability token caches or per-turn delegated OBS token refresh. Registered blueprint agents do not need `Agent365.Observability.OtelWrite`; `a365 setup all` no longer requests it for blueprint agents.
+>
+> **AI Teammates:** `a365 setup all` no longer requests `OtelWrite` for AI Teammates either. App-only S2S exports are authorized by the blueprint's registration. An AI Teammate that still exports through the delegated route needs the delegated permission granted manually; see [OtelWrite App Role Assignment](#otelwrite-app-role-assignment).
 
 ---
 
@@ -743,26 +745,26 @@ This skill is safe to rerun. On subsequent runs:
 
 ### OtelWrite App Role Assignment
 
-> **Blueprint agents:** `a365 setup all` does not request Observability API permissions for blueprint agents in any auth mode — the S2S endpoint authorizes registered agent instances without the `OtelWrite` role, so no admin consent is needed. Setup exits with code 1 if registration fails; retry with `a365 setup all --agent-registration-only`. Grant `OtelWrite` manually (steps below) only if the agent still exports through the delegated (OBO) route. Permissions granted by earlier runs are not revoked.
+> **No Observability permissions by default:** `a365 setup all` does not request Observability API permissions for blueprint agents (in any auth mode) or AI Teammates. Agents export telemetry with an app-only token through the S2S endpoint, which authorizes a blueprint agent by its agent registration and an AI Teammate by its blueprint's registration, so no admin consent is needed. For blueprint agents, setup exits with code 1 if registration fails; retry with `a365 setup all --agent-registration-only` (AI Teammates don't use this flag). Permissions granted by earlier runs are not revoked.
 
-For **AI Teammate** agents, `a365 setup all` still **attempts** to grant the `Agent365.Observability.OtelWrite` application role to the **blueprint service principal**, which requires **Global Administrator** privileges. If the logged-in user is not a Global Admin, the assignment fails with 403 and trace exports can return HTTP 403 from the observability service.
+Grant `Agent365.Observability.OtelWrite` manually (requires **Global Administrator**) only when:
+- the agent still exports through the delegated (OBO) route: grant the **delegated** permission.
+- app-only trace exports return HTTP 403 `insufficient_scope`: the service did not authorize the agent by registration. Grant the **application** permission on the blueprint; agent identities inherit it.
 
-**The CLI prints a PowerShell admin consent script** in its output when the assignment fails. When running `a365 setup all`, **always scan the output for this script block** and display it to the user in a fenced code block so they can copy it and hand it to a Global Admin.
-
-For a **blueprint agent still exporting through the delegated (OBO) route**, prefer the CLI opt-back-in path (requires Global Administrator):
+To restore the delegated permission, prefer the CLI opt-back-in path:
 
 ```bash
 a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite
 ```
 
-This stamps the Observability inheritable-permission entry on the blueprint and requests admin consent. The Entra portal path below works for existing blueprints only when that inheritable-permission entry already exists.
+This stamps the Observability inheritable-permission entry on the blueprint and requests admin consent. Agent identities inherit the blueprint's Observability permissions only through this entry, so the Entra portal and PowerShell paths below work only when it already exists; run this command first on blueprints that lack it.
 
-If the AI Teammate script was not captured, grant the permission manually via Entra portal (requires Global Administrator):
+To grant either permission in the Entra portal:
 1. [Entra portal](https://entra.microsoft.com) > App registrations > select Blueprint app > API permissions
 2. Add a permission > APIs my organization uses > search the Observability app ID for your cloud (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; see `src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides` for other clouds)
-3. Add both **Delegated** and **Application** `Agent365.Observability.OtelWrite` > Grant admin consent
+3. Add **Delegated** `Agent365.Observability.OtelWrite` for the delegated route, or **Application** `Agent365.Observability.OtelWrite` for a 403 `insufficient_scope` > Grant admin consent
 
-Alternatively for **AI Teammates**, look up the Blueprint and Observability enterprise applications and create the application-role assignment the S2S route accepts:
+Alternatively, for a 403 `insufficient_scope`, look up the Blueprint and Observability enterprise applications and create the application-role assignment the S2S route accepts:
 
 ```powershell
 $blueprintSp = Get-MgServicePrincipal -Filter "appId eq '<blueprintAppId>'"
@@ -772,7 +774,6 @@ New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $blueprintSp.Id -Pri
 ```
 
 - `<Observability app ID for your cloud>` is the resource application ID, not the service-principal object ID.
-- For agents provisioned before CLI 1.1, this manual step is still required
 
 ### Node.js and .NET SDK `/otlp/` URL Path Bug
 
