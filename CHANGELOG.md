@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Agents that still need Observability API permissions
 
-`a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents (#501) or AI Teammates (#NNN). Agents that export telemetry with an app-only token through the S2S endpoint don't need it: the service authorizes a blueprint agent by its agent registration and an AI Teammate by its blueprint's registration. Grant it manually on the blueprint app (requires Global Administrator) only when:
+`a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents (#501) or AI Teammates (#510). Agents that export telemetry with an app-only token through the S2S endpoint don't need it: the service authorizes a blueprint agent by its agent registration and an AI Teammate by its blueprint's registration. Grant it manually on the blueprint app (requires Global Administrator) only when:
 
 - the agent exports through the delegated (OBO) route: grant the **delegated** permission.
 - app-only exports return 403 `insufficient_scope`: grant the **application** permission, which agent identities inherit.
@@ -92,7 +92,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `a365 publish` no longer crashes when `manifest.json` has a non-string `name.short` value (#478).
 - `setup all --agent-registration-only` now exits non-zero and reports errors when the requested agent registration step fails (#478).
 - `a365 setup all` now exits with code 1 when blueprint-agent registration fails or cannot be verified, including `--agent-registration-only` runs with unverifiable existing registrations (#501).
-- Non-admin `a365 setup all` runs now include the Observability API in the combined admin consent URL when `customBlueprintPermissions` adds it back (#NNN).
+- Non-admin `a365 setup all` runs now include the Observability API in the combined admin consent URL when `customBlueprintPermissions` adds it back (#510).
 - `a365 develop-mcp grant-agents-access --device-code` no longer prompts repeatedly within a single command, and no longer fails in embedded or remote terminals where the sign-in prompt could not be displayed (#500).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
@@ -140,7 +140,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `a365 setup all` no longer requests Observability API permissions for blueprint agents; registered agents that export telemetry through the app-only S2S endpoint need no admin consent (#501).
-- `a365 setup all` no longer requests Observability API permissions for AI Teammates, and `a365 setup permissions bot` and `a365 create-instance` no longer request them for any agent, because the service authorizes app-only telemetry exports by registration (#NNN).
+- `a365 setup all` no longer requests Observability API permissions for AI Teammates, and `a365 setup permissions bot` and `a365 create-instance` no longer request them for any agent, because the service authorizes app-only telemetry exports by registration (#510).
 - Hardened token storage: the CLI no longer writes access tokens to a plaintext file — they live only in the OS-protected MSAL cache (DPAPI/Keychain/owner-only file). Any legacy plaintext cache is removed automatically; sign-in prompts are unchanged.
 - `develop-mcp register-external-mcp-server` now sets `exit code 1` on failure paths (validation errors, tenant detection failure, Graph unavailable, Entra app creation failure, MCP-Platform AddMcpServer failure). Previously these paths logged an error and exited `0`, which made the command's success/failure status undetectable from scripts and CI. Successful dry-run and user-initiated cancellation at the y/N prompt continue to exit `0`.
 - Admin consent canary path (when the caller lacks `DelegatedPermissionGrant.Read.All`) no longer prompts for Enter immediately. The CLI now polls every 5 seconds, prints a friendly progress message at 30 seconds, and responds promptly to Enter or Ctrl+C. The previous jargon-heavy message about `oauth2PermissionGrants` was rewritten in plain English; technical details are demoted to `Debug`.
