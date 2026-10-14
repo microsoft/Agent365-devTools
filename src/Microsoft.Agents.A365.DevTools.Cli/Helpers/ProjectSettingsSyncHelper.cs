@@ -42,12 +42,23 @@ public static class ProjectSettingsSyncHelper
     /// so that in-memory values such as AgentDescription and AgentIdentityDisplayName derived
     /// from --agent-name are not lost when the config is reloaded from disk.
     /// </summary>
-    public static Task<ProjectSettingsSyncResult> ExecuteAsync(
+    public static async Task<ProjectSettingsSyncResult> ExecuteAsync(
         string a365ConfigPath,
         Agent365Config config,
         PlatformDetector platformDetector,
         ILogger logger)
-        => ExecuteAsyncCore(a365ConfigPath, config, platformDetector, logger);
+    {
+        try
+        {
+            return await ExecuteAsyncCore(a365ConfigPath, config, platformDetector, logger);
+        }
+        catch (UnsafeDestinationException ex)
+        {
+            // A link appeared between the destination check and the write.
+            LogProjectSettingsNotWritten(ex.Reason, logger);
+            return ProjectSettingsSyncResult.Blocked;
+        }
+    }
 
 
     public static async Task<ProjectSettingsSyncResult> ExecuteAsync(
@@ -226,6 +237,12 @@ public static class ProjectSettingsSyncHelper
             }
 
             logger.LogDebug("Project type is {Platform}, skipping bearer token update (only applies to .NET/Python/Node.js)", platform);
+        }
+        catch (UnsafeDestinationException ex)
+        {
+            // A link appeared between the destination check and the write.
+            LogBearerTokenNotSaved(ex.Reason, logger);
+            return false;
         }
         catch (Exception ex)
         {
@@ -760,11 +777,16 @@ public static class ProjectSettingsSyncHelper
         if (unsafeReason == null)
             return true;
 
-        logger.LogWarning("Bearer tokens were not saved to your project because {Reason}.", unsafeReason);
+        LogBearerTokenNotSaved(unsafeReason, logger);
+        return false;
+    }
+
+    private static void LogBearerTokenNotSaved(string reason, ILogger logger)
+    {
+        logger.LogWarning("Bearer tokens were not saved to your project because {Reason}.", reason);
         logger.LogInformation(
             "Tokens are only written to files inside the directory that contains a365.config.json, never through a symbolic link or junction. Use --output raw to print the tokens and add them manually.");
         logger.LogInformation(ErrorMessages.SecretDestinationRemediation);
-        return false;
     }
 
     private static bool CanWriteProjectSettings(string configDirectory, string path, ILogger logger)
@@ -773,11 +795,16 @@ public static class ProjectSettingsSyncHelper
         if (unsafeReason == null)
             return true;
 
-        logger.LogWarning("Skipping project settings sync because {Reason}.", unsafeReason);
+        LogProjectSettingsNotWritten(unsafeReason, logger);
+        return false;
+    }
+
+    private static void LogProjectSettingsNotWritten(string reason, ILogger logger)
+    {
+        logger.LogWarning("Skipping project settings sync because {Reason}.", reason);
         logger.LogInformation(
             "Project settings include the agent blueprint client secret, so they are only written to files inside the directory that contains a365.config.json, never through a symbolic link or junction.");
         logger.LogInformation(ErrorMessages.SecretDestinationRemediation);
-        return false;
     }
 
     private static string EscapeEnv(string value)

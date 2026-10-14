@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -916,5 +917,88 @@ public class ProjectSettingsSyncHelperTests : IDisposable
             because: "a junction below the a365.config.json directory is rejected like a symbolic link");
         File.Exists(Path.Combine(outsideProject, ".env")).Should().BeFalse(
             because: "a committed junction must not redirect the blueprint client secret outside the project");
+    }
+
+    /// <summary>
+    /// Runs an action the first time a log message contains a trigger. The helpers log between the up-front
+    /// destination check and the write, so tests use this to swap in a link at exactly that point.
+    /// </summary>
+    private sealed class HookLogger : ILogger
+    {
+        private readonly string _trigger;
+        private readonly Action _onTrigger;
+        private bool _fired;
+
+        public HookLogger(string trigger, Action onTrigger)
+        {
+            _trigger = trigger;
+            _onTrigger = onTrigger;
+        }
+
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            Messages.Add(message);
+            if (!_fired && message.Contains(_trigger, StringComparison.Ordinal))
+            {
+                _fired = true;
+                _onTrigger();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_LinkSwappedInBeforeWrite_ReturnsBlocked()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        var cfgPath = WriteFile(configDir, "a365.config.json", "{}");
+        var genPath = WriteFile(configDir, "a365.generated.config.json", "{}");
+        var projectDir = Path.Combine(configDir, "agent");
+        WriteFile(projectDir, "package.json", "{}");
+        var outsideProject = Path.Combine(_tempRoot, "outside");
+        Directory.CreateDirectory(outsideProject);
+
+        // The empty .env is created first; the project directory becomes a link before the secret is written.
+        var logger = new HookLogger("Created:", () => FileSystemLinks.ReplaceWithDirectoryLink(projectDir, outsideProject));
+
+        var result = await ProjectSettingsSyncHelper.ExecuteAsync(cfgPath, genPath,
+            MockConfigService(SecretConfig("agent")).Object, CreatePlatformDetector(), logger);
+
+        result.Should().Be(ProjectSettingsSyncResult.Blocked,
+            because: "a link that appears before the write is a rejected destination, so setup completes with a warning instead of failing");
+        File.Exists(Path.Combine(outsideProject, ".env")).Should().BeFalse(
+            because: "the blueprint client secret must not be written through a link that appeared after the first check");
+        logger.Messages.Should().Contain(ErrorMessages.SecretDestinationRemediation,
+            because: "a write-time rejection must give the same remediation as an up-front rejection");
+    }
+
+    [Fact]
+    public async Task SaveBearerToken_LinkSwappedInBeforeWrite_ReturnsFalse()
+    {
+        var configDir = Path.Combine(_tempRoot, "repo");
+        var projectDir = Path.Combine(configDir, "agent");
+        WriteFile(projectDir, "package.json", "{}");
+        WriteFile(projectDir, ".env", "BEARER_TOKEN=\n");
+        var outsideProject = Path.Combine(_tempRoot, "outside");
+        var outsideEnv = WriteFile(outsideProject, ".env", "BEARER_TOKEN=\n");
+
+        // The existing .env is read first; the project directory becomes a link before the token is written.
+        var logger = new HookLogger("Updated BEARER_TOKEN", () => FileSystemLinks.ReplaceWithDirectoryLink(projectDir, outsideProject));
+
+        var allowed = await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(
+            BearerToken, new Agent365Config { DeploymentProjectPath = "agent" }, configDir, logger);
+
+        allowed.Should().BeFalse(
+            because: "a link that appears before the write is a rejected destination, so get-token stops saving the remaining tokens");
+        File.ReadAllText(outsideEnv).Should().NotContain(BearerToken,
+            because: "the bearer token must not be written through a link that appeared after the first check");
+        logger.Messages.Should().Contain(ErrorMessages.SecretDestinationRemediation,
+            because: "a write-time rejection must give the same remediation as an up-front rejection");
     }
 }

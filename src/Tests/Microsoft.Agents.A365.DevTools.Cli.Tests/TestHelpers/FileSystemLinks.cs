@@ -53,4 +53,17 @@ internal static class FileSystemLinks
         if (process.ExitCode != 0 || !Directory.Exists(link))
             throw new InvalidOperationException($"mklink /J failed with exit code {process.ExitCode}: {output}");
     }
+
+    /// <summary>
+    /// Replaces <paramref name="directory"/> with a link to <paramref name="target"/> that needs no elevation:
+    /// a junction on Windows and a symbolic link elsewhere.
+    /// </summary>
+    public static void ReplaceWithDirectoryLink(string directory, string target)
+    {
+        Directory.Delete(directory, recursive: true);
+        if (OperatingSystem.IsWindows())
+            CreateJunction(directory, target);
+        else
+            Directory.CreateSymbolicLink(directory, target);
+    }
 }

@@ -40,6 +40,12 @@ internal static class SecretFileGuard
         var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
         if (!fullPath.StartsWith(rootPrefix, StringComparison.Ordinal))
         {
+            if (string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase) ||
+                fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"'{fullPath}' differs only in letter case from the directory that contains a365.config.json ('{root}'); use the exact case or a relative path";
+            }
+
             return $"'{fullPath}' is outside the directory that contains a365.config.json ('{root}')";
         }
 
@@ -74,12 +80,13 @@ internal static class SecretFileGuard
     /// <summary>
     /// Re-checks <paramref name="path"/> immediately before a write, so a link swapped in after an earlier check is not followed.
     /// </summary>
+    /// <exception cref="UnsafeDestinationException">The destination is no longer safe to write.</exception>
     internal static void ThrowIfUnsafe(string rootDirectory, string path)
     {
         var unsafeReason = GetUnsafeReason(rootDirectory, path);
         if (unsafeReason != null)
         {
-            throw new IOException($"Refusing to write a project file because {unsafeReason}.");
+            throw new UnsafeDestinationException(unsafeReason);
         }
     }
 
@@ -88,4 +95,19 @@ internal static class SecretFileGuard
         => OperatingSystem.IsWindows() && path.Length >= 2 && path[1] == ':' && char.IsAsciiLetter(path[0])
             ? char.ToUpperInvariant(path[0]) + path[1..]
             : path;
+}
+
+/// <summary>
+/// Thrown by <see cref="SecretFileGuard.ThrowIfUnsafe"/> so callers can report a rejected destination, not an I/O failure.
+/// </summary>
+internal sealed class UnsafeDestinationException : IOException
+{
+    public UnsafeDestinationException(string reason)
+        : base($"Refusing to write a project file because {reason}.")
+    {
+        Reason = reason;
+    }
+
+    /// <summary>Why the destination was rejected, as returned by <see cref="SecretFileGuard.GetUnsafeReason"/>.</summary>
+    public string Reason { get; }
 }

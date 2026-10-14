@@ -87,6 +87,17 @@ public class SecretFileGuardTests : IDisposable
     }
 
     [Fact]
+    public void GetUnsafeReason_CaseOnlyMismatch_ExplainsLetterCase()
+    {
+        var caseAlias = Path.Combine(_baseDir, "REPO");
+
+        SecretFileGuard.GetUnsafeReason(_root, Path.Combine(caseAlias, ".env")).Should().Contain("letter case",
+            because: "on case-insensitive volumes this is the user's own directory, so the warning must say why it was rejected");
+        SecretFileGuard.GetUnsafeReason(_root, Path.Combine(_outside, ".env")).Should().NotContain("letter case",
+            because: "only a path that matches the config directory apart from letter case gets the letter-case explanation");
+    }
+
+    [Fact]
     public void GetUnsafeReason_DriveLetterCaseDiffers_IsSafeOnWindows()
     {
         if (!OperatingSystem.IsWindows())
@@ -184,11 +195,7 @@ public class SecretFileGuardTests : IDisposable
         SecretFileGuard.GetUnsafeReason(_root, envPath).Should().BeNull(
             because: "the destination is a regular directory when it is first checked");
 
-        Directory.Delete(project);
-        if (OperatingSystem.IsWindows())
-            FileSystemLinks.CreateJunction(project, _outside);
-        else
-            Directory.CreateSymbolicLink(project, _outside);
+        FileSystemLinks.ReplaceWithDirectoryLink(project, _outside);
 
         var act = () => SecretFileGuard.ThrowIfUnsafe(_root, envPath);
 
