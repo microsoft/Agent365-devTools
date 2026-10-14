@@ -426,6 +426,8 @@ internal static class GetTokenSubcommand
         // each per-server audience token as BEARER_TOKEN_<SERVER_NAME>
         bool anySaved = false;
         bool firstTokenSaved = false;
+        // Every token targets the same project file, so stop after a rejected destination to warn once.
+        bool destinationAllowed = true;
         foreach (var result in tokenResults.Where(r => r.Success))
         {
             serverNamesByAudience.TryGetValue(result.Audience!, out var serverNames);
@@ -434,12 +436,16 @@ internal static class GetTokenSubcommand
             {
                 // V2 per-server audience — write one entry per server name
                 foreach (var serverName in serverNames)
-                    await SaveAndReportTokenAsync(result.Token!, setupConfig, configDirectory, logger, serverUniqueName: serverName);
+                {
+                    if (destinationAllowed)
+                        destinationAllowed = await SaveAndReportTokenAsync(result.Token!, setupConfig, configDirectory, logger, serverUniqueName: serverName);
+                }
             }
             else if (!firstTokenSaved)
             {
                 // V1 shared audience or ATG seed entry — write as BEARER_TOKEN (backward compat)
-                await SaveAndReportTokenAsync(result.Token!, setupConfig, configDirectory, logger, serverUniqueName: null);
+                if (destinationAllowed)
+                    destinationAllowed = await SaveAndReportTokenAsync(result.Token!, setupConfig, configDirectory, logger, serverUniqueName: null);
                 firstTokenSaved = true;
             }
             anySaved = true;
@@ -465,7 +471,8 @@ internal static class GetTokenSubcommand
         ?? Environment.GetEnvironmentVariable("A365_ENVIRONMENT")
         ?? "prod";
 
-    internal static async Task SaveAndReportTokenAsync(
+    /// <returns>False when the project destination was rejected, so remaining tokens should not be saved to it.</returns>
+    internal static async Task<bool> SaveAndReportTokenAsync(
         string token,
         Agent365Config? setupConfig,
         string configDirectory,
@@ -474,20 +481,19 @@ internal static class GetTokenSubcommand
     {
         if (setupConfig != null)
         {
-            await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, configDirectory, logger, serverUniqueName);
+            return await ProjectSettingsSyncHelper.SaveBearerTokenToPlatformConfigAsync(token, setupConfig, configDirectory, logger, serverUniqueName);
         }
-        else
-        {
-            var envVarKey = !string.IsNullOrWhiteSpace(serverUniqueName)
-                ? AuthenticationConstants.GetPerServerBearerTokenEnvVar(serverUniqueName)
-                : AuthenticationConstants.BearerTokenEnvironmentVariable;
-            logger.LogInformation("");
-            logger.LogInformation("Note: To use this token in your samples, manually add it to:");
-            logger.LogInformation("  - .NET projects: Properties/launchSettings.json > profiles > environmentVariables > {Key}", envVarKey);
-            // Never interpolate the token: log lines are also persisted to the CLI log file.
-            logger.LogInformation("  - Python/Node.js projects: .env file as {Key}=<token> (use --output raw to print the token)", envVarKey);
-            logger.LogInformation("");
-        }
+
+        var envVarKey = !string.IsNullOrWhiteSpace(serverUniqueName)
+            ? AuthenticationConstants.GetPerServerBearerTokenEnvVar(serverUniqueName)
+            : AuthenticationConstants.BearerTokenEnvironmentVariable;
+        logger.LogInformation("");
+        logger.LogInformation("Note: To use this token in your samples, manually add it to:");
+        logger.LogInformation("  - .NET projects: Properties/launchSettings.json > profiles > environmentVariables > {Key}", envVarKey);
+        // Never interpolate the token: log lines are also persisted to the CLI log file.
+        logger.LogInformation("  - Python/Node.js projects: .env file as {Key}=<token> (use --output raw to print the token)", envVarKey);
+        logger.LogInformation("");
+        return true;
     }
 
     /// <summary>

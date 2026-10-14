@@ -906,6 +906,8 @@ internal static class SetupHelpers
                 logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
             else if (results.ProjectSettingsWritten)
                 logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
+            else if (results.ProjectSettingsBlocked)
+                logger.LogWarning(DryRunRow(settingsStep, "Project settings") + "skipped — see warnings");
         }
 
         } // end full step table

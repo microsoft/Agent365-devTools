@@ -1092,12 +1092,14 @@ public class GetTokenSubcommandTests
         File.WriteAllText(envPath, "BEARER_TOKEN=\n");
         try
         {
-            await GetTokenSubcommand.SaveAndReportTokenAsync(
+            var allowed = await GetTokenSubcommand.SaveAndReportTokenAsync(
                 "bearer-token-value",
                 new Agent365Config { DeploymentProjectPath = outsideProject },
                 configDir,
                 new CapturingLogger());
 
+            allowed.Should().BeFalse(
+                because: "the manifest flow stops saving the remaining tokens once the destination is rejected, so it warns only once");
             File.ReadAllText(envPath).Should().NotContain("bearer-token-value",
                 because: "get-token must not follow a committed deploymentProjectPath outside the a365.config.json directory");
         }

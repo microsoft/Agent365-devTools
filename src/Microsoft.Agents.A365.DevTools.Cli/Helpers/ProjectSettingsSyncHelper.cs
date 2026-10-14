@@ -15,6 +15,21 @@ using System.Collections.Generic;
 namespace Microsoft.Agents.A365.DevTools.Cli.Helpers;
 
 /// <summary>
+/// Outcome of syncing project settings into the deployment project.
+/// </summary>
+public enum ProjectSettingsSyncResult
+{
+    /// <summary>Settings were written to the project.</summary>
+    Written,
+
+    /// <summary>Nothing was written because no .NET, Node.js, or Python project was found.</summary>
+    NoProjectFound,
+
+    /// <summary>Nothing was written because the destination is outside the a365.config.json directory or is a link.</summary>
+    Blocked,
+}
+
+/// <summary>
 /// Helper methods for syncing project settings from the deployment project.
 /// </summary>
 public static class ProjectSettingsSyncHelper
@@ -27,7 +42,7 @@ public static class ProjectSettingsSyncHelper
     /// so that in-memory values such as AgentDescription and AgentIdentityDisplayName derived
     /// from --agent-name are not lost when the config is reloaded from disk.
     /// </summary>
-    public static Task<bool> ExecuteAsync(
+    public static Task<ProjectSettingsSyncResult> ExecuteAsync(
         string a365ConfigPath,
         Agent365Config config,
         PlatformDetector platformDetector,
@@ -35,7 +50,7 @@ public static class ProjectSettingsSyncHelper
         => ExecuteAsyncCore(a365ConfigPath, config, platformDetector, logger);
 
 
-    public static async Task<bool> ExecuteAsync(
+    public static async Task<ProjectSettingsSyncResult> ExecuteAsync(
         string a365ConfigPath,
         string a365GeneratedPath,
         IConfigService configService,
@@ -50,7 +65,7 @@ public static class ProjectSettingsSyncHelper
         return await ExecuteAsync(a365ConfigPath, pkgConfig, platformDetector, logger);
     }
 
-    private static async Task<bool> ExecuteAsyncCore(
+    private static async Task<ProjectSettingsSyncResult> ExecuteAsyncCore(
         string a365ConfigPath,
         Agent365Config pkgConfig,
         PlatformDetector platformDetector,
@@ -61,7 +76,7 @@ public static class ProjectSettingsSyncHelper
         if (string.IsNullOrWhiteSpace(configDir) || !Directory.Exists(configDir))
         {
             logger.LogWarning("The directory that contains a365.config.json was not found; skipping project settings sync.");
-            return false;
+            return ProjectSettingsSyncResult.NoProjectFound;
         }
 
         string project;
@@ -75,7 +90,7 @@ public static class ProjectSettingsSyncHelper
         {
             // The settings include the blueprint client secret; a committed config must not send it elsewhere.
             if (!CanWriteProjectSettings(configDir, pkgConfig.DeploymentProjectPath, logger))
-                return false;
+                return ProjectSettingsSyncResult.Blocked;
 
             project = Path.GetFullPath(pkgConfig.DeploymentProjectPath, configDir);
             if (!Directory.Exists(project))
@@ -95,16 +110,17 @@ public static class ProjectSettingsSyncHelper
             case ProjectPlatform.DotNet:
             {
                 if (!CanWriteProjectSettings(configDir, appsettings, logger))
-                    return false;
+                    return ProjectSettingsSyncResult.Blocked;
 
                 // Create appsettings.json if missing
                 if (!File.Exists(appsettings))
                 {
+                    SecretFileGuard.ThrowIfUnsafe(configDir, appsettings);
                     await File.WriteAllTextAsync(appsettings, "{\n  \"Connections\": {}\n}\n");
                     logger.LogInformation("Created: {Path}", appsettings);
                 }
 
-                await UpdateDotnetAppsettingsAsync(appsettings, pkgConfig, logger);
+                await UpdateDotnetAppsettingsAsync(appsettings, configDir, pkgConfig, logger);
                 logger.LogInformation("Updated: {Path}", appsettings);
                 break;
             }
@@ -112,15 +128,16 @@ public static class ProjectSettingsSyncHelper
             case ProjectPlatform.NodeJs:
             {
                 if (!CanWriteProjectSettings(configDir, dotenv, logger))
-                    return false;
+                    return ProjectSettingsSyncResult.Blocked;
 
                 if (!File.Exists(dotenv))
                 {
+                    SecretFileGuard.ThrowIfUnsafe(configDir, dotenv);
                     await File.WriteAllTextAsync(dotenv, "");
                     logger.LogInformation("Created: {Path}", dotenv);
                 }
 
-                await UpdateNodeEnvAsync(dotenv, pkgConfig, logger);
+                await UpdateNodeEnvAsync(dotenv, configDir, pkgConfig, logger);
                 logger.LogInformation("Updated: {Path}", dotenv);
                 break;
             }
@@ -128,33 +145,35 @@ public static class ProjectSettingsSyncHelper
             case ProjectPlatform.Python:
             {
                 if (!CanWriteProjectSettings(configDir, dotenv, logger))
-                    return false;
+                    return ProjectSettingsSyncResult.Blocked;
 
                 if (!File.Exists(dotenv))
                 {
+                    SecretFileGuard.ThrowIfUnsafe(configDir, dotenv);
                     await File.WriteAllTextAsync(dotenv, "");
                     logger.LogInformation("Created: {Path}", dotenv);
                 }
 
-                await UpdatePythonEnvAsync(dotenv, pkgConfig, logger);
+                await UpdatePythonEnvAsync(dotenv, configDir, pkgConfig, logger);
                 logger.LogInformation("Updated: {Path}", dotenv);
                 break;
             }
 
             default:
                 logger.LogInformation("No .NET, Node.js, or Python project detected in {ProjectPath}; skipping project settings update.", project);
-                return false;
+                return ProjectSettingsSyncResult.NoProjectFound;
         }
 
         logger.LogInformation("Stamped TenantId, ServiceConnection, AgentBlueprint, and Agent365Observability settings into {ProjectPath}", project);
-        return true;
+        return ProjectSettingsSyncResult.Written;
     }
 
     /// <summary>
     /// Saves the bearer token to .env file for Python/Node.js samples or launchSettings.json for .NET samples.
     /// The token is only written inside <paramref name="configDirectory"/>, the directory that contains a365.config.json.
     /// </summary>
-    public static async Task SaveBearerTokenToPlatformConfigAsync(
+    /// <returns>False when the destination was rejected, so callers can stop saving further tokens to it.</returns>
+    public static async Task<bool> SaveBearerTokenToPlatformConfigAsync(
         string token,
         Agent365Config config,
         string configDirectory,
@@ -166,7 +185,6 @@ public static class ProjectSettingsSyncHelper
         try
         {
             configDirectory = Path.GetFullPath(configDirectory);
-            var envVarKey = GetBearerTokenEnvVarKey(serverUniqueName);
 
             // Determine project directory from config
             var projectDir = config.DeploymentProjectPath;
@@ -177,9 +195,9 @@ public static class ProjectSettingsSyncHelper
             }
 
             // a365.config.json is often committed, so its deploymentProjectPath must not send the token elsewhere.
-            if (!CanWriteBearerToken(configDirectory, projectDir, envVarKey, logger))
+            if (!CanWriteBearerToken(configDirectory, projectDir, logger))
             {
-                return;
+                return false;
             }
 
             projectDir = Path.GetFullPath(projectDir, configDirectory);
@@ -187,7 +205,7 @@ public static class ProjectSettingsSyncHelper
             if (!Directory.Exists(projectDir))
             {
                 logger.LogWarning("Project directory does not exist: {Path}. Skipping token update.", projectDir);
-                return;
+                return true;
             }
 
             // Detect platform type using PlatformDetector
@@ -199,28 +217,29 @@ public static class ProjectSettingsSyncHelper
             // Handle token saving based on platform type
             if (platform == ProjectPlatform.DotNet)
             {
-                await SaveBearerTokenToLaunchSettingsAsync(token, projectDir, configDirectory, logger, serverUniqueName);
+                return await SaveBearerTokenToLaunchSettingsAsync(token, projectDir, configDirectory, logger, serverUniqueName);
             }
-            else if (platform == ProjectPlatform.Python || platform == ProjectPlatform.NodeJs)
+
+            if (platform == ProjectPlatform.Python || platform == ProjectPlatform.NodeJs)
             {
-                await SaveBearerTokenToDotEnvAsync(token, projectDir, configDirectory, platform, logger, serverUniqueName);
+                return await SaveBearerTokenToDotEnvAsync(token, projectDir, configDirectory, platform, logger, serverUniqueName);
             }
-            else
-            {
-                logger.LogDebug("Project type is {Platform}, skipping bearer token update (only applies to .NET/Python/Node.js)", platform);
-            }
+
+            logger.LogDebug("Project type is {Platform}, skipping bearer token update (only applies to .NET/Python/Node.js)", platform);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to save bearer token: {Message}", ex.Message);
             logger.LogInformation("You can manually add the token to your project configuration");
         }
+
+        return true;
     }
 
     /// <summary>
     /// Saves the bearer token to .env file for Python and Node.js projects
     /// </summary>
-    private static async Task SaveBearerTokenToDotEnvAsync(
+    private static async Task<bool> SaveBearerTokenToDotEnvAsync(
         string token,
         string projectDir,
         string configDirectory,
@@ -230,20 +249,20 @@ public static class ProjectSettingsSyncHelper
     {
         var envPath = Path.Combine(projectDir, ".env");
 
+        if (!CanWriteBearerToken(configDirectory, envPath, logger))
+        {
+            return false;
+        }
+
         // Determine the env var key: per-server if name provided, shared fallback otherwise
         var envVarKey = GetBearerTokenEnvVarKey(serverUniqueName);
-
-        if (!CanWriteBearerToken(configDirectory, envPath, envVarKey, logger))
-        {
-            return;
-        }
 
         if (!File.Exists(envPath))
         {
             logger.LogDebug(".env file not found at {Path}, skipping token update for {Platform} project", envPath, platform);
             logger.LogInformation("To use the bearer token in your {Platform} application, add it to .env file:", platform);
             logger.LogInformation("  Create .env file in your project directory with: {Key}=<your bearer token>", envVarKey);
-            return;
+            return true;
         }
 
         // Read existing .env content
@@ -266,17 +285,19 @@ public static class ProjectSettingsSyncHelper
         }
 
         // Write back to .env file
+        SecretFileGuard.ThrowIfUnsafe(configDirectory, envPath);
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
 
         logger.LogInformation("Bearer token saved to .env file for {Platform} sample", platform);
         logger.LogInformation("  Path: {Path}", envPath);
         logger.LogInformation("  The token can now be used by your {Platform} application", platform);
+        return true;
     }
 
     /// <summary>
     /// Saves the bearer token to launchSettings.json for .NET projects
     /// </summary>
-    private static async Task SaveBearerTokenToLaunchSettingsAsync(
+    private static async Task<bool> SaveBearerTokenToLaunchSettingsAsync(
         string token,
         string projectDir,
         string configDirectory,
@@ -286,19 +307,19 @@ public static class ProjectSettingsSyncHelper
         // Check for Properties/launchSettings.json
         var launchSettingsPath = Path.Combine(projectDir, "Properties", "launchSettings.json");
 
-        var envVarKey = GetBearerTokenEnvVarKey(serverUniqueName);
-
-        if (!CanWriteBearerToken(configDirectory, launchSettingsPath, envVarKey, logger))
+        if (!CanWriteBearerToken(configDirectory, launchSettingsPath, logger))
         {
-            return;
+            return false;
         }
+
+        var envVarKey = GetBearerTokenEnvVarKey(serverUniqueName);
 
         if (!File.Exists(launchSettingsPath))
         {
             logger.LogDebug("launchSettings.json not found at {Path}, skipping token update for .NET project", launchSettingsPath);
             logger.LogInformation("To use the bearer token in your .NET application, add it to launchSettings.json:");
             logger.LogInformation("  Properties/launchSettings.json > profiles > [profile-name] > environmentVariables > {Key}", envVarKey);
-            return;
+            return true;
         }
 
         try
@@ -310,7 +331,7 @@ public static class ProjectSettingsSyncHelper
             if (!launchSettings.TryGetProperty("profiles", out var profiles))
             {
                 logger.LogWarning("No profiles found in launchSettings.json");
-                return;
+                return true;
             }
 
             // Check if any profile has the target env var defined
@@ -336,7 +357,7 @@ public static class ProjectSettingsSyncHelper
                 logger.LogInformation("No profiles found with {Key} in {Path}", envVarKey, launchSettingsPath);
                 logger.LogInformation("To use the bearer token, add {Key} to a profile's environmentVariables:", envVarKey);
                 logger.LogInformation("  \"environmentVariables\": {{ \"{Key}\": \"\" }}", envVarKey);
-                return;
+                return true;
             }
 
             // Build updated JSON with the token in environment variables
@@ -345,6 +366,7 @@ public static class ProjectSettingsSyncHelper
             // Write back to file with indentation
             var options = new JsonSerializerOptions { WriteIndented = true };
             var updatedJsonText = JsonSerializer.Serialize(updatedJson, options);
+            SecretFileGuard.ThrowIfUnsafe(configDirectory, launchSettingsPath);
             await File.WriteAllTextAsync(launchSettingsPath, updatedJsonText, new UTF8Encoding(false));
 
             logger.LogInformation("Updated {Key} in {Path}", envVarKey, launchSettingsPath);
@@ -359,6 +381,8 @@ public static class ProjectSettingsSyncHelper
             logger.LogWarning(ex, "Failed to parse launchSettings.json: {Message}", ex.Message);
             logger.LogInformation("You can manually add {Key} to launchSettings.json environmentVariables", envVarKey);
         }
+
+        return true;
     }
 
     /// <summary>
@@ -442,6 +466,7 @@ public static class ProjectSettingsSyncHelper
     // ---------------------------
     private static async Task UpdateDotnetAppsettingsAsync(
         string appsettingsPath,
+        string configDir,
         Agent365Config pkgConfig,
         ILogger logger)
     {
@@ -569,11 +594,13 @@ public static class ProjectSettingsSyncHelper
         }
 
         var updated = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        SecretFileGuard.ThrowIfUnsafe(configDir, appsettingsPath);
         await File.WriteAllTextAsync(appsettingsPath, updated, new UTF8Encoding(false));
     }
 
     private static async Task UpdatePythonEnvAsync(
         string envPath,
+        string configDir,
         Agent365Config pkgConfig,
         ILogger logger)
     {
@@ -638,11 +665,13 @@ public static class ProjectSettingsSyncHelper
             Set("AGENT365OBSERVABILITY__CLIENTSECRET", obsSecretPy);
         }
 
+        SecretFileGuard.ThrowIfUnsafe(configDir, envPath);
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
     }
 
     private static async Task UpdateNodeEnvAsync(
         string envPath,
+        string configDir,
         Agent365Config pkgConfig,
         ILogger logger)
     {
@@ -707,6 +736,7 @@ public static class ProjectSettingsSyncHelper
             Set("agent365Observability__clientSecret", obsSecretNode);
         }
 
+        SecretFileGuard.ThrowIfUnsafe(configDir, envPath);
         await File.WriteAllLinesAsync(envPath, lines, new UTF8Encoding(false));
     }
 
@@ -724,16 +754,16 @@ public static class ProjectSettingsSyncHelper
             ? AuthenticationConstants.GetPerServerBearerTokenEnvVar(serverUniqueName)
             : AuthenticationConstants.BearerTokenEnvironmentVariable;
 
-    private static bool CanWriteBearerToken(string configDirectory, string path, string envVarKey, ILogger logger)
+    private static bool CanWriteBearerToken(string configDirectory, string path, ILogger logger)
     {
         var unsafeReason = SecretFileGuard.GetUnsafeReason(configDirectory, path);
         if (unsafeReason == null)
             return true;
 
-        logger.LogWarning("{Key} was not saved to your project because {Reason}.", envVarKey, unsafeReason);
+        logger.LogWarning("Bearer tokens were not saved to your project because {Reason}.", unsafeReason);
         logger.LogInformation(
-            "Tokens are only written to files inside the directory that contains a365.config.json, never through a symbolic link or junction. Use --output raw to print the token and set {Key} manually.",
-            envVarKey);
+            "Tokens are only written to files inside the directory that contains a365.config.json, never through a symbolic link or junction. Use --output raw to print the tokens and add them manually.");
+        logger.LogInformation(ErrorMessages.SecretDestinationRemediation);
         return false;
     }
 
@@ -746,6 +776,7 @@ public static class ProjectSettingsSyncHelper
         logger.LogWarning("Skipping project settings sync because {Reason}.", unsafeReason);
         logger.LogInformation(
             "Project settings include the agent blueprint client secret, so they are only written to files inside the directory that contains a365.config.json, never through a symbolic link or junction.");
+        logger.LogInformation(ErrorMessages.SecretDestinationRemediation);
         return false;
     }
 

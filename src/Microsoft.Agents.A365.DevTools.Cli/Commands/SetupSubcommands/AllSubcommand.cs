@@ -622,9 +622,9 @@ internal static class AllSubcommand
                 logger.LogInformation("");
 
                 // Sync all settings (ServiceConnection, TokenValidation, Agent365Observability) to the app config file.
-                setupResults.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
+                setupResults.RecordProjectSettingsResult(await ProjectSettingsSyncHelper.ExecuteAsync(
                     ctx.ConfigFile.FullName, ctx.GeneratedConfigPath,
-                    ctx.ConfigService, ctx.PlatformDetector, ctx.Logger);
+                    ctx.ConfigService, ctx.PlatformDetector, ctx.Logger));
 
                 // Display verification URLs and setup summary
                 await SetupHelpers.DisplayVerificationInfoAsync(config, logger);

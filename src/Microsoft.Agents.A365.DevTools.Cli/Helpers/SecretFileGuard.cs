@@ -69,4 +69,16 @@ internal static class SecretFileGuard
 
         return null;
     }
+
+    /// <summary>
+    /// Re-checks <paramref name="path"/> immediately before a write, so a link swapped in after an earlier check is not followed.
+    /// </summary>
+    internal static void ThrowIfUnsafe(string rootDirectory, string path)
+    {
+        var unsafeReason = GetUnsafeReason(rootDirectory, path);
+        if (unsafeReason != null)
+        {
+            throw new IOException($"Refusing to write a project file because {unsafeReason}.");
+        }
+    }
 }

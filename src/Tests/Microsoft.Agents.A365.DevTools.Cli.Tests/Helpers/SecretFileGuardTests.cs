@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Tests.TestHelpers;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Helpers;
@@ -25,22 +26,6 @@ public class SecretFileGuardTests : IDisposable
     public void Dispose()
     {
         try { if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true); } catch { /* ignore */ }
-    }
-
-    /// <summary>
-    /// Symlink creation needs Developer Mode or elevation on Windows; Linux CI always exercises these tests.
-    /// </summary>
-    private static bool TryCreateSymlink(Action create)
-    {
-        try
-        {
-            create();
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
     }
 
     [Fact]
@@ -116,7 +101,7 @@ public class SecretFileGuardTests : IDisposable
         var target = Path.Combine(_outside, "captured.env");
         File.WriteAllText(target, string.Empty);
         var link = Path.Combine(_root, ".env");
-        if (!TryCreateSymlink(() => File.CreateSymbolicLink(link, target)))
+        if (!FileSystemLinks.TryCreateSymlink(() => File.CreateSymbolicLink(link, target)))
             return;
 
         SecretFileGuard.GetUnsafeReason(_root, link).Should().NotBeNull(
@@ -127,7 +112,7 @@ public class SecretFileGuardTests : IDisposable
     public void GetUnsafeReason_DanglingSymlinkInsideRoot_IsUnsafe()
     {
         var link = Path.Combine(_root, ".env");
-        if (!TryCreateSymlink(() => File.CreateSymbolicLink(link, Path.Combine(_outside, "missing.env"))))
+        if (!FileSystemLinks.TryCreateSymlink(() => File.CreateSymbolicLink(link, Path.Combine(_outside, "missing.env"))))
             return;
 
         SecretFileGuard.GetUnsafeReason(_root, link).Should().NotBeNull(
@@ -138,10 +123,52 @@ public class SecretFileGuardTests : IDisposable
     public void GetUnsafeReason_FileBelowSymlinkedDirectory_IsUnsafe()
     {
         var link = Path.Combine(_root, "project");
-        if (!TryCreateSymlink(() => Directory.CreateSymbolicLink(link, _outside)))
+        if (!FileSystemLinks.TryCreateSymlink(() => Directory.CreateSymbolicLink(link, _outside)))
             return;
 
         SecretFileGuard.GetUnsafeReason(_root, Path.Combine(link, ".env")).Should().NotBeNull(
             because: "a symlinked directory below the root escapes the a365.config.json directory");
+    }
+
+    [Fact]
+    public void GetUnsafeReason_FileBelowJunction_IsUnsafe()
+    {
+        if (!OperatingSystem.IsWindows())
+            return; // Junctions exist only on Windows; Linux and macOS are covered by the symlink tests.
+
+        var link = Path.Combine(_root, "project");
+        FileSystemLinks.CreateJunction(link, _outside);
+
+        SecretFileGuard.GetUnsafeReason(_root, Path.Combine(link, ".env")).Should().NotBeNull(
+            because: "a junction below the root redirects writes outside the a365.config.json directory");
+    }
+
+    [Fact]
+    public void ThrowIfUnsafe_PathInsideRoot_DoesNotThrow()
+    {
+        var act = () => SecretFileGuard.ThrowIfUnsafe(_root, Path.Combine(_root, ".env"));
+
+        act.Should().NotThrow(because: "the write-time re-check must not block regular files inside the project");
+    }
+
+    [Fact]
+    public void ThrowIfUnsafe_LinkSwappedInAfterFirstCheck_Throws()
+    {
+        var project = Path.Combine(_root, "project");
+        Directory.CreateDirectory(project);
+        var envPath = Path.Combine(project, ".env");
+        SecretFileGuard.GetUnsafeReason(_root, envPath).Should().BeNull(
+            because: "the destination is a regular directory when it is first checked");
+
+        Directory.Delete(project);
+        if (OperatingSystem.IsWindows())
+            FileSystemLinks.CreateJunction(project, _outside);
+        else
+            Directory.CreateSymbolicLink(project, _outside);
+
+        var act = () => SecretFileGuard.ThrowIfUnsafe(_root, envPath);
+
+        act.Should().Throw<IOException>(
+            because: "a link swapped in after the first check must be caught immediately before the secret is written");
     }
 }
