@@ -16,6 +16,8 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 /// </summary>
 internal static class AzCliHelper
 {
+    private static readonly object LoginHintCacheLock = new();
+
     // Process-level cache: 'az account show' returns the same user for the lifetime of a CLI
     // invocation. Caching eliminates repeated subprocess calls that occur when multiple
     // services and commands each call ResolveLoginHintAsync independently.
@@ -31,16 +33,31 @@ internal static class AzCliHelper
     /// mid-execution of a single CLI command. Returns null if unavailable (non-fatal).
     /// </summary>
     internal static Task<string?> ResolveLoginHintAsync()
-        => _cachedLoginHintTask ??= (LoginHintResolverOverride ?? ResolveLoginHintCoreAsync)();
+    {
+        var cachedTask = _cachedLoginHintTask;
+        if (cachedTask != null)
+            return cachedTask;
+
+        lock (LoginHintCacheLock)
+        {
+            return _cachedLoginHintTask ??= (LoginHintResolverOverride ?? ResolveLoginHintCoreAsync)();
+        }
+    }
 
     /// <summary>
     /// Clears the login-hint process-level cache after a fresh 'az login'.
     /// Forces the next call to ResolveLoginHintAsync to re-run 'az account show'.
     /// </summary>
-    internal static void InvalidateLoginHintCache() => _cachedLoginHintTask = null;
+    internal static void InvalidateLoginHintCache()
+    {
+        lock (LoginHintCacheLock)
+        {
+            _cachedLoginHintTask = null;
+        }
+    }
 
     /// <summary>Clears the login-hint process-level cache. For use in tests only.</summary>
-    internal static void ResetLoginHintCacheForTesting() => _cachedLoginHintTask = null;
+    internal static void ResetLoginHintCacheForTesting() => InvalidateLoginHintCache();
 
     private static async Task<string?> ResolveLoginHintCoreAsync()
     {
