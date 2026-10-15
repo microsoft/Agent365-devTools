@@ -266,7 +266,7 @@ public class CreateInstanceCommand
                     using var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                     var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
-                    await ProjectSettingsSyncHelper.ExecuteAsync(
+                    var syncResult = await ProjectSettingsSyncHelper.ExecuteAsync(
                         a365ConfigPath: config.FullName,
                         a365GeneratedPath: generatedConfigPath,
                         configService: configService,
@@ -274,7 +274,8 @@ public class CreateInstanceCommand
                         logger: logger
                     );
                     
-                    logger.LogInformation("Generated config in project settings successfully!");
+                    if (syncResult == ProjectSettingsSyncResult.Written)
+                        logger.LogInformation("Generated config in project settings successfully!");
                 }
                 catch (Exception syncEx)
                 {
@@ -395,7 +396,7 @@ public class CreateInstanceCommand
                     using var syncLoggerFactory = LoggerFactoryHelper.CreateCleanLoggerFactory();
                     var platformDetector = new PlatformDetector(syncLoggerFactory.CreateLogger<PlatformDetector>());
 
-                    await ProjectSettingsSyncHelper.ExecuteAsync(
+                    var syncResult = await ProjectSettingsSyncHelper.ExecuteAsync(
                         a365ConfigPath: config.FullName,
                         a365GeneratedPath: generatedConfigPath,
                         configService: configService,
@@ -403,7 +404,8 @@ public class CreateInstanceCommand
                         logger: logger
                     );
                     
-                    logger.LogInformation("Generated config in project settings successfully!");
+                    if (syncResult == ProjectSettingsSyncResult.Written)
+                        logger.LogInformation("Generated config in project settings successfully!");
                 }
                 catch (Exception syncEx)
                 {

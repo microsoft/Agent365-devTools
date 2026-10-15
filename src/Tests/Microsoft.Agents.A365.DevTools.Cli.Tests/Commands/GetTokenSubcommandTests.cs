@@ -1065,5 +1065,59 @@ public class GetTokenSubcommandTests
         envPath.Should().EndWith(".env");
     }
 
+    [Fact]
+    public async Task SaveAndReportTokenAsync_WithoutConfig_DoesNotLogToken()
+    {
+        const string token = "bearer-token-value";
+        var logger = new CapturingLogger();
+
+        await GetTokenSubcommand.SaveAndReportTokenAsync(token, setupConfig: null, Path.GetTempPath(), logger);
+
+        logger.AllOutput.Should().NotContain(token,
+            because: "log lines are also written to the CLI log file, so the bearer token must not be interpolated into them");
+        logger.AllOutput.Should().Contain(AuthenticationConstants.BearerTokenEnvironmentVariable,
+            because: "the user still needs to know which variable to set manually");
+    }
+
+    [Fact]
+    public async Task SaveAndReportTokenAsync_ProjectOutsideConfigDirectory_DoesNotWriteToken()
+    {
+        var baseDir = Path.Combine(Path.GetTempPath(), "A365_GetTokenSave_" + Guid.NewGuid());
+        var configDir = Path.Combine(baseDir, "repo");
+        var outsideProject = Path.Combine(baseDir, "outside");
+        Directory.CreateDirectory(configDir);
+        Directory.CreateDirectory(outsideProject);
+        File.WriteAllText(Path.Combine(outsideProject, "package.json"), "{}");
+        var envPath = Path.Combine(outsideProject, ".env");
+        File.WriteAllText(envPath, "BEARER_TOKEN=\n");
+        try
+        {
+            var allowed = await GetTokenSubcommand.SaveAndReportTokenAsync(
+                "bearer-token-value",
+                new Agent365Config { DeploymentProjectPath = outsideProject },
+                configDir,
+                new CapturingLogger());
+
+            allowed.Should().BeFalse(
+                because: "the manifest flow stops saving the remaining tokens once the destination is rejected, so it warns only once");
+            File.ReadAllText(envPath).Should().NotContain("bearer-token-value",
+                because: "get-token must not follow a committed deploymentProjectPath outside the a365.config.json directory");
+        }
+        finally
+        {
+            Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
     #endregion
+
+    private sealed class CapturingLogger : ILogger
+    {
+        private readonly List<string> _messages = [];
+        public string AllOutput => string.Join("\n", _messages);
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => _messages.Add(formatter(state, exception));
+    }
 }

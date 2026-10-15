@@ -29,6 +29,19 @@ public static class ErrorMessages
 
     #endregion
 
+    #region Project Secret Destination Messages
+
+    public const string SecretDestinationRemediation =
+        "To fix this, point deploymentProjectPath at the directory that contains a365.config.json or one of its subdirectories, " +
+        "or move a365.config.json and a365.generated.config.json into your project directory (or a parent directory) and run the CLI from there. " +
+        "Replace any symbolic link or junction on that path with a regular directory or file.";
+
+    public const string ProjectSettingsBlockedWarning =
+        "Project settings: not written because the project directory or a settings file is outside the directory that contains a365.config.json, " +
+        "or is a symbolic link or junction. Point deploymentProjectPath at that directory or one of its subdirectories, then re-run setup.";
+
+    #endregion
+
     #region Client App Validation Messages
 
     public const string ClientAppValidationFailed =

@@ -2448,14 +2448,15 @@ internal static class BlueprintSubcommand
 
         try
         {
-            await ProjectSettingsSyncHelper.ExecuteAsync(
+            var syncResult = await ProjectSettingsSyncHelper.ExecuteAsync(
                 a365ConfigPath: configPath,
                 a365GeneratedPath: generatedConfigPath,
                 configService: configService,
                 platformDetector: platformDetector,
                 logger: logger);
 
-            logger.LogInformation("Configuration synced to project settings successfully");
+            if (syncResult == ProjectSettingsSyncResult.Written)
+                logger.LogInformation("Configuration synced to project settings successfully");
         }
         catch (Exception syncEx)
         {
@@ -2553,14 +2554,15 @@ internal static class BlueprintSubcommand
 
         try
         {
-            await ProjectSettingsSyncHelper.ExecuteAsync(
+            var syncResult = await ProjectSettingsSyncHelper.ExecuteAsync(
                 a365ConfigPath: configPath,
                 a365GeneratedPath: generatedConfigPath,
                 configService: configService,
                 platformDetector: platformDetector,
                 logger: logger);
 
-            logger.LogInformation("Configuration synced to project settings successfully");
+            if (syncResult == ProjectSettingsSyncResult.Written)
+                logger.LogInformation("Configuration synced to project settings successfully");
         }
         catch (Exception syncEx)
         {

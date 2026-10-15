@@ -904,6 +904,58 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
+    public async Task RegisterEndpointAndSyncAsync_WhenSyncBlocked_DoesNotReportSyncSuccess()
+    {
+        var testDir = Path.Combine(Path.GetTempPath(), $"a365-sync-blocked-{Guid.NewGuid()}");
+        var configDir = Path.Combine(testDir, "repo");
+        Directory.CreateDirectory(configDir);
+        var configPath = Path.Combine(configDir, "a365.config.json");
+        File.WriteAllText(Path.Combine(configDir, "a365.generated.config.json"), "{}");
+
+        var config = new Agent365Config
+        {
+            TenantId = "00000000-0000-0000-0000-000000000000",
+            AgentBlueprintId = "blueprint-123",
+            DeploymentProjectPath = Path.Combine(testDir, "outside"),
+        };
+
+        try
+        {
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(config));
+            _mockConfigService.SaveStateAsync(Arg.Any<Agent365Config>(), Arg.Any<string>())
+                .Returns(Task.CompletedTask);
+            _mockBackendConfigurator.SetBackendConfigurationAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns((EndpointRegistrationResult.Created, (string?)null));
+
+            await BlueprintSubcommand.RegisterEndpointAndSyncAsync(
+                configPath,
+                _mockLogger,
+                _mockConfigService,
+                _mockBackendConfigurator,
+                _mockPlatformDetector);
+
+            _mockLogger.Received().Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("Skipping project settings sync")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+            _mockLogger.DidNotReceive().Log(
+                LogLevel.Information,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("synced to project settings successfully")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>());
+        }
+        finally
+        {
+            if (Directory.Exists(testDir))
+                Directory.Delete(testDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RegisterEndpointAndSyncAsync_WhenEndpointAlreadyExists_ShouldLogAlreadyRegistered()
     {
         // Arrange

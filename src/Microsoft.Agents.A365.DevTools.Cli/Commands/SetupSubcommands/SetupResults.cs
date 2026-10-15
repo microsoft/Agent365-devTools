@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
@@ -286,6 +288,21 @@ public class SetupResults
 
     /// <summary>Whether step 8 (Project settings) was written to appsettings.json.</summary>
     public bool ProjectSettingsWritten { get; set; }
+
+    /// <summary>
+    /// True when project settings were not written because the destination is outside the a365.config.json
+    /// directory or is a link. Drives the "skipped" row in the setup summary.
+    /// </summary>
+    public bool ProjectSettingsBlocked { get; set; }
+
+    /// <summary>Records the project settings sync outcome for the setup summary.</summary>
+    public void RecordProjectSettingsResult(ProjectSettingsSyncResult result)
+    {
+        ProjectSettingsWritten = result == ProjectSettingsSyncResult.Written;
+        ProjectSettingsBlocked = result == ProjectSettingsSyncResult.Blocked;
+        if (ProjectSettingsBlocked)
+            Warnings.Add(ErrorMessages.ProjectSettingsBlockedWarning);
+    }
 
     /// <summary>
     /// True when the permission grants step was explicitly skipped because --agent-registration-only
