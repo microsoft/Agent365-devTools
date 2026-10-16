@@ -1036,6 +1036,9 @@ public sealed class A365CreateInstanceRunner
         _logger.LogInformation("Saved instance state to {Path}", path);
     }
 
+    // Matches ConfigService, which reads config keys case-insensitively.
+    private static readonly JsonSerializerOptions CaseInsensitiveJsonOptions = new() { PropertyNameCaseInsensitive = true };
+
     private bool CustomPermissionsRequestObservability(JsonObject config, string environment)
     {
         if (!config.TryGetPropertyValue("customBlueprintPermissions", out var node) || node is not JsonArray)
@@ -1043,7 +1046,7 @@ public sealed class A365CreateInstanceRunner
 
         try
         {
-            var customPermissions = node.Deserialize<List<CustomResourcePermission>>();
+            var customPermissions = node.Deserialize<List<CustomResourcePermission>>(CaseInsensitiveJsonOptions);
             return SetupHelpers.CustomPermissionsRequestObservability(customPermissions, environment);
         }
         catch (JsonException ex)

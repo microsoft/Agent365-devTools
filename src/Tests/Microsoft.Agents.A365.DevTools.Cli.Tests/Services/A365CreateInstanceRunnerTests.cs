@@ -163,11 +163,12 @@ public sealed class A365CreateInstanceRunnerTests : IDisposable
     {
         var configPath = Path.Combine(_testDirectory, "a365.config.json");
         var generatedConfigPath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        // PascalCase nested keys on purpose: setup reads config case-insensitively, so create-instance must too.
         var customPermissions = optIn
             ? $$"""
               ,
               "customBlueprintPermissions": [
-                { "resourceAppId": "{{ConfigConstants.ObservabilityApiAppId}}", "resourceName": "Observability", "scopes": [ "{{ConfigConstants.ObservabilityApiOtelWriteScope}}" ] }
+                { "ResourceAppId": "{{ConfigConstants.ObservabilityApiAppId}}", "ResourceName": "Observability", "Scopes": [ "{{ConfigConstants.ObservabilityApiOtelWriteScope}}" ] }
               ]
               """
             : string.Empty;
