@@ -157,8 +157,6 @@ Test-Case '-WhatIf plans the run without calling the orchestrator' {
 Write-Host 'Execution: auth preflight checks run before any row' -ForegroundColor Cyan
 
 function New-A365AuthPreflightCsv {
-    # A single AgentUser row is enough to exercise the AgentUser-vs-app-only-auth rule;
-    # it also must never validation-fail on its own, so every other requirement is met.
     $rows = @(
         New-A365TestCsvRow @{ ObjectType = 'Blueprint'; Key = 'BP-Auth'; DisplayName = 'Auth Blueprint'; Sponsor = 'sponsor@contoso.com' }
         New-A365TestCsvRow @{ ObjectType = 'AgentIdentity'; Key = 'AI-Auth'; ParentKey = 'BP-Auth'; DisplayName = 'Auth Identity'; Sponsor = 'sponsor@contoso.com' }
@@ -206,16 +204,79 @@ Test-Case 'Conflicting authentication options are refused before any row runs' {
     }
 }
 
-Test-Case 'An AgentUser row with non-app-only auth (-Interactive) is refused before any row runs' {
+Test-Case 'Client secret authentication without a client id is refused before any row runs' {
     $csv = New-A365AuthPreflightCsv
     $global:A365BulkExecFixtureCalls = [System.Collections.Generic.List[object]]::new()
     try {
         & $script:WrapperPath -CsvPath $csv -TenantId 'tenant-id' -ScriptRoot $script:FixturesDir `
-            -Interactive -Confirm:$false `
+            -ClientSecret 'a-secret' -Confirm:$false *> $null
+        Assert-Equal 1 $LASTEXITCODE
+        Assert-Equal 0 $global:A365BulkExecFixtureCalls.Count 'Nothing may run when app authentication has no client id.'
+    }
+    finally {
+        Remove-Variable -Name A365BulkExecFixtureCalls -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'Multiple certificate sources are refused before any row runs' {
+    $csv = New-A365AuthPreflightCsv
+    $global:A365BulkExecFixtureCalls = [System.Collections.Generic.List[object]]::new()
+    try {
+        & $script:WrapperPath -CsvPath $csv -TenantId 'tenant-id' -ScriptRoot $script:FixturesDir `
+            -ClientId 'test-client' -CertificateThumbprint 'thumbprint' `
+            -Certificate ([System.Security.Cryptography.X509Certificates.X509Certificate2]::new()) `
+            -Confirm:$false *> $null
+        Assert-Equal 1 $LASTEXITCODE
+        Assert-Equal 0 $global:A365BulkExecFixtureCalls.Count 'Nothing may run when certificate sources conflict.'
+    }
+    finally {
+        Remove-Variable -Name A365BulkExecFixtureCalls -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'Managed identity with a client id is refused before any row runs' {
+    $csv = New-A365AuthPreflightCsv
+    $global:A365BulkExecFixtureCalls = [System.Collections.Generic.List[object]]::new()
+    try {
+        & $script:WrapperPath -CsvPath $csv -TenantId 'tenant-id' -ScriptRoot $script:FixturesDir `
+            -UseManagedIdentity -ClientId 'user-assigned-client-id' -Confirm:$false *> $null
+        Assert-Equal 1 $LASTEXITCODE
+        Assert-Equal 0 $global:A365BulkExecFixtureCalls.Count 'Nothing may run when user-assigned managed identity selection is attempted.'
+    }
+    finally {
+        Remove-Variable -Name A365BulkExecFixtureCalls -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'Interactive authentication is forwarded to AgentUser rows' {
+    $csv = New-A365AuthPreflightCsv
+    $global:A365BulkExecFixtureCalls = [System.Collections.Generic.List[object]]::new()
+    try {
+        & $script:WrapperPath -CsvPath $csv -TenantId 'tenant-id' -ScriptRoot $script:FixturesDir `
+            -ClientId 'interactive-client' -Interactive -Confirm:$false `
             *> $null
         $exitCode = $LASTEXITCODE
-        Assert-Equal 1 $exitCode 'The AgentUser/app-only-auth mismatch must be refused, not attempted.'
-        Assert-Equal 0 $global:A365BulkExecFixtureCalls.Count 'This must be a true preflight: not even the Blueprint/AgentIdentity rows may run first.'
+        Assert-Equal 0 $exitCode 'Interactive authentication is supported for every bulk entity type.'
+        Assert-Equal 3 $global:A365BulkExecFixtureCalls.Count 'Every row should reach the orchestrator fixture.'
+        Assert-True (@($global:A365BulkExecFixtureCalls | Where-Object { -not $_.Interactive }).Count -eq 0) 'Interactive must be forwarded to every row.'
+    }
+    finally {
+        Remove-Variable -Name A365BulkExecFixtureCalls -Scope Global -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'Interactive AgentUser onboarding without a client id is refused before any row runs' {
+    $csv = New-A365AuthPreflightCsv
+    $global:A365BulkExecFixtureCalls = [System.Collections.Generic.List[object]]::new()
+    try {
+        & $script:WrapperPath -CsvPath $csv -TenantId 'tenant-id' -ScriptRoot $script:FixturesDir `
+            -Interactive -Confirm:$false *> $null
+        Assert-Equal 1 $LASTEXITCODE
+        Assert-Equal 0 $global:A365BulkExecFixtureCalls.Count 'AgentUser preview scopes require a caller-controlled interactive client.'
     }
     finally {
         Remove-Variable -Name A365BulkExecFixtureCalls -Scope Global -ErrorAction SilentlyContinue

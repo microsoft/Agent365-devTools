@@ -4,7 +4,7 @@
 <#
     Deterministic stand-in for New-A365AgentBlueprint.ps1's update mode, used only by
     SecureAuthenticationInput.Tests.ps1 (via Update-A365Blueprint.ps1 -ScriptRoot pointing
-    here). Records enough about -ClientSecret, -CertificatePassword and -AccessToken to prove
+    here). Records enough about -ClientSecret and -CertificatePassword to prove
     that Update-A365Blueprint.ps1 forwards the exact object it was given - never a copy, a
     re-typed value, or a stringified one - without making any Graph call.
 #>
@@ -32,9 +32,7 @@ param(
     [object] $Certificate,
     [string] $CertificatePath,
     [object] $CertificatePassword,
-    [switch] $UseManagedIdentity,
-    [object] $AccessToken,
-    [switch] $Interactive,
+    [switch] $UseManagedIdentity,    [switch] $Interactive,
     [switch] $SkipPermissionCheck
 )
 
@@ -53,8 +51,6 @@ if ($callCapture -and $null -ne $callCapture.Value) {
         ClientSecretType          = if ($null -ne $ClientSecret) { $ClientSecret.GetType().FullName } else { $null }
         CertificatePasswordIdentity = if ($null -ne $CertificatePassword) { [System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($CertificatePassword) } else { $null }
         CertificatePasswordType   = if ($null -ne $CertificatePassword) { $CertificatePassword.GetType().FullName } else { $null }
-        AccessTokenIdentity       = if ($null -ne $AccessToken) { [System.Runtime.CompilerServices.RuntimeHelpers]::GetHashCode($AccessToken) } else { $null }
-        AccessTokenType           = if ($null -ne $AccessToken) { $AccessToken.GetType().FullName } else { $null }
     })
 }
 
