@@ -776,7 +776,7 @@ public class PermissionsSubcommandTests : IDisposable
     #region ConfigureBotPermissionsAsync — Issue 402 Regression Tests
     // Regression tests for the localResults fix: failures must be visible even when setupResults=null.
 
-    private Agent365Config ArrangeAdminPath(bool s2sSucceeds)
+    private Agent365Config ArrangeAdminPath()
     {
         var config = new Agent365Config
         {
@@ -803,11 +803,6 @@ public class PermissionsSubcommandTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<(bool ok, bool alreadyExists, string? error)>((true, false, null)));
-
-        _mockBlueprintService.GrantAppRoleAssignmentAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Models.AppRoleGrantResult(AllSucceeded: s2sSucceeds, AllAlreadyAssigned: false)));
 
         _mockGraphApiService.GraphGetAsync(
             Arg.Any<string>(), Arg.Any<string>(),
@@ -838,8 +833,8 @@ public class PermissionsSubcommandTests : IDisposable
     [Fact]
     public async Task ConfigureBotPermissionsAsync_AdminPath_RequestsNoObservabilityApiOrAppRoles()
     {
-        // Arrange — admin user, OAuth2 grants succeed, and any app role grant would fail.
-        var config = ArrangeAdminPath(s2sSucceeds: false);
+        // Arrange — admin user, OAuth2 grants succeed.
+        var config = ArrangeAdminPath();
 
         // Act — no external SetupResults, mirrors how the CLI handler calls this method.
         var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
@@ -957,7 +952,7 @@ public class PermissionsSubcommandTests : IDisposable
     public async Task ConfigureBotPermissionsAsync_AdminPath_WhenAllSucceeds_ReturnsTrueAndLogsSuccess()
     {
         // Arrange — admin user, all OAuth2 grants and inheritable permissions succeed.
-        var config = ArrangeAdminPath(s2sSucceeds: true);
+        var config = ArrangeAdminPath();
 
         // Act
         var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
@@ -984,8 +979,8 @@ public class PermissionsSubcommandTests : IDisposable
     [Fact]
     public async Task ConfigureBotPermissionsAsync_WithExternalSetupResults_RecordsNoS2SAttempt()
     {
-        // Arrange — any app role grant would fail; non-null SetupResults passed in (AllSubcommand path).
-        var config = ArrangeAdminPath(s2sSucceeds: false);
+        // Arrange — non-null SetupResults passed in (AllSubcommand path).
+        var config = ArrangeAdminPath();
         var externalResults = new SetupResults();
 
         // Act

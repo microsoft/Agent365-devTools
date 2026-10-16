@@ -787,35 +787,22 @@ internal static class PermissionsSubcommand
 
             await configService.SaveStateAsync(setupConfig);
 
-            // S2S matters only when a spec carries an app role; then any outcome other than Granted means
-            // the roles are not in place. Consent state is checked first so the non-admin path still shows
-            // "consent required" rather than the S2S warning (S2S is never attempted without consent).
-            var s2sFailed = specs.Any(s => s.AppRoleScopes is { Length: > 0 })
-                && localResults.BlueprintS2SOutcome != Models.GrantOutcome.Granted;
-
             logger.LogInformation("");
-            if (!s2sFailed && consentGranted)
+            if (consentGranted)
             {
                 logger.LogInformation("Bot API permissions configured successfully");
             }
-            else if (!consentGranted)
+            else
             {
                 logger.LogInformation("Bot API permissions configured; admin consent required");
                 LogAdminConsentNextSteps(logger, adminConsentUrl, localResults, specs);
-            }
-            else
-            {
-                logger.LogWarning(
-                    "Bot API permissions configured, but S2S app role assignment failed. " +
-                    "Re-run 'a365 setup permissions bot' as {Roles} to retry.",
-                    AuthenticationConstants.S2SGrantRequiredRoles);
             }
             logger.LogInformation("");
             if (!iSetupAll)
             {
                 logger.LogInformation("Next step: Run 'a365 publish' to package your agent for upload to the Microsoft 365 Admin Center.");
             }
-            return consentGranted && !s2sFailed;
+            return consentGranted;
         }
         catch (Exception ex)
         {

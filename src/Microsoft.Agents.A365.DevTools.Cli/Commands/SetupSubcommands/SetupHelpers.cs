@@ -101,15 +101,20 @@ internal static class SetupHelpers
     /// Scope names are matched case-insensitively, consistent with custom-permission validation.
     /// </summary>
     internal static bool CustomPermissionsRequestObservability(Agent365Config config)
+        => CustomPermissionsRequestObservability(config.CustomBlueprintPermissions, config.Environment);
+
+    internal static bool CustomPermissionsRequestObservability(
+        IEnumerable<CustomResourcePermission>? customPermissions,
+        string? environment)
     {
         string? expectedAppId = null;
-        foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+        foreach (var customPerm in customPermissions ?? Enumerable.Empty<CustomResourcePermission>())
         {
             var (isValid, _) = customPerm.Validate();
             if (!isValid || !ConfigConstants.IsObservabilityApiAppId(customPerm.ResourceAppId))
                 continue;
 
-            expectedAppId ??= ConfigConstants.GetObservabilityApiAppId(config.Environment);
+            expectedAppId ??= ConfigConstants.GetObservabilityApiAppId(environment);
             if (string.Equals(customPerm.ResourceAppId, expectedAppId, StringComparison.OrdinalIgnoreCase)
                 && customPerm.Scopes.Contains(ConfigConstants.ObservabilityApiOtelWriteScope, StringComparer.OrdinalIgnoreCase))
             {
@@ -1708,6 +1713,8 @@ internal static class SetupHelpers
         logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configure for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Power Platform API");
         if (config is null || !CustomPermissionsRequestObservability(config))
             logger.LogInformation(sub + "Observability API not requested (telemetry is authorized by the blueprint's registration)");
+        else
+            logger.LogInformation(sub + "Observability API requested by customBlueprintPermissions");
 
         // 5. Blueprint Permission Grants
         logger.LogInformation(DryRunRow(5, "Blueprint Permission Grants") + "admin approval required — see 'Action Required' in setup output");

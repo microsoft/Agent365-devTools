@@ -475,7 +475,7 @@ AllSubcommand.ExecuteAsync
   ├── DW path:
   │     ExecuteInfrastructureStepAsync(ctx)     ← DW only
   │     ExecuteBlueprintStepAsync(ctx)           ← shared
-  │       ExecuteBatchPermissionsStepAsync(ctx, dwSpecs)  ← shared (4 resources)
+  │     ExecuteBatchPermissionsStepAsync(ctx, dwSpecs)  ← shared (4 resources)
   │     ExecuteMessagingEndpointStepAsync(ctx)   ← DW only
   │
   └── Non-DW path:

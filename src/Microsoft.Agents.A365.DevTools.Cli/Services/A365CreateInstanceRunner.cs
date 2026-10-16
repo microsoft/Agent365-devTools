@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
@@ -367,7 +369,10 @@ public sealed class A365CreateInstanceRunner
                         }),
                 };
 
-                // Merge additional scopes from resourceConsents in the generated config
+                // Merge additional scopes from resourceConsents in the generated config.
+                // Observability entries retained from earlier setups are skipped unless
+                // customBlueprintPermissions opts back in (#510).
+                var includeObservability = CustomPermissionsRequestObservability(config, environment);
                 if (instance.TryGetPropertyValue("resourceConsents", out var consentsNode) &&
                     consentsNode is JsonArray consentsArray)
                 {
@@ -378,6 +383,14 @@ public sealed class A365CreateInstanceRunner
 
                         var resourceAppId = obj["resourceAppId"]?.GetValue<string>();
                         if (string.IsNullOrWhiteSpace(resourceAppId)) continue;
+
+                        if (!includeObservability && ConfigConstants.IsObservabilityApiAppId(resourceAppId))
+                        {
+                            _logger.LogInformation(
+                                "Skipping saved Observability API consent {ResourceAppId}; add it to customBlueprintPermissions to grant it.",
+                                resourceAppId);
+                            continue;
+                        }
 
                         var resourceName = obj["resourceName"]?.GetValue<string>() ?? "(unknown)";
 
@@ -1021,6 +1034,23 @@ public sealed class A365CreateInstanceRunner
             instance.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
             cancellationToken);
         _logger.LogInformation("Saved instance state to {Path}", path);
+    }
+
+    private bool CustomPermissionsRequestObservability(JsonObject config, string environment)
+    {
+        if (!config.TryGetPropertyValue("customBlueprintPermissions", out var node) || node is not JsonArray)
+            return false;
+
+        try
+        {
+            var customPermissions = node.Deserialize<List<CustomResourcePermission>>();
+            return SetupHelpers.CustomPermissionsRequestObservability(customPermissions, environment);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Could not parse customBlueprintPermissions; Observability API permissions will not be granted.");
+            return false;
+        }
     }
 
     /// <summary>

@@ -157,6 +157,77 @@ public sealed class A365CreateInstanceRunnerTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_IdentityStep_GrantsSavedObservabilityConsentOnlyWhenCustomPermissionsOptIn(bool optIn)
+    {
+        var configPath = Path.Combine(_testDirectory, "a365.config.json");
+        var generatedConfigPath = Path.Combine(_testDirectory, "a365.generated.config.json");
+        var customPermissions = optIn
+            ? $$"""
+              ,
+              "customBlueprintPermissions": [
+                { "resourceAppId": "{{ConfigConstants.ObservabilityApiAppId}}", "resourceName": "Observability", "scopes": [ "{{ConfigConstants.ObservabilityApiOtelWriteScope}}" ] }
+              ]
+              """
+            : string.Empty;
+        await File.WriteAllTextAsync(
+            configPath,
+            $$"""
+            {
+              "tenantId": "11111111-1111-1111-1111-111111111111",
+              "environment": "prod"{{customPermissions}}
+            }
+            """);
+        // Configs set up by earlier CLI versions keep an Observability entry in resourceConsents.
+        await File.WriteAllTextAsync(
+            generatedConfigPath,
+            $$"""
+            {
+              "agentBlueprintId": "22222222-2222-2222-2222-222222222222",
+              "agentBlueprintClientSecret": "test-secret",
+              "AgenticAppId": "33333333-3333-3333-3333-333333333333",
+              "AgenticUserId": "44444444-4444-4444-4444-444444444444",
+              "resourceConsents": [
+                { "resourceAppId": "{{ConfigConstants.ObservabilityApiAppId}}", "resourceName": "Observability", "scopes": [ "{{ConfigConstants.ObservabilityApiOtelWriteScope}}" ] }
+              ]
+            }
+            """);
+
+        var logger = Substitute.For<ILogger<A365CreateInstanceRunner>>();
+        var executor = Substitute.For<CommandExecutor>(NullLogger<CommandExecutor>.Instance);
+        var graph = Substitute.For<GraphApiService>(NullLogger<GraphApiService>.Instance, executor);
+        graph.LookupServicePrincipalByAppIdAsync(
+                Arg.Any<string>(),
+                "33333333-3333-3333-3333-333333333333",
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>())
+            .Returns("agent-sp-object-id");
+        graph.GetOauth2PermissionGrantsAsync(Arg.Any<string>(), "agent-sp-object-id", Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new List<(string resourceId, string scope, string consentType)>()));
+        graph.EnsureServicePrincipalForAppIdAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+            .Returns("resource-sp-object-id");
+        graph.CreateOrUpdateOauth2PermissionGrantAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<IEnumerable<string>>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+            .Returns(true);
+
+        var runner = new A365CreateInstanceRunner(logger, executor, graph);
+
+        var succeeded = await runner.RunAsync(configPath, generatedConfigPath, step: "identity");
+
+        succeeded.Should().BeTrue(
+            because: "a saved Observability consent must not block the identity step");
+        await graph.Received(optIn ? 1 : 0).EnsureServicePrincipalForAppIdAsync(
+            Arg.Any<string>(),
+            ConfigConstants.ObservabilityApiAppId,
+            Arg.Any<CancellationToken>(),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<bool>());
+    }
+
+    [Theory]
     [InlineData("\"graphBaseUrl\": \"https://graph.example/us\"", "Graph base URL")]
     [InlineData("\"authorityHost\": \"http://login.example.com\"", "Authority host")]
     public async Task RunAsync_WhenConfiguredCloudEndpointIsInvalid_LogsErrorAndReturnsFalse(

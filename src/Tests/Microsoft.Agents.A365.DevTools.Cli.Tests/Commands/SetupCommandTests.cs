@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Requirements;
@@ -825,6 +826,49 @@ public class SetupCommandTests
 
         result.Should().Be(0, because: "a dry run with an AI Teammate config is valid");
         _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Observability API not requested")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    /// <summary>
+    /// customBlueprintPermissions can opt an AI Teammate back into the Observability API, so the plan must say so.
+    /// </summary>
+    [Fact]
+    public async Task SetupAll_AiTeammate_CustomObservabilityOptIn_PlanShowsObservabilityRequested()
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "tenant",
+            AgentIdentityDisplayName = "agent",
+            AgentBlueprintDisplayName = "TestBlueprint",
+            DeploymentProjectPath = ".",
+            AiTeammate = true,
+            CustomBlueprintPermissions = new List<CustomResourcePermission>
+            {
+                new()
+                {
+                    ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                    ResourceName = "Observability",
+                    Scopes = new List<string> { ConfigConstants.ObservabilityApiOtelWriteScope },
+                },
+            },
+        };
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(config));
+        var parser = new CommandLineBuilder(BuildSetupCommand()).Build();
+
+        var result = await parser.InvokeAsync("all --aiteammate true --dry-run", new TestConsole());
+
+        result.Should().Be(0, because: "an AI Teammate dry run with custom permissions is valid");
+        _mockLogger.Received().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Observability API requested by customBlueprintPermissions")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger.DidNotReceive().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => o.ToString()!.Contains("Observability API not requested")),
