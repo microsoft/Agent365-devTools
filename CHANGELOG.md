@@ -8,9 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade Notes
 
-#### Agents exporting through the delegated (OBO) route: grant Observability API permissions
+#### Agents that still need Observability API permissions
 
-Agents that export telemetry through the delegated (OBO) route need `Agent365.Observability.OtelWrite` granted as both a **delegated** and an **application** permission on the blueprint app. Requires Global Administrator.
+`a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents (#501) or AI Teammates (#510). Agents that export telemetry with an app-only token through the S2S endpoint don't need it: the service authorizes a blueprint agent by its agent registration and an AI Teammate by its blueprint's registration. Grant it manually on the blueprint app (requires Global Administrator) only when:
+
+- the agent exports through the delegated (OBO) route: grant the **delegated** permission.
+- app-only exports return 403 `insufficient_scope`: grant the **application** permission, which agent identities inherit.
 
 **Option A — Entra portal** (existing blueprints that already have the Observability inheritable-permission entry):
 
@@ -20,13 +23,11 @@ Agents that export telemetry through the delegated (OBO) route need `Agent365.Ob
    - GCC Moderate: `2c672ad5-b104-44ed-8069-bb68dd138546`
    - GCC High: `009c6bd0-82e4-4466-95b3-4c996521f3d7`
    - DoD: `a9e04047-c6a7-430b-a7ae-faf8f8eed1b7`
-3. **Delegated permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
-4. Repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
+3. Delegated route: **Delegated permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
+4. 403 `insufficient_scope`: repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 5. **Grant admin consent for \<tenant\>** > confirm
 
-**Option B — CLI**: `a365 setup admin` has been removed in this release. For blueprint agents created after this release, run `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud, from step 2> --scopes Agent365.Observability.OtelWrite` to stamp the inheritable permission and request consent. For AI Teammates, the `a365 setup all` summary also prints the PowerShell steps for the application permission.
-
-Blueprint agents that export telemetry through the app-only S2S endpoint don't need these permissions, and `a365 setup all` no longer requests them for blueprint agents (#501).
+**Option B — CLI**: `a365 setup admin` has been removed in this release. For blueprints that lack the inheritable-permission entry, including those created after this release, run `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud, from step 2> --scopes Agent365.Observability.OtelWrite` to stamp it and request consent for the delegated permission. The CLI does not grant the application permission; use Option A for it.
 
 ### Added
 - `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server and prompts you to select which ones to grant it to, requiring administrator consent on the first run in a tenant (#500).
@@ -91,6 +92,7 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 - `a365 publish` no longer crashes when `manifest.json` has a non-string `name.short` value (#478).
 - `setup all --agent-registration-only` now exits non-zero and reports errors when the requested agent registration step fails (#478).
 - `a365 setup all` now exits with code 1 when blueprint-agent registration fails or cannot be verified, including `--agent-registration-only` runs with unverifiable existing registrations (#501).
+- Non-admin `a365 setup all` runs now include the Observability API in the combined admin consent URL when `customBlueprintPermissions` adds it back (#510).
 - `a365 develop-mcp grant-agents-access --device-code` no longer prompts repeatedly within a single command, and no longer fails in embedded or remote terminals where the sign-in prompt could not be displayed (#500).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
@@ -138,6 +140,7 @@ Blueprint agents that export telemetry through the app-only S2S endpoint don't n
 ### Changed
 
 - `a365 setup all` no longer requests Observability API permissions for blueprint agents; registered agents that export telemetry through the app-only S2S endpoint need no admin consent (#501).
+- `a365 setup all` no longer requests Observability API permissions for AI Teammates, and `a365 setup permissions bot` and `a365 create-instance` no longer request them for any agent, because the service authorizes app-only telemetry exports by registration (#510).
 - Hardened token storage: the CLI no longer writes access tokens to a plaintext file — they live only in the OS-protected MSAL cache (DPAPI/Keychain/owner-only file). Any legacy plaintext cache is removed automatically; sign-in prompts are unchanged.
 - Bearer tokens and the agent blueprint client secret are now written only to project files inside the directory that contains `a365.config.json`, never through a symbolic link or junction; when `deploymentProjectPath` points elsewhere the write is skipped, and the warning and `setup` summary explain how to fix it (#509).
 - `a365 develop get-token` no longer includes the bearer token in its guidance output when run without `a365.config.json` (#509).

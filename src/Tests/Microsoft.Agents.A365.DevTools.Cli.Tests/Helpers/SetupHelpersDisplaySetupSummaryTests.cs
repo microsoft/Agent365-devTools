@@ -861,7 +861,7 @@ public class SetupHelpersDisplaySetupSummaryTests
         logger.AllOutput.Should().Contain("a365 setup permissions mcp",
             because: "the blueprint summary must point to the remaining MCP permissions step");
         logger.AllOutput.Should().Contain("a365 setup permissions bot",
-            because: "the blueprint summary must point to the bot/observability permissions step");
+            because: "the blueprint summary must point to the bot permissions step");
     }
 
     [Fact]

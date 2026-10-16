@@ -493,6 +493,30 @@ public class AllSubcommandTests : IDisposable
             because: "custom Observability permissions opt back into the resource, so setup must not clear the saved hand-off URL");
     }
 
+    [Fact]
+    public void ApplyConsentUrlsIfNeeded_NonAdminRun_CustomObservabilityPermission_HandsOffObservabilityConsent()
+    {
+        var ctx = BuildPermissionsContext(
+            skipObservabilityPermissions: true,
+            customPermissions:
+            [
+                new CustomResourcePermission
+                {
+                    ResourceAppId = ConfigConstants.ObservabilityApiAppId,
+                    ResourceName = "Observability API",
+                    Scopes = [ConfigConstants.ObservabilityApiOtelWriteScope],
+                }
+            ]);
+
+        SetupHelpers.ApplyConsentUrlsIfNeeded(
+            ctx, McpConstants.WorkIQToolsProdAppId, ctx.Config.AgentApplicationScopes, new[] { "McpServers.Mail.All" }, isM365: false);
+
+        ctx.Results.ConsentResourceNames.Should().Contain("Observability API",
+            because: "an opted-back-in Observability permission is stamped on the blueprint, so a non-admin run must hand its consent to an administrator");
+        ctx.Results.CombinedConsentUrl.Should().Contain(ConfigConstants.ObservabilityApiAppId,
+            because: "the summary prints the combined consent URL, which must request the opted-in Observability scope");
+    }
+
     public static TheoryData<Agent365Config, bool, string> CustomObservabilityCases() => new()
     {
         {

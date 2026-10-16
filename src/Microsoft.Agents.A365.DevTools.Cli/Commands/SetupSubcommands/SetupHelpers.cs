@@ -101,15 +101,20 @@ internal static class SetupHelpers
     /// Scope names are matched case-insensitively, consistent with custom-permission validation.
     /// </summary>
     internal static bool CustomPermissionsRequestObservability(Agent365Config config)
+        => CustomPermissionsRequestObservability(config.CustomBlueprintPermissions, config.Environment);
+
+    internal static bool CustomPermissionsRequestObservability(
+        IEnumerable<CustomResourcePermission>? customPermissions,
+        string? environment)
     {
         string? expectedAppId = null;
-        foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+        foreach (var customPerm in customPermissions ?? Enumerable.Empty<CustomResourcePermission>())
         {
             var (isValid, _) = customPerm.Validate();
             if (!isValid || !ConfigConstants.IsObservabilityApiAppId(customPerm.ResourceAppId))
                 continue;
 
-            expectedAppId ??= ConfigConstants.GetObservabilityApiAppId(config.Environment);
+            expectedAppId ??= ConfigConstants.GetObservabilityApiAppId(environment);
             if (string.Equals(customPerm.ResourceAppId, expectedAppId, StringComparison.OrdinalIgnoreCase)
                 && customPerm.Scopes.Contains(ConfigConstants.ObservabilityApiOtelWriteScope, StringComparer.OrdinalIgnoreCase))
             {
@@ -1221,8 +1226,8 @@ internal static class SetupHelpers
             {
                 nextStepLines.Add(() => logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions"));
                 nextStepLines.Add(() => logger.LogInformation(results.IsM365
-                    ? "  2. Run 'a365 setup permissions bot' to configure Bot API, Observability, and Power Platform permissions"
-                    : "  2. Run 'a365 setup permissions bot' to configure Observability and Power Platform permissions"));
+                    ? "  2. Run 'a365 setup permissions bot' to configure Bot API and Power Platform permissions"
+                    : "  2. Run 'a365 setup permissions bot' to configure Power Platform permissions"));
             }
 
             if (nextStepLines.Count > 0)
@@ -1633,7 +1638,8 @@ internal static class SetupHelpers
         if (ctx.Results.TenantWideConsentOutcome == Models.GrantOutcome.Granted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
             return;
 
-        var includeObservability = !ctx.SkipObservabilityPermissions;
+        // A custom-permission opt-back-in still needs Observability in the non-admin consent URL.
+        var includeObservability = !ctx.ObservabilityPermissionsEffectivelySkipped;
         var consentResourceNames = PopulateAdminConsentUrls(ctx.Config, mcpResourceAppId, mcpScopes, isM365, mcpScopesByAudience, mcpAudienceDisplayNames, includeObservability);
         ctx.Results.ConsentUrlsSavedToPath = ctx.GeneratedConfigPath;
         ctx.Results.ConsentResourceNames.AddRange(consentResourceNames);
@@ -1706,7 +1712,11 @@ internal static class SetupHelpers
         }
 
         // 4. Inheritable Permissions
-        logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configure for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Observability API, Power Platform API");
+        logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configure for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Power Platform API");
+        if (config is null || !CustomPermissionsRequestObservability(config))
+            logger.LogInformation(sub + "Observability API not requested (telemetry is authorized by the blueprint's registration)");
+        else
+            logger.LogInformation(sub + "Observability API requested by customBlueprintPermissions");
 
         // 5. Blueprint Permission Grants
         logger.LogInformation(DryRunRow(5, "Blueprint Permission Grants") + "admin approval required — see 'Action Required' in setup output");

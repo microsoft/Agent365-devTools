@@ -397,11 +397,9 @@ internal static class AllSubcommand
                 return;
             }
 
-            // Registered blueprint agents export telemetry app-only over S2S without OtelWrite in every auth
-            // mode, so blueprint setup never requests it; AI Teammate setup (including an AI Teammate config
-            // kept for a dry run) is unchanged.
-            var skipObservabilityPermissions = nonDwConfig is not null
-                && (aiTeammateFlag == false || nonDwConfig.IsBlueprintAgent);
+            // Agents export telemetry app-only over S2S, authorized by their registration (AI Teammates: their
+            // blueprint's), so setup never requests OtelWrite for either agent type.
+            const bool skipObservabilityPermissions = true;
 
             if (nonDwConfig is not null)
             {
@@ -593,7 +591,9 @@ internal static class AllSubcommand
                     isM365: isM365,
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
-                    nonInteractive: Console.IsInputRedirected);
+                    nonInteractive: Console.IsInputRedirected,
+                    skipObservabilityPermissions: skipObservabilityPermissions);
+                setupResults.ObservabilityPermissionsSkipped = ctx.ObservabilityPermissionsEffectivelySkipped;
 
                 // Step 1: Infrastructure (optional, DW only)
                 await ExecuteInfrastructureStepAsync(ctx);
@@ -602,6 +602,8 @@ internal static class AllSubcommand
                 await ExecuteBlueprintStepAsync(ctx);
 
                 // Step 3: Configure all permissions in a batch.
+                if (ctx.ObservabilityPermissionsEffectivelySkipped)
+                    logger.LogInformation("Observability API permissions not requested: AI Teammates export telemetry with an app-only token authorized by the blueprint's registration.");
                 var (specs, mcpResourceAppId, mcpScopes, mcpScopesByAudience, mcpServerNamesByAudience) = await BuildPermissionSpecsAsync(ctx);
 
                 await ExecuteBatchPermissionsStepAsync(

@@ -198,17 +198,30 @@ public static class ConfigConstants
     /// Returns the Observability resource Application ID for the selected cloud.
     /// </summary>
     public static string GetObservabilityApiAppId(string? environment)
-        => NormalizeEnvironmentKey(environment) switch
+    {
+        EnsureUnambiguousEnvironment(environment);
+        return NormalizeEnvironmentKey(environment) switch
         {
             "GCC" or "GCC_MODERATE" => GccObservabilityApiAppId,
             "GCC_HIGH" => GccHighObservabilityApiAppId,
             "DOD" => DodObservabilityApiAppId,
-            "AZUREUSGOVERNMENT" => throw new ArgumentException(
-                "AzureUSGovernment does not distinguish GCC Moderate, GCC High, and DoD. " +
-                "Set the environment to gcc, gcc-high, or dod.",
-                nameof(environment)),
             _ => ObservabilityApiAppId,
         };
+    }
+
+    /// <summary>
+    /// Rejects AzureUSGovernment, which does not say which US government cloud's resources to use.
+    /// </summary>
+    public static void EnsureUnambiguousEnvironment(string? environment)
+    {
+        if (NormalizeEnvironmentKey(environment) == "AZUREUSGOVERNMENT")
+        {
+            throw new ArgumentException(
+                "AzureUSGovernment does not distinguish GCC Moderate, GCC High, and DoD. " +
+                "Set the environment to gcc, gcc-high, or dod.",
+                nameof(environment));
+        }
+    }
 
     /// <summary>
     /// Returns the Observability resource identifier URI for the selected cloud.

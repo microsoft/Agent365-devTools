@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
+using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Services.Internal;
 using Microsoft.Extensions.Logging;
@@ -152,10 +154,9 @@ public sealed class A365CreateInstanceRunner
         // token acquisition target the correct national cloud (commercial by default).
         var configuredGraphBaseUrl = GetConfig("graphBaseUrl");
         var configuredAuthorityHost = GetConfig("authorityHost");
-        string observabilityResourceAppId;
         try
         {
-            observabilityResourceAppId = ConfigConstants.GetObservabilityApiAppId(environment);
+            ConfigConstants.EnsureUnambiguousEnvironment(environment);
             _graphService.GraphBaseUrl = ConfigConstants.GetGraphBaseUrl(
                 environment,
                 string.IsNullOrWhiteSpace(configuredGraphBaseUrl) ? null : configuredGraphBaseUrl);
@@ -353,13 +354,6 @@ public sealed class A365CreateInstanceRunner
                             "McpServers.Mail.All",
                             "McpServersMetadata.Read.All"
                         }),
-                    [observabilityResourceAppId] = (
-                        "Observability API",
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            "user_impersonation",
-                            ConfigConstants.ObservabilityApiOtelWriteScope
-                        }),
                     [ConfigConstants.MessagingBotApiAppId] = (
                         "Messaging Bot API",
                         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -375,7 +369,10 @@ public sealed class A365CreateInstanceRunner
                         }),
                 };
 
-                // Merge additional scopes from resourceConsents in the generated config
+                // Merge additional scopes from resourceConsents in the generated config.
+                // Observability entries retained from earlier setups are skipped unless
+                // customBlueprintPermissions opts back in (#510).
+                var includeObservability = CustomPermissionsRequestObservability(config, environment);
                 if (instance.TryGetPropertyValue("resourceConsents", out var consentsNode) &&
                     consentsNode is JsonArray consentsArray)
                 {
@@ -386,6 +383,14 @@ public sealed class A365CreateInstanceRunner
 
                         var resourceAppId = obj["resourceAppId"]?.GetValue<string>();
                         if (string.IsNullOrWhiteSpace(resourceAppId)) continue;
+
+                        if (!includeObservability && ConfigConstants.IsObservabilityApiAppId(resourceAppId))
+                        {
+                            _logger.LogInformation(
+                                "Skipping saved Observability API consent {ResourceAppId}; add it to customBlueprintPermissions to grant it.",
+                                resourceAppId);
+                            continue;
+                        }
 
                         var resourceName = obj["resourceName"]?.GetValue<string>() ?? "(unknown)";
 
@@ -1029,6 +1034,26 @@ public sealed class A365CreateInstanceRunner
             instance.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
             cancellationToken);
         _logger.LogInformation("Saved instance state to {Path}", path);
+    }
+
+    // Matches ConfigService, which reads config keys case-insensitively.
+    private static readonly JsonSerializerOptions CaseInsensitiveJsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    private bool CustomPermissionsRequestObservability(JsonObject config, string environment)
+    {
+        if (!config.TryGetPropertyValue("customBlueprintPermissions", out var node) || node is not JsonArray)
+            return false;
+
+        try
+        {
+            var customPermissions = node.Deserialize<List<CustomResourcePermission>>(CaseInsensitiveJsonOptions);
+            return SetupHelpers.CustomPermissionsRequestObservability(customPermissions, environment);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Could not parse customBlueprintPermissions; Observability API permissions will not be granted.");
+            return false;
+        }
     }
 
     /// <summary>

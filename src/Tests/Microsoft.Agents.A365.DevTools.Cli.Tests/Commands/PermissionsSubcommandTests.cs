@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
 using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -773,9 +774,9 @@ public class PermissionsSubcommandTests : IDisposable
     #endregion
 
     #region ConfigureBotPermissionsAsync — Issue 402 Regression Tests
-    // Regression tests for the localResults fix: S2S failure was invisible when setupResults=null.
+    // Regression tests for the localResults fix: failures must be visible even when setupResults=null.
 
-    private Agent365Config ArrangeAdminPath(bool s2sSucceeds)
+    private Agent365Config ArrangeAdminPath()
     {
         var config = new Agent365Config
         {
@@ -803,11 +804,6 @@ public class PermissionsSubcommandTests : IDisposable
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<(bool ok, bool alreadyExists, string? error)>((true, false, null)));
 
-        _mockBlueprintService.GrantAppRoleAssignmentAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Models.AppRoleGrantResult(AllSucceeded: s2sSucceeds, AllAlreadyAssigned: false)));
-
         _mockGraphApiService.GraphGetAsync(
             Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
@@ -830,11 +826,15 @@ public class PermissionsSubcommandTests : IDisposable
         return config;
     }
 
+    /// <summary>
+    /// Telemetry is authorized by registration, so the bot step requests no Observability API permissions. That
+    /// removes the only app role it requested, so an app role grant that would fail is never attempted.
+    /// </summary>
     [Fact]
-    public async Task ConfigureBotPermissionsAsync_AdminPath_WhenS2SFailsAndNoExternalSetupResults_ReturnsFalse()
+    public async Task ConfigureBotPermissionsAsync_AdminPath_RequestsNoObservabilityApiOrAppRoles()
     {
-        // Arrange — admin user, OAuth2 grants succeed, S2S grant fails, no external SetupResults.
-        var config = ArrangeAdminPath(s2sSucceeds: false);
+        // Arrange — admin user, OAuth2 grants succeed.
+        var config = ArrangeAdminPath();
 
         // Act — no external SetupResults, mirrors how the CLI handler calls this method.
         var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
@@ -849,10 +849,18 @@ public class PermissionsSubcommandTests : IDisposable
             setupResults: null);
 
         // Assert
-        result.Should().BeFalse(
-            because: "the method must create a local SetupResults so S2S failure is captured " +
-                     "even when called without an external setupResults (the CLI handler path)");
-        _mockLogger.Received().Log(
+        result.Should().BeTrue(
+            because: "with no app role requested there is no S2S grant left that could fail the step");
+        await _mockBlueprintService.Received().SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), PowerPlatformConstants.PowerPlatformApiResourceAppId,
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+        await _mockBlueprintService.DidNotReceive().SetInheritablePermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), ConfigConstants.ObservabilityApiAppId,
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+        await _mockBlueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+        _mockLogger.DidNotReceive().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("S2S app role assignment failed")),
@@ -941,45 +949,10 @@ public class PermissionsSubcommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ConfigureBotPermissionsAsync_AdminPath_WhenS2SFails_EmitsS2SWarningAndSuppressesSuccessLog()
-    {
-        // Arrange — admin user, OAuth2 grants succeed, S2S grant fails.
-        var config = ArrangeAdminPath(s2sSucceeds: false);
-
-        // Act
-        _ = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
-            "config.json",
-            _mockLogger,
-            _mockConfigService,
-            _mockExecutor,
-            config,
-            _mockGraphApiService,
-            _mockBlueprintService,
-            iSetupAll: false,
-            setupResults: null);
-
-        // Assert — S2S failure warning must be logged.
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("S2S app role assignment failed")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
-
-        // Assert — success message must not be logged when S2S failed.
-        _mockLogger.DidNotReceive().Log(
-            LogLevel.Information,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("configured successfully")),
-            Arg.Any<Exception?>(),
-            Arg.Any<Func<object, Exception?, string>>());
-    }
-
-    [Fact]
     public async Task ConfigureBotPermissionsAsync_AdminPath_WhenAllSucceeds_ReturnsTrueAndLogsSuccess()
     {
-        // Arrange — admin user, all OAuth2 grants succeed, S2S grant succeeds.
-        var config = ArrangeAdminPath(s2sSucceeds: true);
+        // Arrange — admin user, all OAuth2 grants and inheritable permissions succeed.
+        var config = ArrangeAdminPath();
 
         // Act
         var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
@@ -994,7 +967,7 @@ public class PermissionsSubcommandTests : IDisposable
             setupResults: null);
 
         // Assert
-        result.Should().BeTrue(because: "all grants and S2S succeed — method must return true");
+        result.Should().BeTrue(because: "every permission the bot step requests was granted, so the method must return true");
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
@@ -1004,10 +977,10 @@ public class PermissionsSubcommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ConfigureBotPermissionsAsync_AdminPath_WhenS2SFailsWithExternalSetupResults_PopulatesS2SFlagAndReturnsFalse()
+    public async Task ConfigureBotPermissionsAsync_WithExternalSetupResults_RecordsNoS2SAttempt()
     {
-        // Arrange — S2S fails, non-null SetupResults passed in (AllSubcommand path).
-        var config = ArrangeAdminPath(s2sSucceeds: false);
+        // Arrange — non-null SetupResults passed in (AllSubcommand path).
+        var config = ArrangeAdminPath();
         var externalResults = new SetupResults();
 
         // Act
@@ -1023,10 +996,10 @@ public class PermissionsSubcommandTests : IDisposable
             setupResults: externalResults);
 
         // Assert
-        result.Should().BeFalse(
-            because: "S2S failure must propagate via the external SetupResults reference");
-        externalResults.BlueprintS2SOutcome.Should().NotBe(Cli.Models.GrantOutcome.Granted,
-            because: "the orchestrator must record BlueprintS2SOutcome as not-Granted (Failed or NotApplicable) on the caller's SetupResults when S2S grants did not succeed");
+        result.Should().BeTrue(
+            because: "the bot step requests no app role, so it cannot fail on an S2S grant");
+        externalResults.BlueprintS2SOutcome.Should().Be(Cli.Models.GrantOutcome.NotApplicable,
+            because: "the caller's summary must not report an S2S grant that this step never requested");
     }
 
     #endregion
