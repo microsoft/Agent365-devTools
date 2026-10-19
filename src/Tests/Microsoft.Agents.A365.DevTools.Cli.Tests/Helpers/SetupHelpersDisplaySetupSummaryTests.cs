@@ -1196,15 +1196,19 @@ public class SetupHelpersDisplaySetupSummaryTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public void DisplaySetupSummary_DwAdmin_BothGrantsSucceeded_ReportsBothPermissionTypes(
-        bool appRolesAlreadyAssigned, bool tenantConsentAlreadyExisted)
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public void DisplaySetupSummary_BothGrantsSucceeded_ReportsBothPermissionTypes(
+        bool isBlueprintBothMode, bool appRolesAlreadyAssigned, bool tenantConsentAlreadyExisted)
     {
         var logger = new CapturingLogger();
-        var results = BuildS2SVerifiedResults();
+        var results = BuildS2SVerifiedResults(isBlueprintBothMode);
         results.BlueprintS2SAlreadyAssigned = appRolesAlreadyAssigned;
         results.TenantWideConsentAlreadyExisted = tenantConsentAlreadyExisted;
 
@@ -1213,10 +1217,31 @@ public class SetupHelpersDisplaySetupSummaryTests
         var grantsRow = System.Array.Find(logger.AllOutput.Split('\n'), line => line.Contains("Blueprint Permission Grants"));
         grantsRow.Should().NotBeNull();
         grantsRow!.Should().Contain("granted  S2S app roles + tenant-wide delegated",
-            because: "AI Teammates always request both permission types, so the summary must report both successful grants");
+            because: "AI Teammates and blueprint both-mode agents require tenant-wide delegated consent alongside application roles");
         grantsRow!.Contains("already granted", StringComparison.Ordinal).Should().Be(
             appRolesAlreadyAssigned && tenantConsentAlreadyExisted,
-            because: "an AI Teammate grant is already in place only when both its application roles and tenant-wide delegated consent predate this run");
+            because: "combined grants are already in place only when both application roles and tenant-wide delegated consent predate this run");
+    }
+
+    [Theory]
+    [InlineData(Cli.Models.GrantOutcome.Unverified, "unverified")]
+    [InlineData(Cli.Models.GrantOutcome.Failed, "PENDING")]
+    public void DisplaySetupSummary_BlueprintBothMode_S2SGranted_ReportsUnfinishedTenantConsent(
+        Cli.Models.GrantOutcome tenantConsentOutcome, string expectedStatus)
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SVerifiedResults(isBlueprintBothMode: true);
+        results.TenantWideConsentOutcome = tenantConsentOutcome;
+        results.BlueprintS2SAlreadyAssigned = true;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        var grantsRow = System.Array.Find(logger.AllOutput.Split('\n'), line => line.Contains("Blueprint Permission Grants"));
+        grantsRow.Should().NotBeNull();
+        grantsRow!.Should().Contain(expectedStatus,
+            because: "blueprint both mode relies on tenant-wide delegated consent, not a per-principal grant recorded only by test fixtures");
+        grantsRow.Should().NotContain("granted",
+            because: "a successful or pre-existing application role must not hide unverified or failed delegated consent");
     }
 
     /// <summary>
@@ -1446,16 +1471,13 @@ public class SetupHelpersDisplaySetupSummaryTests
     };
 
     /// <summary>
-    /// Builds a DW-flow results object on the S2S-granted branch of the Blueprint Permission
-    /// Grants row. DW because the summary's <c>s2sOk</c> gate maps to <c>blueprintS2sGranted</c>
-    /// for DW and <c>agentIdS2sGranted</c> for non-DW — using DW keeps the flag's name aligned
-    /// with the field that drives <c>s2sOk</c> for this test, isolating the
-    /// <see cref="SetupResults.BlueprintS2SAlreadyAssigned"/> toggle from non-DW row mechanics.
+    /// Builds a flow with verified application roles and tenant-wide consent, without a per-principal delegated grant.
     /// </summary>
-    private static SetupResults BuildS2SVerifiedResults() => new()
+    private static SetupResults BuildS2SVerifiedResults(bool isBlueprintBothMode = false) => new()
     {
-        // DW flow — no EffectiveAuthMode, no agent identity row.
-        IsNonDwBlueprintFlow = false,
+        IsNonDwBlueprintFlow = isBlueprintBothMode,
+        EffectiveAuthMode = isBlueprintBothMode ? Cli.Models.AuthMode.Both : null,
+        AgentIdentityS2SOutcome = isBlueprintBothMode ? Cli.Models.GrantOutcome.Granted : Cli.Models.GrantOutcome.NotApplicable,
         BlueprintCreated = true,
         BlueprintId = BlueprintId,
         TenantId = TenantId,

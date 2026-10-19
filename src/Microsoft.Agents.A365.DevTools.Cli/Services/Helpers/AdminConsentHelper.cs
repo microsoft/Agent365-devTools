@@ -78,6 +78,15 @@ public static class AdminConsentHelper
 
     private static readonly AsyncLocal<bool> _bypassConsentChecks = new();
 
+    /// <summary>Overrides polling so fallback tests need not wait for the consent timeout.</summary>
+    internal static bool? ConsentPollResultForTests
+    {
+        get => _consentPollResult.Value;
+        set => _consentPollResult.Value = value;
+    }
+
+    private static readonly AsyncLocal<bool?> _consentPollResult = new();
+
     /// <summary>
     /// Polls Azure AD/Graph (via az rest) until every requested resource grant is present.
     /// Mirrors the behavior previously implemented in A365SetupRunner.PollAdminConsentAsync.
@@ -93,6 +102,8 @@ public static class AdminConsentHelper
         string? graphBaseUrl = null,
         IReadOnlyCollection<AdminConsentRequirement>? requiredGrants = null)
     {
+        if (ConsentPollResultForTests is bool pollResult)
+            return pollResult;
         if (BypassConsentChecksForTests)
             return true;
 

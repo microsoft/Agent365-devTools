@@ -666,6 +666,7 @@ internal static class SetupHelpers
         // Delegated success: either tenant-wide consent (DW or non-DW blueprint inheritable scopes)
         // or principal-scoped grants on the agent identity (non-DW path).
         var delegatedOk = tenantConsentGranted || tenantConsentUnverified || agentIdDelegatedGranted;
+        var reportTenantWideDelegatedConsent = !isNonDw || (isBothMode && !agentIdDelegatedGranted);
 
         var permissionGrantsCompleted = isS2SFlow
             ? s2sOk && (!isBothMode || delegatedOk)
@@ -782,38 +783,21 @@ internal static class SetupHelpers
             logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "skipped (--agent-registration-only)");
         else if (noS2SAppRolesToGrant && isS2sOnlyMode)
             logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "not required  (no S2S app roles to grant)");
-        else if (isS2SFlow && s2sOk && (isNonDw || tenantConsentGranted))
+        else if (isS2SFlow && s2sOk && (!reportTenantWideDelegatedConsent || tenantConsentGranted))
         {
-            if (isBothMode && !delegatedOk)
-                logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") +
-                    (pendingDelegatedAction
-                        ? "partial (S2S granted; delegated — see Action Required)"
-                        : "partial (S2S granted; delegated — see warnings)"));
-            else
-            {
-                // "already granted" applies when this run made no changes — every S2S role was
-                // already in place. For "both" mode, also require that the per-principal OBO grant
-                // on the agent identity SP pre-existed; otherwise the row would say "already granted"
-                // when the delegated half of the bothMode result was actually written in this run.
-                // Note: AgentIdentityDelegatedAlreadyExisted has no writer in production today (the
-                // non-DW OBO grant path is satisfied by blueprint inheritance + tenant-wide consent,
-                // not a per-principal POST). The "(!isBothMode || !agentIdDelegatedGranted || ...)"
-                // shape stays defensive for when that design changes — the previous code used
-                // TenantWideConsentAlreadyExisted as a proxy, which was wrong because tenant-wide
-                // consent and per-principal OBO are different scopes.
-                var s2sVerb = results.BlueprintS2SAlreadyAssigned
-                              && (!isBothMode || !agentIdDelegatedGranted || results.AgentIdentityDelegatedAlreadyExisted)
-                              && (isNonDw || results.TenantWideConsentAlreadyExisted)
-                    ? "already granted"
-                    : "granted";
-                var oboAlso = isBothMode && agentIdDelegatedGranted;
-                var label = !isNonDw
-                    ? $"{s2sVerb}  S2S app roles + tenant-wide delegated"
-                    : oboAlso
-                        ? $"{s2sVerb}  S2S app roles + developer-scoped delegated on agent identity"
-                        : $"{s2sVerb}  S2S app roles";
-                logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + label);
-            }
+            var s2sVerb = results.BlueprintS2SAlreadyAssigned
+                          && (reportTenantWideDelegatedConsent
+                              ? results.TenantWideConsentAlreadyExisted
+                              : !isBothMode || !agentIdDelegatedGranted || results.AgentIdentityDelegatedAlreadyExisted)
+                ? "already granted"
+                : "granted";
+            var oboAlso = isBothMode && agentIdDelegatedGranted;
+            var label = reportTenantWideDelegatedConsent
+                ? $"{s2sVerb}  S2S app roles + tenant-wide delegated"
+                : oboAlso
+                    ? $"{s2sVerb}  S2S app roles + developer-scoped delegated on agent identity"
+                    : $"{s2sVerb}  S2S app roles";
+            logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + label);
         }
         else if (agentIdDelegatedGranted)
             logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "granted  developer-scoped delegated on agent identity");

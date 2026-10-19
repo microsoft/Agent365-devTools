@@ -946,12 +946,15 @@ internal static class BatchPermissionsOrchestrator
                     logger.LogInformation("Delegated admin consent granted.");
                     if (setupResults is not null)
                     {
-                        // Mirror the post-browser-success bookkeeping: a successful run
-                        // is just as good as a Verified browser poll for the purpose of "did we
-                        // record consent." The caller's persistence gate is (granted && url==null),
-                        // and returning verified=true below produces exactly that.
                         setupResults.TenantWideConsentAlreadyExisted = false;
+                        var consentedResourceAppIds = originalSpecs
+                            .Where(spec => spec.Scopes is { Length: > 0 })
+                            .Select(spec => spec.ResourceAppId)
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        setupResults.MissingSpActions.RemoveAll(action => consentedResourceAppIds.Contains(action.ResourceAppId));
                     }
+                    // All-resource fallback success supersedes the earlier SP-resolution snapshot.
+                    hasUnresolvedDelegatedSpecs = false;
                     consentGranted = true;
                     consentVerified = true;
                 }

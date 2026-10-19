@@ -621,6 +621,117 @@ public class BatchPermissionsOrchestratorTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ConfigureAllPermissions_WhenMissingSpResolvesDuringConsentFallback_PersistsOnlyCompleteConsent(bool fallbackSucceeds)
+    {
+        const string graphSpId = "00000000-0000-0000-0000-000000000006";
+        const string applicationOnlyAppId = "00000000-0000-0000-0000-000000000007";
+        var previousConsentBypass = AdminConsentHelper.BypassConsentChecksForTests;
+        var previousPollResult = AdminConsentHelper.ConsentPollResultForTests;
+        var previousSpBypass = BatchPermissionsOrchestrator.BypassSpProvisioningForTests;
+        AdminConsentHelper.BypassConsentChecksForTests = false;
+        AdminConsentHelper.ConsentPollResultForTests = false;
+        BatchPermissionsOrchestrator.BypassSpProvisioningForTests = false;
+        try
+        {
+            ArrangeS2SPhase1AndAdminCheck();
+            _graph.EnsureServicePrincipalForAppIdAsync(
+                    Arg.Any<string>(), AuthenticationConstants.MicrosoftGraphResourceAppId,
+                    Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+                .Returns(Task.FromResult<string?>(graphSpId));
+            _graph.LookupServicePrincipalByAppIdAsync(
+                    Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
+                .Returns(Task.FromResult<string?>(null));
+            _graph.GetAvailableScopeNamesAsync(Arg.Any<string>(), graphSpId, Arg.Any<CancellationToken>())
+                .Returns(new HashSet<string>(["Mail.Read"], StringComparer.OrdinalIgnoreCase));
+
+            var grants = new List<(string? ResourceId, string? Scope)>();
+            _executor.ExecuteAsync(
+                    "az", Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                .Returns(call =>
+                {
+                    var args = call.ArgAt<string>(1);
+                    if (args.Contains("--method POST") && args.Contains("/oauth2PermissionGrants"))
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(args, "--body @\"([^\"]+)\"");
+                        using var body = JsonDocument.Parse(File.ReadAllText(match.Groups[1].Value));
+                        var resourceId = body.RootElement.GetProperty("resourceId").GetString();
+                        grants.Add((resourceId, body.RootElement.GetProperty("scope").GetString()));
+                        return Task.FromResult(new CommandResult
+                        {
+                            ExitCode = resourceId == S2SResourceSpId && !fallbackSucceeds ? 1 : 0,
+                        });
+                    }
+                    if (args.Contains("/oauth2PermissionGrants"))
+                        return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[]}" });
+                    if (args.Contains($"/servicePrincipals?$filter=appId eq '{AuthenticationConstants.MicrosoftGraphResourceAppId}'"))
+                        return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = $"{{\"value\":[{{\"id\":\"{graphSpId}\"}}]}}" });
+                    if (args.Contains($"/servicePrincipals?$filter=appId eq '{ConfigConstants.DefenderApiAppId}'"))
+                        return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = $"{{\"value\":[{{\"id\":\"{S2SResourceSpId}\"}}]}}" });
+                    throw new InvalidOperationException($"Unexpected az arguments: {args}");
+                });
+
+            var confirmationProvider = Substitute.For<IConfirmationProvider>();
+            confirmationProvider.ConfirmAsync(Arg.Any<string>())
+                .Returns(call => Task.FromResult(call.ArgAt<string>(0).Contains("programmatically", StringComparison.Ordinal)));
+            var config = new Agent365Config { TenantId = S2STenantId, AgentBlueprintId = S2SBlueprintAppId };
+            var results = new SetupResults();
+            var specs = new[]
+            {
+                new ResourcePermissionSpec(AuthenticationConstants.MicrosoftGraphResourceAppId, "Microsoft Graph", ["Mail.Read"], false),
+                new ResourcePermissionSpec(
+                    ConfigConstants.DefenderApiAppId, "Defender API", [ConfigConstants.DefenderApiRealtimeProtectionScope],
+                    false, AppRoleScopes: [ConfigConstants.DefenderApiRealtimeProtectionScope]),
+                new ResourcePermissionSpec(applicationOnlyAppId, "Contoso API", [], false, AppRoleScopes: ["Contoso.Write"]),
+            };
+
+            var result = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
+                _graph, _blueprintService, config, S2SBlueprintAppId, S2STenantId, specs, _logger, results,
+                ct: default, knownBlueprintSpObjectId: S2SBlueprintSpObjectId,
+                confirmationProvider: confirmationProvider, commandExecutor: _executor, skipSpProvisioning: true);
+
+            grants.Should().Contain(grant => grant.ResourceId == graphSpId && grant.Scope == "Mail.Read",
+                because: "the fallback must attempt every delegated resource rather than only the newly resolved one");
+            grants.Should().Contain(grant => grant.ResourceId == S2SResourceSpId && grant.Scope == ConfigConstants.DefenderApiRealtimeProtectionScope,
+                because: "Defender must be resolved and its delegated grant attempted after the earlier recovery phase found no service principal");
+            result.adminConsentGranted.Should().Be(fallbackSucceeds,
+                because: "only a successful all-resource fallback can replace the earlier unresolved-resource failure");
+            if (fallbackSucceeds)
+            {
+                result.adminConsentUrl.Should().BeNull(
+                    because: "verified fallback grants must permit the caller to persist consent without a stale handoff URL");
+                config.ResourceConsents.Should().Contain(
+                    consent => consent.ResourceAppId == ConfigConstants.DefenderApiAppId && consent.ConsentGranted,
+                    because: "the successful fallback directly verified Defender consent even though the initial SP map was incomplete");
+                results.MissingSpActions.Should().NotContain(action => action.ResourceAppId == ConfigConstants.DefenderApiAppId,
+                    because: "a resource resolved and consented by the fallback no longer needs provisioning or delegated-consent instructions");
+            }
+            else
+            {
+                result.adminConsentUrl.Should().NotBeNull(
+                    because: "partial fallback success must retain the consent handoff");
+                config.ResourceConsents.Should().BeEmpty(
+                    because: "partial fallback success must not persist aggregate delegated consent");
+                results.MissingSpActions.Should().Contain(action => action.ResourceAppId == ConfigConstants.DefenderApiAppId,
+                    because: "a failed fallback must preserve the unresolved resource's recovery instructions");
+            }
+            results.MissingSpActions.Should().Contain(action => action.ResourceAppId == applicationOnlyAppId,
+                because: "delegated consent success cannot resolve unrelated application-only service principal recovery");
+            results.BlueprintS2SOutcome.Should().Be(GrantOutcome.Failed,
+                because: "delegated consent does not grant application roles that the operator declined");
+            results.PendingBlueprintAppRoleSpecs.Should().BeEquivalentTo(specs.Skip(1),
+                because: "pending Defender and application-only roles must remain actionable after either fallback outcome");
+        }
+        finally
+        {
+            AdminConsentHelper.BypassConsentChecksForTests = previousConsentBypass;
+            AdminConsentHelper.ConsentPollResultForTests = previousPollResult;
+            BatchPermissionsOrchestrator.BypassSpProvisioningForTests = previousSpBypass;
+        }
+    }
+
     /// <summary>
     /// When the programmatic Graph API path for S2S fails (e.g. token lacks
     /// AppRoleAssignment.ReadWrite.All even for a GA) and the az rest fallback completes
