@@ -337,8 +337,10 @@ public class BatchPermissionsOrchestratorTests : IDisposable
             AppRoleScopes: new[] { ConfigConstants.ObservabilityApiOtelWriteScope })
     ];
 
-    [Fact]
-    public async Task ConfigureAllPermissions_WhenApplicationOnlySpRecovered_GrantsRoleInSameRun()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConfigureAllPermissions_WhenApplicationOnlySpRecovered_GrantsRoleInSameRun(bool useAzFallback)
     {
         var previousBypass = BatchPermissionsOrchestrator.BypassSpProvisioningForTests;
         BatchPermissionsOrchestrator.BypassSpProvisioningForTests = false;
@@ -394,14 +396,66 @@ public class BatchPermissionsOrchestratorTests : IDisposable
                     Arg.Any<CancellationToken>(),
                     Arg.Any<IEnumerable<string>?>())
                 .Returns(Task.FromResult((exists: true, scopesAllAllowed: true, rolesAllAllowed: true, error: (string?)null)));
-            _blueprintService.GrantAppRoleAssignmentAsync(
-                    Arg.Any<string>(),
-                    S2SBlueprintSpObjectId,
-                    ConfigConstants.DefenderApiAppId,
-                    Arg.Is<string[]>(roles => roles.SequenceEqual(new[] { ConfigConstants.DefenderApiRealtimeProtectionScope })),
-                    Arg.Any<string[]>(),
-                    Arg.Any<CancellationToken>())
-                .Returns(Task.FromResult(new AppRoleGrantResult(AllSucceeded: true, AllAlreadyAssigned: false)));
+            using var appRolesDocument = JsonDocument.Parse(
+                $"{{\"appRoles\":[{{\"id\":\"{S2SAppRoleId}\",\"value\":\"{ConfigConstants.DefenderApiRealtimeProtectionScope}\"}}]}}");
+            using var assignmentsDocument = JsonDocument.Parse("{\"value\":[]}");
+            _graph.GraphGetAsync(
+                    S2STenantId,
+                    $"/v1.0/servicePrincipals/{S2SResourceSpId}?$select=appRoles",
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>())
+                .Returns(Task.FromResult<JsonDocument?>(appRolesDocument));
+            _graph.GraphGetAsync(
+                    S2STenantId,
+                    $"/v1.0/servicePrincipals/{S2SBlueprintSpObjectId}/appRoleAssignments",
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>())
+                .Returns(Task.FromResult<JsonDocument?>(assignmentsDocument));
+            string? assignmentBody = null;
+            _graph.GraphPostWithResponseAsync(
+                    S2STenantId,
+                    $"/v1.0/servicePrincipals/{S2SBlueprintSpObjectId}/appRoleAssignments",
+                    Arg.Any<object>(),
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>(),
+                    Arg.Any<bool>(),
+                    Arg.Any<bool>())
+                .Returns(call =>
+                {
+                    assignmentBody = JsonSerializer.Serialize(call.ArgAt<object>(2));
+                    return Task.FromResult(new GraphApiService.GraphResponse
+                    {
+                        IsSuccess = !useAzFallback,
+                        StatusCode = useAzFallback ? 403 : 201,
+                    });
+                });
+            if (useAzFallback)
+            {
+                _executor.ExecuteAsync(
+                        "az",
+                        Arg.Is<string>(args => args.Contains("--method GET") && args.Contains($"/servicePrincipals/{S2SBlueprintSpObjectId}/appRoleAssignments")),
+                        Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                    .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[]}" }));
+                _executor.ExecuteAsync(
+                        "az",
+                        Arg.Is<string>(args => args.Contains($"/servicePrincipals/{S2SResourceSpId}?$select=id,appRoles")),
+                        Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                    .Returns(Task.FromResult(new CommandResult
+                    {
+                        ExitCode = 0,
+                        StandardOutput = $"{{\"id\":\"{S2SResourceSpId}\",\"appRoles\":[{{\"id\":\"{S2SAppRoleId}\",\"value\":\"{ConfigConstants.DefenderApiRealtimeProtectionScope}\"}}]}}",
+                    }));
+                _executor.ExecuteAsync(
+                        "az",
+                        Arg.Is<string>(args => args.Contains("--method POST") && args.Contains("/appRoleAssignments")),
+                        Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                    .Returns(call =>
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(call.ArgAt<string>(1), "--body @\"([^\"]+)\"");
+                        assignmentBody = File.ReadAllText(match.Groups[1].Value);
+                        return Task.FromResult(new CommandResult { ExitCode = 0 });
+                    });
+            }
 
             var confirmationProvider = Substitute.For<IConfirmationProvider>();
             confirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(true));
@@ -430,17 +484,29 @@ public class BatchPermissionsOrchestratorTests : IDisposable
                 confirmationProvider: confirmationProvider,
                 commandExecutor: _executor);
 
-            await _blueprintService.Received(1).GrantAppRoleAssignmentAsync(
+            await _graph.Received(1).GraphPostWithResponseAsync(
                 S2STenantId,
-                S2SBlueprintSpObjectId,
-                ConfigConstants.DefenderApiAppId,
-                Arg.Is<string[]>(roles => roles.SequenceEqual(new[] { ConfigConstants.DefenderApiRealtimeProtectionScope })),
-                Arg.Any<string[]>(),
-                Arg.Any<CancellationToken>());
+                $"/v1.0/servicePrincipals/{S2SBlueprintSpObjectId}/appRoleAssignments",
+                Arg.Any<object>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<IEnumerable<string>?>(),
+                Arg.Any<bool>(),
+                Arg.Any<bool>());
+            assignmentBody.Should().NotBeNull(
+                because: "same-run recovery must perform the real app-role assignment, not just report a mocked grant result");
+            using var assignment = JsonDocument.Parse(assignmentBody!);
+            assignment.RootElement.GetProperty("resourceId").GetString().Should().Be(S2SResourceSpId,
+                because: "the assignment must use the authoritative object ID returned by provisioning even while app-ID lookups remain empty");
+            assignment.RootElement.GetProperty("principalId").GetString().Should().Be(S2SBlueprintSpObjectId,
+                because: "the recovered resource role must be assigned to the blueprint service principal");
+            assignment.RootElement.GetProperty("appRoleId").GetString().Should().Be(S2SAppRoleId,
+                because: "the assignment must grant the requested Defender role rather than another published role");
             setupResults.BlueprintS2SOutcome.Should().Be(GrantOutcome.Granted,
                 because: "successful missing-SP recovery must let the same setup run complete the Defender app-role assignment");
             setupResults.MissingSpActions.Should().BeEmpty(
                 because: "successful provisioning and assignment leave no manual recovery action");
+            setupResults.PendingBlueprintAppRoleSpecs.Should().BeEmpty(
+                because: "a successful primary or fallback assignment must clear the pending application-role handoff");
         }
         finally
         {

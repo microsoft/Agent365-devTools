@@ -165,6 +165,19 @@ public class SetupCommandTests
     }
 
     [Fact]
+    public async Task SetupHelp_BotPermissions_MentionsDefender()
+    {
+        var parser = new CommandLineBuilder(BuildSetupCommand()).UseDefaults().Build();
+        var console = new TestConsole();
+
+        var result = await parser.InvokeAsync("--help", console);
+
+        result.Should().Be(0);
+        console.Out.ToString().Should().Contain("Bot API + Defender + Power Platform",
+            because: "the top-level setup help must disclose Defender alongside the other permissions configured by permissions bot");
+    }
+
+    [Fact]
     public void SetupCommand_PermissionsSubcommand_HasMcpAndBotSubcommands()
     {
         // Arrange & Act

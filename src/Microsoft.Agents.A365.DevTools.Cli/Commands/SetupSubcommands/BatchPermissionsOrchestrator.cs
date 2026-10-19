@@ -257,7 +257,7 @@ internal static class BatchPermissionsOrchestrator
                         }
                         else
                         {
-                            await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result!.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
+                            await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result!.BlueprintSpObjectId, phase1Result.ResourceSpObjectIds, specs, s2sScopes, logger, setupResults, ct);
 
                             // When the programmatic Graph API path fails (e.g. CLI token lacks
                             // AppRoleAssignment.ReadWrite.All even for a GA), fall back to issuing the
@@ -271,7 +271,8 @@ internal static class BatchPermissionsOrchestrator
                             {
                                 logger.LogDebug("S2S app role assignments could not be completed via the Graph API; falling back to az rest.");
                                 var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
-                                    commandExecutor, phase1Result.BlueprintSpObjectId, specs, logger, ct, graph.GraphBaseUrl);
+                                    commandExecutor, phase1Result.BlueprintSpObjectId, specs, logger, ct, graph.GraphBaseUrl,
+                                    phase1Result.ResourceSpObjectIds);
                                 if (attempted && succeeded)
                                 {
                                     logger.LogInformation("Application permissions granted.");
@@ -529,6 +530,7 @@ internal static class BatchPermissionsOrchestrator
         AgentBlueprintService blueprintService,
         string tenantId,
         string blueprintSpObjectId,
+        IReadOnlyDictionary<string, string> resourceSpObjectIds,
         IEnumerable<ResourcePermissionSpec> specs,
         string[] s2sScopes,
         ILogger logger,
@@ -556,13 +558,15 @@ internal static class BatchPermissionsOrchestrator
                 "App role assignment: blueprint -> {ResourceName} [{AppRoles}]",
                 spec.ResourceName, string.Join(' ', spec.AppRoleScopes!));
 
+            resourceSpObjectIds.TryGetValue(spec.ResourceAppId, out var resourceSpObjectId);
             var grantResult = await blueprintService.GrantAppRoleAssignmentAsync(
                 tenantId,
                 blueprintSpObjectId,
                 spec.ResourceAppId,
                 spec.AppRoleScopes!,
                 requiredScopes: s2sScopes,
-                ct: ct);
+                ct: ct,
+                knownResourceSpObjectId: resourceSpObjectId);
 
             if (grantResult.AllSucceeded)
             {
@@ -1128,7 +1132,8 @@ internal static class BatchPermissionsOrchestrator
                     "Resource '{Name}' ({AppId}): service principal found in tenant — no provisioning needed.",
                     spec.ResourceName, spec.ResourceAppId);
                 resolvedSpAppIds.Add(spec.ResourceAppId);
-                resolvedSpObjectIds?[spec.ResourceAppId] = spId;
+                if (resolvedSpObjectIds is not null)
+                    resolvedSpObjectIds[spec.ResourceAppId] = spId;
             }
             else
             {
@@ -1245,7 +1250,8 @@ internal static class BatchPermissionsOrchestrator
                     {
                         logger.LogInformation("Done. Service principal created for '{Name}' (id: {SpId}).", spec.ResourceName, newSpId);
                         resolvedSpAppIds.Add(spec.ResourceAppId);
-                        resolvedSpObjectIds?[spec.ResourceAppId] = newSpId;
+                        if (resolvedSpObjectIds is not null)
+                            resolvedSpObjectIds[spec.ResourceAppId] = newSpId;
                     }
                     else
                     {
@@ -1628,7 +1634,7 @@ internal static class BatchPermissionsOrchestrator
         // S2S: Grant app role assignments for specs that carry AppRoleScopes.
         var s2sScopes = permScopes.Concat(AuthenticationConstants.RequiredS2SGrantScopes).ToArray();
         if (blueprintService is not null && !string.IsNullOrWhiteSpace(phase1Result.BlueprintSpObjectId))
-            await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, specs, s2sScopes, logger, setupResults, ct);
+            await PerformS2SGrantsAsync(blueprintService, tenantId, phase1Result.BlueprintSpObjectId, phase1Result.ResourceSpObjectIds, specs, s2sScopes, logger, setupResults, ct);
         // else: blueprint service unavailable or SP not resolved — leave BlueprintS2SOutcome = NotApplicable (not attempted)
 
         return (allGrantsOk, phase1Result.BlueprintSpObjectId);

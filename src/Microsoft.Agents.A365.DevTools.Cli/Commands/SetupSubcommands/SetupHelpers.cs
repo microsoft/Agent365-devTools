@@ -782,7 +782,7 @@ internal static class SetupHelpers
             logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "skipped (--agent-registration-only)");
         else if (noS2SAppRolesToGrant && isS2sOnlyMode)
             logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + "not required  (no S2S app roles to grant)");
-        else if (isS2SFlow && s2sOk)
+        else if (isS2SFlow && s2sOk && (isNonDw || tenantConsentGranted))
         {
             if (isBothMode && !delegatedOk)
                 logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") +
@@ -803,12 +803,15 @@ internal static class SetupHelpers
                 // consent and per-principal OBO are different scopes.
                 var s2sVerb = results.BlueprintS2SAlreadyAssigned
                               && (!isBothMode || !agentIdDelegatedGranted || results.AgentIdentityDelegatedAlreadyExisted)
+                              && (isNonDw || results.TenantWideConsentAlreadyExisted)
                     ? "already granted"
                     : "granted";
                 var oboAlso = isBothMode && agentIdDelegatedGranted;
-                var label = oboAlso
-                    ? $"{s2sVerb}  S2S app roles + developer-scoped delegated on agent identity"
-                    : $"{s2sVerb}  S2S app roles";
+                var label = !isNonDw
+                    ? $"{s2sVerb}  S2S app roles + tenant-wide delegated"
+                    : oboAlso
+                        ? $"{s2sVerb}  S2S app roles + developer-scoped delegated on agent identity"
+                        : $"{s2sVerb}  S2S app roles";
                 logger.LogInformation(DryRunRow(permGrantStep, "Blueprint Permission Grants") + label);
             }
         }
@@ -971,6 +974,7 @@ internal static class SetupHelpers
                 logger.LogInformation("     Add it to a365.generated.config.json as 'agentBlueprintClientSecret', then re-run setup.");
                 logger.LogInformation("     See: https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials");
             }
+            LogMissingSpActions(logger, results.MissingSpActions, ref actionCount);
             if (pendingAdminAction)
             {
                 actionCount++;
@@ -1161,31 +1165,6 @@ internal static class SetupHelpers
                     logger.LogInformation("");
                     logger.LogInformation("     Or configure the endpoint manually in the Teams Developer Portal:");
                     logger.LogInformation("       {Url}", ConfigConstants.TeamsDeveloperPortalConfigureEndpointUrl);
-                }
-            }
-            if (hasMissingSpActions)
-            {
-                // Issue #429: resources whose SP could not be provisioned in-line during
-                // setup. Every entry provisions the SP via az; delegated specs also include
-                // a per-SP unified-consent URL. The URL is keyed to the BLUEPRINT as client
-                // (not the resource as client — that pattern fails AADSTS65003 for
-                // first-party token-to-self), so it is a normal cross-app consent and
-                // additive to whatever the unified consent URL already granted.
-                foreach (var action in results.MissingSpActions)
-                {
-                    actionCount++;
-                    logger.LogInformation("  {N}. Missing service principal — '{Name}' ({AppId}) (Global Administrator required)", actionCount, action.ResourceName, action.ResourceAppId);
-                    if (action.Scopes.Length > 0)
-                        logger.LogInformation("     Delegated scopes pending: {Scopes}", string.Join(", ", action.Scopes));
-                    if (action.AppRoleScopes.Length > 0)
-                        logger.LogInformation("     Application roles pending: {Roles}", string.Join(", ", action.AppRoleScopes));
-                    logger.LogInformation("     Step 1) Provision the SP:");
-                    logger.LogInformation("       {AzCommand}", action.AzCreateCommand);
-                    if (!string.IsNullOrWhiteSpace(action.PerSpConsentUrl))
-                    {
-                        logger.LogInformation("     Step 2) Grant the blueprint delegated consent for this resource (click Accept):");
-                        logger.LogInformation("       {Url}", action.PerSpConsentUrl);
-                    }
                 }
             }
         }
@@ -2168,6 +2147,29 @@ internal static class SetupHelpers
         return (result, failureReason);
     }
 
+    private static void LogMissingSpActions(
+        ILogger logger,
+        IEnumerable<MissingSpAction> actions,
+        ref int actionCount)
+    {
+        foreach (var action in actions)
+        {
+            actionCount++;
+            logger.LogInformation("  {N}. Missing service principal — '{Name}' ({AppId}) (Global Administrator required)", actionCount, action.ResourceName, action.ResourceAppId);
+            if (action.Scopes.Length > 0)
+                logger.LogInformation("     Delegated scopes pending: {Scopes}", string.Join(", ", action.Scopes));
+            if (action.AppRoleScopes.Length > 0)
+                logger.LogInformation("     Application roles pending: {Roles}", string.Join(", ", action.AppRoleScopes));
+            logger.LogInformation("     Step 1) Provision the SP:");
+            logger.LogInformation("       {AzCommand}", action.AzCreateCommand);
+            if (!string.IsNullOrWhiteSpace(action.PerSpConsentUrl))
+            {
+                logger.LogInformation("     Step 2) Grant the blueprint delegated consent for this resource (click Accept):");
+                logger.LogInformation("       {Url}", action.PerSpConsentUrl);
+            }
+        }
+    }
+
     /// <summary>
     /// Emits an "Action Required" block for a non-admin <c>setup permissions *</c> run that mirrors
     /// the corresponding section produced by the <c>setup all</c> summary writer. Surfaces:
@@ -2204,7 +2206,7 @@ internal static class SetupHelpers
         var hasConsentUrl = !string.IsNullOrWhiteSpace(adminConsentUrl);
         var hasS2SPowerShell = appRoleSpecs.Count > 0 && results.BlueprintS2SOutcome != Models.GrantOutcome.Granted;
 
-        if (!hasConsentUrl && !hasS2SPowerShell)
+        if (!hasConsentUrl && !hasS2SPowerShell && results.MissingSpActions.Count == 0)
         {
             logger.LogInformation("Ask a tenant administrator to grant consent for the blueprint app's required permissions.");
             return;
@@ -2213,6 +2215,8 @@ internal static class SetupHelpers
         logger.LogInformation("");
         logger.LogInformation("Action Required:");
         var step = 0;
+
+        LogMissingSpActions(logger, results.MissingSpActions, ref step);
 
         if (hasConsentUrl)
         {

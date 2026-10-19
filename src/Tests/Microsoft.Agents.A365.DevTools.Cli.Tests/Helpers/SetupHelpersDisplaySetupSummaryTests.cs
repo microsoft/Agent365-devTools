@@ -496,6 +496,51 @@ public class SetupHelpersDisplaySetupSummaryTests
     }
 
     [Fact]
+    public void DisplaySetupSummary_MissingSp_ProvisioningPrecedesDependentPermissionActions()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            BlueprintS2SOutcome = Cli.Models.GrantOutcome.Failed,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed,
+            AdminConsentUrl = NoAppRolesConsentUrl,
+        };
+        results.PendingBlueprintAppRoleSpecs.Add(new ResourcePermissionSpec(
+            ConfigConstants.DefenderApiAppId,
+            "Defender API",
+            [],
+            SetInheritable: true,
+            AppRoleScopes: [ConfigConstants.DefenderApiRealtimeProtectionScope]));
+        var createCommand = $"az ad sp create --id {ConfigConstants.DefenderApiAppId}";
+        results.MissingSpActions.Add(new MissingSpAction(
+            "Defender API", ConfigConstants.DefenderApiAppId, [], createCommand, null)
+        {
+            AppRoleScopes = [ConfigConstants.DefenderApiRealtimeProtectionScope],
+        });
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(createCommand,
+            because: "a missing Defender service principal must have a provisioning action");
+        logger.AllOutput.Should().Contain("New-MgServicePrincipalAppRoleAssignment",
+            because: "provisioning alone does not grant the pending Defender application role");
+        logger.AllOutput.Should().Contain("Permission Grants",
+            because: "provisioning must preserve the delegated consent handoff for other resources");
+        var provisioningIndex = logger.AllOutput.IndexOf(createCommand, StringComparison.Ordinal);
+        provisioningIndex.Should().BeLessThan(
+            logger.AllOutput.IndexOf("New-MgServicePrincipalAppRoleAssignment", StringComparison.Ordinal),
+            because: "numbered recovery steps must provision the resource before assigning its application role");
+        provisioningIndex.Should().BeLessThan(
+            logger.AllOutput.IndexOf("Permission Grants — forward", StringComparison.Ordinal),
+            because: "resource provisioning must precede any dependent delegated consent handoff");
+    }
+
+    [Fact]
     public void DisplaySetupSummary_ApplicationOnlyMissingSp_ShowsProvisioningWithoutConsentUrl()
     {
         var logger = new CapturingLogger();
@@ -854,6 +899,7 @@ public class SetupHelpersDisplaySetupSummaryTests
             BatchPermissionsPhase1Completed = true,
             BatchPermissionsPhase2Completed = true,
             TenantWideConsentOutcome = Cli.Models.GrantOutcome.Unverified,
+            BlueprintS2SOutcome = Cli.Models.GrantOutcome.Granted,
             AdminConsentUrl = "https://login.microsoftonline.com/tenant/adminconsent?client_id=bp-id",
         };
 
@@ -867,6 +913,25 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "Unverified must not claim the grant succeeded — the consent was not directly observed");
         grantsRow!.Should().NotContain("granted  tenant-wide",
             because: "the Unverified row must not use the Granted row text");
+        grantsRow.Should().NotContain("granted  S2S app roles",
+            because: "a successful Defender application grant must not hide unverified tenant-wide delegated consent");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdmin_S2SGrantedAndTenantConsentFailed_PermissionGrantsRowShowsPending()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SVerifiedResults();
+        results.TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        var grantsRow = System.Array.Find(logger.AllOutput.Split('\n'), line => line.Contains("Blueprint Permission Grants"));
+        grantsRow.Should().NotBeNull();
+        grantsRow!.Should().Contain("PENDING",
+            because: "AI Teammates require delegated consent as well as the Defender application role");
+        grantsRow.Should().NotContain("granted",
+            because: "the permission row must not claim completion while tenant-wide consent is still missing");
     }
 
     [Fact]
@@ -1130,21 +1195,28 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the 'already granted' wording is reserved for runs that did no work — using it for first-time grants would mislead the user");
     }
 
-    /// <summary>
-    /// S2S parity: when every S2S app role assignment was already in place
-    /// (BlueprintS2SAlreadyAssigned=true), the row must render "already granted  S2S app roles".
-    /// </summary>
-    [Fact]
-    public void DisplaySetupSummary_S2SAllAlreadyAssigned_RendersAlreadyGranted()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void DisplaySetupSummary_DwAdmin_BothGrantsSucceeded_ReportsBothPermissionTypes(
+        bool appRolesAlreadyAssigned, bool tenantConsentAlreadyExisted)
     {
         var logger = new CapturingLogger();
         var results = BuildS2SVerifiedResults();
-        results.BlueprintS2SAlreadyAssigned = true;
+        results.BlueprintS2SAlreadyAssigned = appRolesAlreadyAssigned;
+        results.TenantWideConsentAlreadyExisted = tenantConsentAlreadyExisted;
 
         SetupHelpers.DisplaySetupSummary(results, logger);
 
-        logger.AllOutput.Should().Contain("already granted  S2S app roles",
-            because: "when every S2S role was already assigned the row must surface that — a future regression that drops the flag would silently report 'granted' on every idempotent re-run");
+        var grantsRow = System.Array.Find(logger.AllOutput.Split('\n'), line => line.Contains("Blueprint Permission Grants"));
+        grantsRow.Should().NotBeNull();
+        grantsRow!.Should().Contain("granted  S2S app roles + tenant-wide delegated",
+            because: "AI Teammates always request both permission types, so the summary must report both successful grants");
+        grantsRow!.Contains("already granted", StringComparison.Ordinal).Should().Be(
+            appRolesAlreadyAssigned && tenantConsentAlreadyExisted,
+            because: "an AI Teammate grant is already in place only when both its application roles and tenant-wide delegated consent predate this run");
     }
 
     /// <summary>
@@ -1388,6 +1460,7 @@ public class SetupHelpersDisplaySetupSummaryTests
         BlueprintId = BlueprintId,
         TenantId = TenantId,
         BlueprintS2SOutcome = Cli.Models.GrantOutcome.Granted,
+        TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
         BatchPermissionsPhase1Completed = true,
         BatchPermissionsPhase2Completed = true,
     };

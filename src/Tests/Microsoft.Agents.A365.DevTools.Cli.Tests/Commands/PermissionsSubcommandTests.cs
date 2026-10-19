@@ -293,9 +293,17 @@ public class PermissionsSubcommandTests : IDisposable
         dryRunOption!.Aliases.Should().Contain("--dry-run");
     }
 
-    [Fact]
-    public async Task BotDryRun_WithoutConfig_MentionsDefender()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BotDryRun_WithOrWithoutConfig_MentionsDefender(bool hasConfig)
     {
+        if (hasConfig)
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(new Agent365Config { TenantId = "tenant-id", AgentBlueprintId = "blueprint-id" }));
+        else
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromException<Agent365Config>(new FileNotFoundException("Config file not found.")));
         var root = new RootCommand();
         root.AddCommand(PermissionsSubcommand.CreateCommand(
             _mockLogger,
@@ -309,12 +317,16 @@ public class PermissionsSubcommandTests : IDisposable
         var result = await root.InvokeAsync("permissions bot --dry-run");
 
         result.Should().Be(0,
-            because: "the no-config permissions bot dry run must provide a usable generic preview");
+            because: "permissions bot must provide a usable preview whether or not a config file is available");
         var messages = _mockLogger.ReceivedCalls()
-            .Select(call => call.GetArguments()[2]?.ToString() ?? string.Empty);
+            .Select(call => call.GetArguments()[2]?.ToString() ?? string.Empty)
+            .ToList();
         messages.Should().Contain(
             message => message.Contains("Defender", StringComparison.OrdinalIgnoreCase),
             because: "permissions bot configures Defender and the no-config preview must not omit that user-visible work");
+        messages.Should().NotContain(
+            message => message.Contains("Observability", StringComparison.OrdinalIgnoreCase),
+            because: "permissions bot no longer requests Observability permissions in either preview path");
     }
 
     [Fact]
@@ -832,7 +844,8 @@ public class PermissionsSubcommandTests : IDisposable
 
         _mockBlueprintService.GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>(),
+            knownResourceSpObjectId: "resource-sp-id")
             .Returns(Task.FromResult(new AppRoleGrantResult(AllSucceeded: s2sSucceeds, AllAlreadyAssigned: false)));
 
         _mockGraphApiService.GraphGetAsync(
@@ -855,6 +868,54 @@ public class PermissionsSubcommandTests : IDisposable
             .Returns(Task.CompletedTask);
 
         return config;
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_MissingDefenderSp_EmitsCompleteStandaloneHandoff()
+    {
+        var previousBypass = BatchPermissionsOrchestrator.BypassSpProvisioningForTests;
+        BatchPermissionsOrchestrator.BypassSpProvisioningForTests = false;
+        try
+        {
+            var config = ArrangeAdminPath();
+            _mockGraphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
+            _mockGraphApiService.EnsureServicePrincipalForAppIdAsync(
+                    Arg.Any<string>(), ConfigConstants.DefenderApiAppId, Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+                .Returns(Task.FromResult<string?>(null));
+            _mockGraphApiService.LookupServicePrincipalByAppIdAsync(
+                    Arg.Any<string>(), ConfigConstants.DefenderApiAppId, Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>())
+                .Returns(Task.FromResult<string?>(null));
+            _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(false));
+
+            var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+                "config.json", _mockLogger, _mockConfigService, _mockExecutor, config,
+                _mockGraphApiService, _mockBlueprintService, iSetupAll: false,
+                setupResults: null, confirmationProvider: _mockConfirmationProvider);
+
+            var output = string.Join("\n", _mockLogger.ReceivedCalls()
+                .Where(call => call.GetMethodInfo().Name == nameof(ILogger.Log))
+                .Select(call => call.GetArguments()[2]?.ToString() ?? string.Empty));
+            var createCommand = $"az ad sp create --id {ConfigConstants.DefenderApiAppId}";
+            result.Should().BeFalse(
+                because: "a standalone bot permission command cannot succeed while Defender provisioning and consent remain pending");
+            output.Should().Contain(createCommand,
+                because: "standalone commands have no full setup summary to supply the missing Defender provisioning step");
+            output.Should().Contain(Uri.EscapeDataString(
+                    $"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
+                because: "Defender is excluded from the combined URL until its service principal exists, so its separate delegated-consent URL is required");
+            output.Should().Contain("New-MgServicePrincipalAppRoleAssignment",
+                because: "provisioning and delegated consent do not grant the required Defender application role");
+            output.IndexOf(createCommand, StringComparison.Ordinal).Should().BeLessThan(
+                output.IndexOf("New-MgServicePrincipalAppRoleAssignment", StringComparison.Ordinal),
+                because: "the administrator must provision the Defender service principal before assigning its application role");
+        }
+        finally
+        {
+            BatchPermissionsOrchestrator.BypassSpProvisioningForTests = previousBypass;
+        }
     }
 
     [Fact]
@@ -886,11 +947,13 @@ public class PermissionsSubcommandTests : IDisposable
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
         await _mockBlueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), ConfigConstants.ObservabilityApiAppId,
-            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>(),
+            knownResourceSpObjectId: Arg.Any<string?>());
         await _mockBlueprintService.Received().GrantAppRoleAssignmentAsync(
             Arg.Any<string>(), Arg.Any<string>(), ConfigConstants.DefenderApiAppId,
             Arg.Is<IEnumerable<string>>(roles => roles.SequenceEqual(new[] { ConfigConstants.DefenderApiRealtimeProtectionScope })),
-            Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>(),
+            knownResourceSpObjectId: "resource-sp-id");
         _mockLogger.DidNotReceive().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
@@ -1030,7 +1093,15 @@ public class PermissionsSubcommandTests : IDisposable
             setupResults: null);
 
         // Assert
-        result.Should().BeTrue(because: "every permission the bot step requests was granted, so the method must return true");
+        result.Should().BeTrue(because: "all grants and S2S succeed — method must return true");
+        await _mockBlueprintService.Received().GrantAppRoleAssignmentAsync(
+            config.TenantId,
+            config.AgentBlueprintServicePrincipalObjectId!,
+            ConfigConstants.DefenderApiAppId,
+            Arg.Is<IEnumerable<string>>(roles => roles.Contains(ConfigConstants.DefenderApiRealtimeProtectionScope)),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            knownResourceSpObjectId: "resource-sp-id");
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
