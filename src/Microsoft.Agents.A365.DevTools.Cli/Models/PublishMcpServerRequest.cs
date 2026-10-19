@@ -37,4 +37,20 @@ public class PublishMcpServerRequest
     /// </summary>
     [JsonPropertyName("publisherName")]
     public string? PublisherName { get; set; }
+
+    /// <summary>
+    /// A365 proxy (confidential) Entra app client id created CLI-side. The platform's v2 publish
+    /// path creates the Power Platform connector for custom (non-Dataverse) servers only when both
+    /// this and <see cref="A365ProxyClientSecret"/> are supplied; otherwise connector creation is
+    /// skipped (<c>A365ProxyConnectorCreation=SkippedNoCredentials</c>).
+    /// </summary>
+    [JsonPropertyName("a365ProxyClientId")]
+    public string? A365ProxyClientId { get; set; }
+
+    /// <summary>
+    /// Client secret for the A365 proxy Entra app. Paired with <see cref="A365ProxyClientId"/> so the
+    /// platform can create the Power Platform connector for custom servers.
+    /// </summary>
+    [JsonPropertyName("a365ProxyClientSecret")]
+    public string? A365ProxyClientSecret { get; set; }
 }

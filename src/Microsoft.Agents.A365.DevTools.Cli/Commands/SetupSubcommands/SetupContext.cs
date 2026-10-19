@@ -101,8 +101,8 @@ internal sealed class SetupContext
     public bool NonInteractive { get; }
 
     /// <summary>
-    /// When true, Observability API permissions are omitted from every grant and consent URL (non-DW blueprint only),
-    /// making agent registration the agent's only Observability authorization.
+    /// When true, the default Observability API spec is omitted from grants and consent URLs.
+    /// <c>customBlueprintPermissions</c> can still request it; use <see cref="ObservabilityPermissionsEffectivelySkipped"/> for the effective state.
     /// </summary>
     public bool SkipObservabilityPermissions { get; }
 

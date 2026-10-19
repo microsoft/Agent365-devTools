@@ -254,7 +254,7 @@ internal static class PermissionsSubcommand
         IBootstrapConfigResolver? resolver = null)
     {
         var command = new Command("bot",
-            "Configure Messaging Bot, Observability, Defender, and Power Platform API grants and inheritable permissions\n" +
+            "Configure Messaging Bot, Defender, and Power Platform API grants and inheritable permissions\n" +
             "Required role: Agent ID Developer; Global Administrator for tenant-wide OAuth2 consent\n" +
             "(non-admins receive a unified /v2.0/adminconsent URL to forward to a Global Administrator).\n\n" +
             "Prerequisites: Blueprint and MCP permissions (run 'a365 setup permissions mcp' first)\n" +
@@ -296,7 +296,7 @@ internal static class PermissionsSubcommand
                 if (dryRunConfig is null)
                 {
                     logger.LogInformation("Dry run: a365 setup permissions bot --dry-run");
-                    logger.LogInformation("  Would configure Messaging Bot, Observability, Defender, and Power Platform API grants and inheritable permissions.");
+                    logger.LogInformation("  Would configure Messaging Bot, Defender, and Power Platform API grants and inheritable permissions.");
                     logger.LogInformation("No changes made. Run without --dry-run to execute.");
                     return;
                 }
@@ -305,7 +305,6 @@ internal static class PermissionsSubcommand
                 logger.LogInformation("Would configure Bot API permissions:");
                 logger.LogInformation("  - Blueprint: {BlueprintId}", dryRunConfig.AgentBlueprintId);
                 logger.LogInformation("  - Messaging Bot API: {Scope}", ConfigConstants.MessagingBotApiAdminConsentScope);
-                logger.LogInformation("  - Observability API: {OtelScope} (delegated + application)", ConfigConstants.ObservabilityApiOtelWriteScope);
                 logger.LogInformation("  - Defender API: {DefenderScope} (delegated + application)", ConfigConstants.DefenderApiRealtimeProtectionScope);
                 logger.LogInformation("  - Power Platform API: Connectivity.Connections.Read");
                 logger.LogInformation("No changes made. Run without --dry-run to execute.");
@@ -765,11 +764,13 @@ internal static class PermissionsSubcommand
 
         try
         {
+            // Telemetry is authorized by registration, so this step requests no Observability API permissions.
             var specs = new List<ResourcePermissionSpec>(
                 SetupHelpers.GetFixedApiPermissionSpecs(
                     setInheritable: true,
                     isM365: true,
-                    setupConfig.Environment));
+                    setupConfig.Environment,
+                    includeObservability: false));
 
             var localResults = setupResults ?? new SetupResults();
             var (_, _, consentGranted, adminConsentUrl) = await BatchPermissionsOrchestrator.ConfigureAllPermissionsAsync(
@@ -787,10 +788,7 @@ internal static class PermissionsSubcommand
 
             await configService.SaveStateAsync(setupConfig);
 
-            // BlueprintS2SOutcome == Granted means S2S succeeded; any other value (NotApplicable,
-            // Failed) treats this as "not in place". Consent state is checked before S2S so the
-            // non-admin path still shows "consent required" rather than the S2S warning (S2S is
-            // never attempted when consent isn't granted).
+            // Defender still requires an application grant even when Observability permissions are skipped.
             var s2sFailed = localResults.BlueprintS2SOutcome != Models.GrantOutcome.Granted;
 
             logger.LogInformation("");

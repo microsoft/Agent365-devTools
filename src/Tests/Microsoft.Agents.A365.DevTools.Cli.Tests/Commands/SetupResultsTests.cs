@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Xunit;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
@@ -108,6 +109,24 @@ public class SetupResultsTests
         results.GraphInheritablePermissionsError.Should().NotBeNull();
         results.HasWarnings.Should().BeTrue();
         results.Warnings.Should().Contain(w => w.Contains("Microsoft Graph inheritable permissions"));
+    }
+
+    [Theory]
+    [InlineData(ProjectSettingsSyncResult.Written, true, false)]
+    [InlineData(ProjectSettingsSyncResult.NoProjectFound, false, false)]
+    [InlineData(ProjectSettingsSyncResult.Blocked, false, true)]
+    public void RecordProjectSettingsResult_SetsSummaryState(ProjectSettingsSyncResult syncResult, bool expectWritten, bool expectBlocked)
+    {
+        var results = new SetupResults();
+
+        results.RecordProjectSettingsResult(syncResult);
+
+        results.ProjectSettingsWritten.Should().Be(expectWritten,
+            because: "only a completed sync is reported as written");
+        results.ProjectSettingsBlocked.Should().Be(expectBlocked,
+            because: "only a rejected destination is reported as skipped in the summary");
+        results.HasWarnings.Should().Be(expectBlocked,
+            because: "a rejected destination needs a summary warning with the fix; a missing project does not");
     }
 
     #endregion

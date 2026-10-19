@@ -458,7 +458,7 @@ return await new CommandLineBuilder(rootCommand)
 
 | Agent Type | Flag | What it creates |
 |---|---|---|
-| **AI Teammate agent** | `--aiteammate` | Azure infra + Agent Blueprint + batch permissions (6 resources) + messaging endpoint |
+| **AI Teammate agent** | `--aiteammate` | Azure infra + Agent Blueprint + batch permissions (5 resources) + messaging endpoint |
 | **Custom Engine Agent / Blueprint** (default) | omit `--aiteammate` | Agent Blueprint + baseline permissions (4 resources) + Agent Identity + Agent Registration |
 
 Non-DW blueprint agents do not use Azure Bot Service, so there is no infrastructure step, no manifest zip, and no messaging endpoint registration. The final step is `POST /beta/agentRegistry/agentInstances` instead.
@@ -475,7 +475,7 @@ AllSubcommand.ExecuteAsync
   ├── DW path:
   │     ExecuteInfrastructureStepAsync(ctx)     ← DW only
   │     ExecuteBlueprintStepAsync(ctx)           ← shared
-  │     ExecuteBatchPermissionsStepAsync(ctx, dwSpecs)  ← shared (6 resources)
+  │     ExecuteBatchPermissionsStepAsync(ctx, dwSpecs)  ← shared (5 resources)
   │     ExecuteMessagingEndpointStepAsync(ctx)   ← DW only
   │
   └── Non-DW path:
@@ -496,9 +496,10 @@ The non-DW spec list is a strict subset of the DW list:
 | Microsoft Graph (delegated) | ✓ | ✓ |
 | Agent 365 Tools (delegated) | ✓ | ✓ |
 | Messaging Bot API (with `--m365`) | ✓ | ✓ |
-| Observability API | ✓ | — by default |
 | Defender API | delegated + application | follows `--authmode` |
 | Power Platform API | ✓ | ✓ |
+
+Neither list includes the Observability API: telemetry is exported with app-only tokens that the service authorizes by registration. Adding it to `customBlueprintPermissions` requests its delegated scope.
 
 ---
 

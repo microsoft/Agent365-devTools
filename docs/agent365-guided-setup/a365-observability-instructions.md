@@ -10,9 +10,11 @@ Add Agent 365 observability to your agent at any point after `a365 setup all` ha
 >
 > **Prerequisite:** `a365 setup all` must have completed successfully so `AgentId` and `TenantId` values are present in `appsettings.json` (written by setup) or `a365.generated.config.json`. If neither source has these values, run `a365 setup all` first.
 
-> **Source of truth:** For non-AI-Teammate blueprint agents, use the `plugins/agent365/skills/instrument-observability` skill from [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills). The skill contains the current, verified code for the app-only S2S exporter in .NET, Node.js, and Python.
+> **Source of truth:** For every agent, including AI Teammates, use the `plugins/agent365/skills/instrument-observability` skill from [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills). The skill contains the current, verified code for the app-only S2S exporter in .NET, Node.js, and Python.
 
-> **Blueprint telemetry model:** Every non-AI-Teammate blueprint agent exports telemetry through the S2S route (`/observabilityService/...`) with an app-only token for the exporting agent identity. Set the SDK route flag (`UseS2SEndpoint`, `useS2SEndpoint`, or `a365_use_s2s_endpoint`), wire an app-only token resolver, and do **not** use delegated Observability token caches or per-turn delegated OBS token refresh. Registered blueprint agents do not need `Agent365.Observability.OtelWrite`; `a365 setup all` no longer requests it for blueprint agents.
+> **Telemetry model:** Every agent, including AI Teammates, exports telemetry through the S2S route (`/observabilityService/...`) with an app-only token for the exporting agent identity. Set the SDK route flag (`UseS2SEndpoint`, `useS2SEndpoint`, or `a365_use_s2s_endpoint`), wire an app-only token resolver, and do **not** use delegated Observability token caches or per-turn delegated OBS token refresh. Agents do not need `Agent365.Observability.OtelWrite`: the service authorizes a registered agent, or an AI Teammate through its blueprint's registration, and `a365 setup all` no longer requests the permission.
+>
+> **AI Teammates:** use the same app-only S2S exporter as other agents. The delegated route (hosting-package token cache) still works only if you grant the delegated `OtelWrite` permission yourself; see [OtelWrite App Role Assignment](#otelwrite-app-role-assignment).
 
 ---
 
@@ -75,11 +77,13 @@ If `agentType` and `authMode` are already present in the detection cache (from a
 
 Store `agentType` (`ai-teammate` = AI Teammate, or `system-agent` = Agent (Non AI Teammate)) and `authMode`:
 - **AI Teammate:** `user-delegated` (OBO as signed-in user) or `agentic-identity` (OBO as agent's own M365 identity)
-- **Agent (Non AI Teammate):** workload auth may be `obo`, `s2s`, or `both`, but telemetry wiring is always the app-only S2S exporter described above.
+- **Agent (Non AI Teammate):** workload auth may be `obo`, `s2s`, or `both`.
+
+For both agent kinds, telemetry wiring is always the app-only S2S exporter described above.
 
 **Update `.a365-workspace-detection.json`** — merge `agentType` and `authMode` into the existing cache file, preserving all other fields (`agentStack`, `programmingLanguage`, `usesTeamsOrCopilot`, `detectedAt`). Use the **Write** tool to write the merged object back.
 
-For non-AI-Teammate agents, `authMode` controls workload tokens and permission grants only; it must not switch telemetry back to a delegated-route exporter. Phases 3–5 must select the S2S route and app-only token resolver in every auth mode.
+`authMode` controls workload tokens and permission grants only; it must not switch telemetry back to a delegated-route exporter. Phases 3–5 must select the S2S route and app-only token resolver in every auth mode.
 
 **TaskUpdate** — Mark complete: "Determine agent type and authentication mode"
 
@@ -116,13 +120,13 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 
 1. **Bash** — Run package installation (path-dependent):
 
-   **AI Teammate / legacy delegated path only**:
+   **Legacy delegated route only** (`a365 setup all` no longer grants the delegated `OtelWrite` scope this route needs; grant it first with `a365 setup permissions custom` or `customBlueprintPermissions`, see [OtelWrite App Role Assignment](#otelwrite-app-role-assignment)):
    ```bash
    dotnet add package Microsoft.Agents.A365.Observability.Runtime
    dotnet add package Microsoft.Agents.A365.Observability.Hosting
    ```
 
-   **Non-AI-Teammate blueprint agents — use the app-only S2S distro in every workload auth mode** (preferred; do NOT also add Runtime/Hosting):
+   **All agents, including AI Teammates — use the app-only S2S distro in every workload auth mode** (preferred; do NOT also add Runtime/Hosting):
    ```bash
    dotnet add package Microsoft.OpenTelemetry --version 1.0.0-beta.1
    dotnet add package Azure.Identity
@@ -177,7 +181,7 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
    npm install @microsoft/agents-a365-observability
    npm install @microsoft/agents-a365-runtime
    npm install @microsoft/agents-a365-observability-hosting
-   # Non-AI-Teammate blueprint telemetry uses app-only S2S in every workload auth mode.
+   # Telemetry uses app-only S2S for every agent, including AI Teammates.
    npm install @azure/msal-node @azure/identity
    ```
 
@@ -206,10 +210,10 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 1. **Bash** — Run package installation (unified distro + S2S deps):
    ```bash
    pip3 install microsoft-opentelemetry 2>/dev/null || pip install microsoft-opentelemetry
-   # Non-AI-Teammate blueprint telemetry uses app-only S2S in every workload auth mode.
+   # Telemetry uses app-only S2S for every agent, including AI Teammates.
    pip3 install msal azure-identity httpx 2>/dev/null || pip install msal azure-identity httpx
    ```
-   > **AI Teammate / legacy delegated path:** follow the AI Teammate sample's delegated hosting package guidance instead of the blueprint app-only resolver.
+   > **Legacy delegated route only** (`a365 setup all` no longer grants the delegated `OtelWrite` scope this route needs; grant it first with `a365 setup permissions custom` or `customBlueprintPermissions`, see [OtelWrite App Role Assignment](#otelwrite-app-role-assignment)): follow the sample's delegated hosting package guidance instead of the app-only resolver.
 
 2. **Optional auto-instrumentation extensions** — ask the user which AI framework they use and install accordingly:
    ```bash
@@ -245,9 +249,8 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 
 2. **Edit** — Add observability wiring following the reference pattern in `dotnet-observability.md`:
    - Add using directives for the observability namespaces
-   - **Non-AI-Teammate blueprint agents:** follow the .NET reference in [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills) (`plugins/agent365/skills/instrument-observability/references/dotnet-observability.md`). The required shape is `UseMicrosoftOpenTelemetry(...)` with `o.Agent365.UseS2SEndpoint = true` (or `o.Agent365.Exporter.UseS2SEndpoint = true` on older distros) plus an app-only token resolver for the exporting agent identity.
-   - **Do not** call `AddAgenticTracingExporter()` for non-AI-Teammate blueprint telemetry; it wires the delegated route and delegated token cache.
-   - **AI Teammate only:** keep the existing hosting-package pattern if that is what the AI Teammate sample uses.
+   - **All agents, including AI Teammates:** follow the .NET reference in [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills) (`plugins/agent365/skills/instrument-observability/references/dotnet-observability.md`). The required shape is `UseMicrosoftOpenTelemetry(...)` with `o.Agent365.UseS2SEndpoint = true` (or `o.Agent365.Exporter.UseS2SEndpoint = true` on older distros) plus an app-only token resolver for the exporting agent identity.
+   - **Do not** call `AddAgenticTracingExporter()`; it wires the delegated route and delegated token cache. Keep an existing hosting-package pattern only on the legacy delegated route (`a365 setup all` no longer grants the delegated `OtelWrite` scope this route needs; grant it first with `a365 setup permissions custom` or `customBlueprintPermissions`, see [OtelWrite App Role Assignment](#otelwrite-app-role-assignment)).
    - Optionally register baggage middleware only when it does not introduce a delegated Observability token dependency.
    - Mark all new lines with: `// A365 Observability — best-effort instrumentation (verify against official sample)`
 
@@ -260,7 +263,7 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 2. **Edit** — Add observability initialization following the reference pattern in `nodejs-observability.md`:
    - Initialize `useMicrosoftOpenTelemetry({ a365: { enabled: true, useS2SEndpoint: true, tokenResolver } })` **before** any LLM/framework imports.
    - Implement `tokenResolver` as an app-only resolver for the exporting agent identity, using the current Node reference in [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills).
-   - **Do not** read from `AgenticTokenCacheInstance` for non-AI-Teammate blueprint telemetry and do not call `RefreshObservabilityToken` to obtain exporter tokens; those produce delegated tokens for the wrong route.
+   - **Do not** read from `AgenticTokenCacheInstance` for exporter tokens and do not call `RefreshObservabilityToken` to obtain exporter tokens; those produce delegated tokens for the wrong route.
    - Optionally register `BaggageMiddleware` only for baggage propagation; it must not be used as the exporter token source.
    - Mark all new lines with: `// A365 Observability — best-effort instrumentation (verify against official sample)`
 
@@ -273,7 +276,7 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 2. **Edit** — Add observability configuration following the reference pattern in `python-observability.md`:
    - Add `from microsoft.opentelemetry import use_microsoft_opentelemetry` and call `use_microsoft_opentelemetry(enable_a365=True, a365_token_resolver=...)` with `service_name` and `service_namespace`
    - Pass `a365_use_s2s_endpoint=True` and an app-only `a365_token_resolver` for the exporting agent identity, using the current Python reference in [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills).
-   - **Do not** wire `a365_token_resolver` to a delegated `AgenticTokenCache` token for non-AI-Teammate blueprint telemetry.
+   - **Do not** wire `a365_token_resolver` to a delegated `AgenticTokenCache` token.
    - Optionally register baggage helpers only for baggage propagation; they must not perform a delegated Observability token exchange.
    - Mark all new lines with: `# A365 Observability — best-effort instrumentation (verify against official sample)`
 
@@ -291,7 +294,7 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 > baggage propagation automatically for every request.
 
 > **Auth mode note:** All three `authMode` values use `authHandlerName: "AGENTIC"` in the
-> workload-auth code, but telemetry export for non-AI-Teammate blueprint agents is always app-only S2S.
+> workload-auth code, but telemetry export is always app-only S2S, including for AI Teammates.
 > Do not add delegated Observability token refresh to a message handler.
 
 ### For .NET AgentFramework
@@ -301,7 +304,7 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 2. **Edit** — Follow the current .NET pattern from the `instrument-observability` skill:
    - Use `new BaggageBuilder().FromTurnContext(turnContext).Build()` as baggage context.
    - Use the app-only `AgentDetails` / `CallerDetails` pattern from the reference when creating manual scopes.
-   - **Do not** inject `IExporterTokenCache<AgenticTokenStruct>` or call `RegisterObservability` for non-AI-Teammate blueprint telemetry; the exporter token is supplied by the app-only resolver configured in Phase 3.
+   - **Do not** inject `IExporterTokenCache<AgenticTokenStruct>` or call `RegisterObservability`; the exporter token is supplied by the app-only resolver configured in Phase 3.
    - Add inline comment: `// A365 telemetry: app-only S2S route; workload auth mode: {authMode}`
 
    Mark all new lines with: `// A365 Observability — best-effort instrumentation (verify against official sample)`
@@ -315,7 +318,7 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 2. **Edit** — Add BaggageBuilder context following the reference pattern in `nodejs-observability.md`:
    - Import `BaggageBuilder` from `@microsoft/agents-a365-observability`
    - Import `BaggageBuilderUtils` from `@microsoft/agents-a365-observability-hosting`
-   - **Do not** call `AgenticTokenCacheInstance.RefreshObservabilityToken` for non-AI-Teammate blueprint telemetry. The `tokenResolver` passed to `useMicrosoftOpenTelemetry()` supplies an app-only token for the S2S route.
+   - **Do not** call `AgenticTokenCacheInstance.RefreshObservabilityToken`. The `tokenResolver` passed to `useMicrosoftOpenTelemetry()` supplies an app-only token for the S2S route.
    - Use `BaggageBuilderUtils.fromTurnContext(new BaggageBuilder(), context).build()` to build baggage automatically from TurnContext
    - Wrap the handler body in `await baggageScope.run(async () => { ... })`
    - Add inline comment: `// A365 telemetry: app-only S2S route; workload auth mode: {authMode}`
@@ -330,7 +333,7 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 2. **Edit** — Add BaggageBuilder context following the reference pattern in `python-observability.md`:
    - Import `BaggageBuilder` from `microsoft.opentelemetry.a365.core`
    - Import `populate` from `microsoft.opentelemetry.a365.hosting.scope_helpers.populate_baggage`
-   - **Do not** call `cache_agentic_token`, `register_observability`, or `exchange_token(...get_observability_authentication_scope...)` for non-AI-Teammate blueprint telemetry. The `a365_token_resolver` configured in Phase 3 supplies an app-only token for the S2S route.
+   - **Do not** call `cache_agentic_token`, `register_observability`, or `exchange_token(...get_observability_authentication_scope...)`. The `a365_token_resolver` configured in Phase 3 supplies an app-only token for the S2S route.
    - Use `populate(builder, turn_context)` to auto-populate baggage, then `with builder.build():`
    - Wrap existing agent logic inside the baggage scope
    - Add inline comment: `# A365 telemetry: app-only S2S route; workload auth mode: {authMode}`
@@ -346,31 +349,31 @@ For non-AI-Teammate agents, `authMode` controls workload tokens and permission g
 
 **TaskCreate** — "Implement agentic token resolver with caching"
 
-For non-AI-Teammate blueprint agents, Phase 5 means "ensure the app-only S2S token resolver from the `instrument-observability` skill is present." Do not create or use delegated Observability token caches. For AI Teammate agents using the hosting packages, the built-in delegated token cache may still be the sample's expected pattern.
+For every agent, including AI Teammates, Phase 5 means "ensure the app-only S2S token resolver from the `instrument-observability` skill is present." Do not create or use delegated Observability token caches. The built-in delegated token caches below apply only to the legacy delegated route, which needs the delegated `OtelWrite` grant added manually.
 
-### For .NET AgentFramework (AI Teammate / legacy delegated path only)
+### For .NET AgentFramework (legacy delegated route only)
 
 1. `AddAgenticTracingExporter()` (registered in Phase 3) provides the `IExporterTokenCache<AgenticTokenStruct>` DI instance — no additional token resolver class needed.
 
 2. In the agent class, inject `IExporterTokenCache<AgenticTokenStruct>` in the constructor and call `RegisterObservability(...)` per turn (already done in Phase 4).
 
-### For .NET AgentFramework (blueprint agents)
+### For .NET AgentFramework (all agents, including AI Teammates)
 
 Use the app-only token resolver pattern from [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills), set the S2S route flag, and keep delegated OBS token registration out of the handler.
 
-### For Node.js (AI Teammate / legacy delegated path only)
+### For Node.js (legacy delegated route only)
 
-`AgenticTokenCacheInstance` from `@microsoft/agents-a365-observability-hosting` handles delegated token caching automatically. Do not use it for non-AI-Teammate blueprint telemetry.
+`AgenticTokenCacheInstance` from `@microsoft/agents-a365-observability-hosting` handles delegated token caching automatically. Use it only on the legacy delegated route.
 
-### For Node.js (blueprint agents)
+### For Node.js (all agents, including AI Teammates)
 
 Create or reuse the app-only resolver from the `instrument-observability` skill and pass it to `useMicrosoftOpenTelemetry({ a365: { useS2SEndpoint: true, tokenResolver } })`.
 
-### For Python (AI Teammate / legacy delegated path only)
+### For Python (legacy delegated route only)
 
-`AgenticTokenCache` from `microsoft.opentelemetry.a365.hosting.token_cache_helpers` handles delegated token caching automatically. Do not use it for non-AI-Teammate blueprint telemetry.
+`AgenticTokenCache` from `microsoft.opentelemetry.a365.hosting.token_cache_helpers` handles delegated token caching automatically. Use it only on the legacy delegated route.
 
-### For Python (blueprint agents)
+### For Python (all agents, including AI Teammates)
 
 Create or reuse the app-only resolver from the `instrument-observability` skill and pass it to `use_microsoft_opentelemetry(..., a365_use_s2s_endpoint=True, a365_token_resolver=...)`.
 
@@ -743,26 +746,26 @@ This skill is safe to rerun. On subsequent runs:
 
 ### OtelWrite App Role Assignment
 
-> **Blueprint agents:** `a365 setup all` does not request Observability API permissions for blueprint agents in any auth mode — the S2S endpoint authorizes registered agent instances without the `OtelWrite` role, so no admin consent is needed. Setup exits with code 1 if registration fails; retry with `a365 setup all --agent-registration-only`. Grant `OtelWrite` manually (steps below) only if the agent still exports through the delegated (OBO) route. Permissions granted by earlier runs are not revoked.
+> **No Observability permissions by default:** `a365 setup all` does not request Observability API permissions for blueprint agents (in any auth mode) or AI Teammates. Agents export telemetry with an app-only token through the S2S endpoint, which authorizes a blueprint agent by its agent registration and an AI Teammate by its blueprint's registration, so no admin consent is needed. For blueprint agents, setup exits with code 1 if registration fails; retry with `a365 setup all --agent-registration-only` (AI Teammates don't use this flag). Permissions granted by earlier runs are not revoked.
 
-For **AI Teammate** agents, `a365 setup all` still **attempts** to grant the `Agent365.Observability.OtelWrite` application role to the **blueprint service principal**, which requires **Global Administrator** privileges. If the logged-in user is not a Global Admin, the assignment fails with 403 and trace exports can return HTTP 403 from the observability service.
+Grant `Agent365.Observability.OtelWrite` manually (requires **Global Administrator**) only when:
+- the agent still exports through the delegated (OBO) route: grant the **delegated** permission.
+- app-only trace exports return HTTP 403 `insufficient_scope`: the service did not authorize the agent by registration. Grant the **application** permission on the blueprint; agent identities inherit it.
 
-**The CLI prints a PowerShell admin consent script** in its output when the assignment fails. When running `a365 setup all`, **always scan the output for this script block** and display it to the user in a fenced code block so they can copy it and hand it to a Global Admin.
-
-For a **blueprint agent still exporting through the delegated (OBO) route**, prefer the CLI opt-back-in path (requires Global Administrator):
+To restore the delegated permission, prefer the CLI opt-back-in path:
 
 ```bash
 a365 setup permissions custom --resource-app-id <Observability app ID for your cloud> --scopes Agent365.Observability.OtelWrite
 ```
 
-This stamps the Observability inheritable-permission entry on the blueprint and requests admin consent. The Entra portal path below works for existing blueprints only when that inheritable-permission entry already exists.
+This stamps the Observability inheritable-permission entry on the blueprint and requests admin consent. Agent identities inherit the blueprint's Observability permissions only through this entry, so the Entra portal and PowerShell paths below work only when it already exists; run this command first on blueprints that lack it.
 
-If the AI Teammate script was not captured, grant the permission manually via Entra portal (requires Global Administrator):
+To grant either permission in the Entra portal:
 1. [Entra portal](https://entra.microsoft.com) > App registrations > select Blueprint app > API permissions
 2. Add a permission > APIs my organization uses > search the Observability app ID for your cloud (commercial: `9b975845-388f-4429-889e-eab1ef63949c`; see `src/Microsoft.Agents.A365.DevTools.Cli/design.md#environment-variable-overrides` for other clouds)
-3. Add both **Delegated** and **Application** `Agent365.Observability.OtelWrite` > Grant admin consent
+3. Add **Delegated** `Agent365.Observability.OtelWrite` for the delegated route, or **Application** `Agent365.Observability.OtelWrite` for a 403 `insufficient_scope` > Grant admin consent
 
-Alternatively for **AI Teammates**, look up the Blueprint and Observability enterprise applications and create the application-role assignment the S2S route accepts:
+Alternatively, for a 403 `insufficient_scope`, look up the Blueprint and Observability enterprise applications and create the application-role assignment the S2S route accepts:
 
 ```powershell
 $blueprintSp = Get-MgServicePrincipal -Filter "appId eq '<blueprintAppId>'"
@@ -772,7 +775,6 @@ New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $blueprintSp.Id -Pri
 ```
 
 - `<Observability app ID for your cloud>` is the resource application ID, not the service-principal object ID.
-- For agents provisioned before CLI 1.1, this manual step is still required
 
 ### Node.js and .NET SDK `/otlp/` URL Path Bug
 

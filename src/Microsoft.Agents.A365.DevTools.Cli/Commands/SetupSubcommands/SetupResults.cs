@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
@@ -288,14 +290,29 @@ public class SetupResults
     public bool ProjectSettingsWritten { get; set; }
 
     /// <summary>
+    /// True when project settings were not written because the destination is outside the a365.config.json
+    /// directory or is a link. Drives the "skipped" row in the setup summary.
+    /// </summary>
+    public bool ProjectSettingsBlocked { get; set; }
+
+    /// <summary>Records the project settings sync outcome for the setup summary.</summary>
+    public void RecordProjectSettingsResult(ProjectSettingsSyncResult result)
+    {
+        ProjectSettingsWritten = result == ProjectSettingsSyncResult.Written;
+        ProjectSettingsBlocked = result == ProjectSettingsSyncResult.Blocked;
+        if (ProjectSettingsBlocked)
+            Warnings.Add(ErrorMessages.ProjectSettingsBlockedWarning);
+    }
+
+    /// <summary>
     /// True when the permission grants step was explicitly skipped because --agent-registration-only
     /// was passed. Drives the "skipped" row in the setup summary instead of showing a grant status.
     /// </summary>
     public bool PermissionGrantsSkipped { get; set; }
 
     /// <summary>
-    /// True when Observability API permissions were not requested (blueprint agents).
-    /// Registration failure is then an error, and the admin consent walkthrough omits Observability API.
+    /// True when Observability API permissions were not requested. For blueprint agents, registration
+    /// failure is then an error; the admin consent walkthrough omits Observability API.
     /// </summary>
     public bool ObservabilityPermissionsSkipped { get; set; }
 

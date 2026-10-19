@@ -56,7 +56,7 @@ public class McpServerPermissionService
 
         var displayName = McpConstants.BuildByoAppDisplayName(serverName);
 
-        var lookup = await _graphApiService.TryFindApplicationAppIdsByDisplayNameAsync(
+        var lookup = await _graphApiService.TryFindApplicationAppIdsByDisplayNameForAgentAccessAsync(
             tenantId, displayName, ct, UseDeviceCodeAuthentication);
         var appIds = lookup.AppIds;
         if (appIds is null)
@@ -111,8 +111,8 @@ public class McpServerPermissionService
             appId = appIds[0];
         }
 
-        var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
-            tenantId, appId, ct, AuthenticationConstants.RequiredPermissionGrantScopes, UseDeviceCodeAuthentication);
+        var spObjectId = await _graphApiService.LookupServicePrincipalByAppIdForAgentAccessAsync(
+            tenantId, appId, ct, UseDeviceCodeAuthentication);
         if (string.IsNullOrWhiteSpace(spObjectId))
         {
             _logger.LogError(
@@ -141,7 +141,7 @@ public class McpServerPermissionService
         ArgumentException.ThrowIfNullOrWhiteSpace(blueprintId);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceSpObjectId);
 
-        var instances = await _blueprintService.GetAgentInstancesForBlueprintAsync(
+        var instances = await _blueprintService.GetAgentInstancesForBlueprintForAgentAccessAsync(
             tenantId, blueprintId, ct, UseDeviceCodeAuthentication);
 
         var statuses = new List<AgentInstancePermissionStatus>(instances.Count);
@@ -149,7 +149,7 @@ public class McpServerPermissionService
         {
             ct.ThrowIfCancellationRequested();
 
-            var grants = await _graphApiService.TryGetOauth2PermissionGrantsAsync(
+            var grants = await _graphApiService.TryGetOauth2PermissionGrantsForAgentAccessAsync(
                 tenantId, instance.IdentitySpId, ct, UseDeviceCodeAuthentication);
             if (grants is null)
             {
@@ -185,13 +185,12 @@ public class McpServerPermissionService
         ArgumentException.ThrowIfNullOrWhiteSpace(agentServicePrincipalObjectId);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceSpObjectId);
 
-        return await _graphApiService.CreateOrUpdateOauth2PermissionGrantAsync(
+        return await _graphApiService.CreateOrUpdateOauth2PermissionGrantForAgentAccessAsync(
             tenantId,
             agentServicePrincipalObjectId,
             resourceSpObjectId,
             [McpConstants.V2ScopeValue],
             ct,
-            AuthenticationConstants.RequiredPermissionGrantScopes,
             // Never patch a user-scoped grant in place of the tenant-wide one this command
             // reports on, or the agent would still be missing the permission (issue #500).
             requireMatchingConsentType: true,

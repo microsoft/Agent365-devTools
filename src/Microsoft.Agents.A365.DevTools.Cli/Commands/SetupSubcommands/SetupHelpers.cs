@@ -113,15 +113,20 @@ internal static class SetupHelpers
     /// Scope names are matched case-insensitively, consistent with custom-permission validation.
     /// </summary>
     internal static bool CustomPermissionsRequestObservability(Agent365Config config)
+        => CustomPermissionsRequestObservability(config.CustomBlueprintPermissions, config.Environment);
+
+    internal static bool CustomPermissionsRequestObservability(
+        IEnumerable<CustomResourcePermission>? customPermissions,
+        string? environment)
     {
         string? expectedAppId = null;
-        foreach (var customPerm in config.CustomBlueprintPermissions ?? new List<CustomResourcePermission>())
+        foreach (var customPerm in customPermissions ?? Enumerable.Empty<CustomResourcePermission>())
         {
             var (isValid, _) = customPerm.Validate();
             if (!isValid || !ConfigConstants.IsObservabilityApiAppId(customPerm.ResourceAppId))
                 continue;
 
-            expectedAppId ??= ConfigConstants.GetObservabilityApiAppId(config.Environment);
+            expectedAppId ??= ConfigConstants.GetObservabilityApiAppId(environment);
             if (string.Equals(customPerm.ResourceAppId, expectedAppId, StringComparison.OrdinalIgnoreCase)
                 && customPerm.Scopes.Contains(ConfigConstants.ObservabilityApiOtelWriteScope, StringComparer.OrdinalIgnoreCase))
             {
@@ -931,6 +936,8 @@ internal static class SetupHelpers
                 logger.LogInformation(DryRunRow(settingsStep, "Project settings") + notRun);
             else if (results.ProjectSettingsWritten)
                 logger.LogInformation(DryRunRow(settingsStep, "Project settings") + "written");
+            else if (results.ProjectSettingsBlocked)
+                logger.LogWarning(DryRunRow(settingsStep, "Project settings") + "skipped — see warnings");
         }
 
         } // end full step table
@@ -1260,8 +1267,8 @@ internal static class SetupHelpers
             {
                 nextStepLines.Add(() => logger.LogInformation("  1. Run 'a365 setup permissions mcp' to configure MCP permissions"));
                 nextStepLines.Add(() => logger.LogInformation(results.IsM365
-                    ? "  2. Run 'a365 setup permissions bot' to configure Bot API, Observability, Defender, and Power Platform permissions"
-                    : "  2. Run 'a365 setup permissions bot' to configure Observability, Defender, and Power Platform permissions"));
+                    ? "  2. Run 'a365 setup permissions bot' to configure Bot API, Defender, and Power Platform permissions"
+                    : "  2. Run 'a365 setup permissions bot' to configure Defender and Power Platform permissions"));
             }
 
             if (nextStepLines.Count > 0)
@@ -1687,7 +1694,8 @@ internal static class SetupHelpers
         if (ctx.Results.TenantWideConsentOutcome == Models.GrantOutcome.Granted || string.IsNullOrWhiteSpace(ctx.Config.AgentBlueprintId))
             return;
 
-        var includeObservability = !ctx.SkipObservabilityPermissions;
+        // A custom-permission opt-back-in still needs Observability in the non-admin consent URL.
+        var includeObservability = !ctx.ObservabilityPermissionsEffectivelySkipped;
         var consentResourceNames = PopulateAdminConsentUrls(
             ctx.Config, mcpResourceAppId, mcpScopes, isM365, mcpScopesByAudience,
             mcpAudienceDisplayNames, includeObservability, includeDefenderDelegated);
@@ -1771,7 +1779,11 @@ internal static class SetupHelpers
         }
 
         // 4. Inheritable Permissions
-        logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configure for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Observability API, Defender API, Power Platform API");
+        logger.LogInformation(DryRunRow(4, "Inheritable Permissions") + "configure for Microsoft Graph, Agent 365 Tools, Messaging Bot API, Defender API, Power Platform API");
+        if (config is null || !CustomPermissionsRequestObservability(config))
+            logger.LogInformation(sub + "Observability API not requested (telemetry is authorized by the blueprint's registration)");
+        else
+            logger.LogInformation(sub + "Observability API requested by customBlueprintPermissions");
 
         // 5. Blueprint Permission Grants
         logger.LogInformation(DryRunRow(5, "Blueprint Permission Grants") + "admin approval required — see 'Action Required' in setup output");

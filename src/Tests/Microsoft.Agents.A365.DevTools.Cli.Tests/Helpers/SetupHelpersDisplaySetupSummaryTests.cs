@@ -5,6 +5,7 @@ using System.Linq;
 using FluentAssertions;
 using Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 using Microsoft.Agents.A365.DevTools.Cli.Constants;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
@@ -960,7 +961,7 @@ public class SetupHelpersDisplaySetupSummaryTests
         logger.AllOutput.Should().Contain("a365 setup permissions mcp",
             because: "the blueprint summary must point to the remaining MCP permissions step");
         logger.AllOutput.Should().Contain("a365 setup permissions bot",
-            because: "the blueprint summary must point to the bot/observability permissions step");
+            because: "the blueprint summary must point to the bot permissions step");
         logger.AllOutput.Should().Contain("Defender",
             because: "the permissions bot next step configures Defender and must disclose that work");
     }
@@ -1390,4 +1391,48 @@ public class SetupHelpersDisplaySetupSummaryTests
         BatchPermissionsPhase1Completed = true,
         BatchPermissionsPhase2Completed = true,
     };
+
+    // ── project settings ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A clean non-DW run whose project settings sync was blocked because the destination was rejected.
+    /// </summary>
+    private static SetupResults BuildProjectSettingsBlockedResults()
+    {
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintServicePrincipalCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            AgentInstanceRegistered = true,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+        };
+        results.RecordProjectSettingsResult(ProjectSettingsSyncResult.Blocked);
+        return results;
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_ProjectSettingsBlocked_ShowsSkippedRowAndRemediation()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.DisplaySetupSummary(BuildProjectSettingsBlockedResults(), logger);
+
+        var settingsRow = System.Array.Find(logger.AllOutput.Split('\n'), l => l.Contains("Project settings"));
+        settingsRow.Should().NotBeNull(
+            because: "a blocked settings sync must stay visible in the summary instead of disappearing");
+        settingsRow!.Should().Contain("skipped",
+            because: "the row must say the project settings were not written");
+        logger.AllOutput.Should().Contain(ErrorMessages.ProjectSettingsBlockedWarning,
+            because: "the summary must explain why the settings were not written and how to fix it");
+        logger.AllOutput.Should().Contain("Setup completed successfully with warnings",
+            because: "the blueprint and agent were set up, but the user still has to fix where settings are written");
+    }
 }

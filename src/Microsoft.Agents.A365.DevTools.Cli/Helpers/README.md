@@ -16,6 +16,7 @@ This folder contains utility helper classes that provide common functionality us
 | **SecretProtectionHelper** | `SecretProtectionHelper.cs` | Mask secrets in logs and output |
 | **TenantDetectionHelper** | `TenantDetectionHelper.cs` | Detect tenant from Azure CLI or environment |
 | **ProjectSettingsSyncHelper** | `ProjectSettingsSyncHelper.cs` | Sync settings between project files |
+| **SecretFileGuard** | `SecretFileGuard.cs` | Allow secret writes only to files inside the `a365.config.json` directory, never through links |
 
 ---
 

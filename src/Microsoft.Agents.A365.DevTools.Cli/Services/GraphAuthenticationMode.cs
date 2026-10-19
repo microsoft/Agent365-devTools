@@ -19,5 +19,12 @@ public enum GraphAuthenticationMode
     /// scopes. Required when reading or repairing a client app registration so an underconfigured
     /// app does not need to authorize its own diagnosis.
     /// </summary>
-    Ambient = 1
+    Ambient = 1,
+
+    /// <summary>
+    /// Authenticate as <see cref="Constants.AuthenticationConstants.GraphPowershellClientId"/>
+    /// ('Microsoft Graph Command Line Tools') with the fixed
+    /// <see cref="Constants.AuthenticationConstants.McpAgentAccessScopes"/> set, for 'develop-mcp grant-agents-access'.
+    /// </summary>
+    McpAgentAccess = 2
 }

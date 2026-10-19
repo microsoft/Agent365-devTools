@@ -76,23 +76,36 @@ internal class EntraAppProvisioner
         }
         _logger.LogInformation("Created Entra app '{AppName}' (clientId: {ClientId})", appName, app.Value.ClientId);
 
-        var secret = await _graphApiService.AddAppPasswordAsync(tenantId, app.Value.ObjectId, lifetimeMonths: lifetimeMonths, ct: ct);
-        if (string.IsNullOrWhiteSpace(secret))
+        // The app now exists in the tenant. If any follow-up step (secret creation, validation)
+        // throws, the app is orphaned with no caller-side cleanup, so compensate here before
+        // rethrowing. Cleanup is cancellation-independent so a Ctrl+C still removes the orphan.
+        try
         {
-            _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", appName);
-            await TryDeleteOrphanedAppAsync(tenantId, app.Value.ObjectId, appName, "secret-creation failed", ct);
-            return null;
-        }
+            var secret = await _graphApiService.AddAppPasswordAsync(tenantId, app.Value.ObjectId, lifetimeMonths: lifetimeMonths, ct: ct);
+            if (string.IsNullOrWhiteSpace(secret))
+            {
+                _logger.LogError("Failed to create secret for '{AppName}'. Run with -v for details.", appName);
+                await TryDeleteOrphanedAppAsync(tenantId, app.Value.ObjectId, appName, "secret-creation failed");
+                return null;
+            }
 
-        if (string.IsNullOrWhiteSpace(app.Value.ClientId))
+            if (string.IsNullOrWhiteSpace(app.Value.ClientId))
+            {
+                _logger.LogError("{Role} Entra application was created but returned an empty client ID", roleDisplay);
+                await TryDeleteOrphanedAppAsync(tenantId, app.Value.ObjectId, appName, "empty client ID returned");
+                return null;
+            }
+
+            _logger.LogDebug("Created {Role} app: {ClientId}", roleDisplay, app.Value.ClientId);
+            return new ProxyAppResult(app.Value.ClientId, secret, app.Value.ObjectId, appName);
+        }
+        catch (Exception ex)
         {
-            _logger.LogError("{Role} Entra application was created but returned an empty client ID", roleDisplay);
-            await TryDeleteOrphanedAppAsync(tenantId, app.Value.ObjectId, appName, "empty client ID returned", ct);
-            return null;
+            _logger.LogError("Provisioning '{AppName}' failed after the app was created; deleting the orphaned app.", appName);
+            _logger.LogDebug("Exception details: {Exception}", ex.ToString());
+            await TryDeleteOrphanedAppAsync(tenantId, app.Value.ObjectId, appName, "provisioning threw after app creation");
+            throw;
         }
-
-        _logger.LogDebug("Created {Role} app: {ClientId}", roleDisplay, app.Value.ClientId);
-        return new ProxyAppResult(app.Value.ClientId, secret, app.Value.ObjectId, appName);
     }
 
     /// <summary>
@@ -104,7 +117,7 @@ internal class EntraAppProvisioner
     /// secondary cleanup error to drown the root cause; the user can clean up manually using the
     /// objectId we log.
     /// </summary>
-    private async Task TryDeleteOrphanedAppAsync(string tenantId, string objectId, string appName, string reason, CancellationToken ct)
+    private async Task TryDeleteOrphanedAppAsync(string tenantId, string objectId, string appName, string reason)
     {
         if (string.IsNullOrWhiteSpace(objectId))
         {
@@ -113,7 +126,7 @@ internal class EntraAppProvisioner
 
         try
         {
-            var deleted = await _graphApiService.DeleteEntraAppAsync(tenantId, objectId, ct);
+            var deleted = await _graphApiService.DeleteEntraAppAsync(tenantId, objectId, CancellationToken.None);
             if (deleted)
             {
                 _logger.LogInformation(

@@ -725,9 +725,9 @@ internal static class NonDwBlueprintSetupOrchestrator
             ctx.Logger.LogInformation("Updating project settings...");
             using (ctx.Logger.Indent())
             {
-                ctx.Results.ProjectSettingsWritten = await ProjectSettingsSyncHelper.ExecuteAsync(
+                ctx.Results.RecordProjectSettingsResult(await ProjectSettingsSyncHelper.ExecuteAsync(
                     ctx.ConfigFile.FullName, ctx.Config,
-                    ctx.PlatformDetector, ctx.Logger);
+                    ctx.PlatformDetector, ctx.Logger));
             }
         }
     }

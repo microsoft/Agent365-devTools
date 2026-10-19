@@ -392,6 +392,12 @@ public static class DevelopMcpCommand
             description: "Publisher name for the MCP Server. Required for custom (user-created) MCP servers; ignored for 1p Microsoft-owned servers (e.g. msdyn_DataverseMCPServer) which always publish as 'Microsoft'.");
         command.AddOption(publisherNameOption);
 
+        var serviceTreeIdOption = new Option<string?>("--service-tree-id", description: "ServiceTree ID for Entra app registration (required in Microsoft corporate tenants)");
+        command.AddOption(serviceTreeIdOption);
+
+        var secretLifetimeMonthsOption = new Option<int?>(["--secret-lifetime-months", "-l"], description: "Lifetime in months (1-24) for the generated client secret on the A365 proxy Entra app. Default is 2 years. Set a value smaller than the appManagementPolicies cap in your tenant.");
+        command.AddOption(secretLifetimeMonthsOption);
+
         var yesOption = new Option<bool>(
             ["--yes", "-y"],
             description: "Skip the interactive 'Proceed with publish? (y/N)' confirmation.");
@@ -412,7 +418,9 @@ public static class DevelopMcpCommand
                 DisplayName: context.ParseResult.GetValueForOption(displayNameOption),
                 PublisherName: context.ParseResult.GetValueForOption(publisherNameOption),
                 Yes: context.ParseResult.GetValueForOption(yesOption),
-                DryRun: context.ParseResult.GetValueForOption(dryRunOption));
+                DryRun: context.ParseResult.GetValueForOption(dryRunOption),
+                ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption),
+                SecretLifetimeMonths: context.ParseResult.GetValueForOption(secretLifetimeMonthsOption));
 
             var executor = new PublishCommandExecutor(logger, toolingService, graphApiService);
             var success = await executor.ExecuteAsync(args, context.GetCancellationToken());

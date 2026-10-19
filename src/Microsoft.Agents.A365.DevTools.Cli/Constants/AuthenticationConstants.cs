@@ -238,6 +238,24 @@ public static class AuthenticationConstants
     public const string AgentRegistrationReadWriteAllScope = "AgentRegistration.ReadWrite.All";
 
     /// <summary>
+    /// Delegated scope for reading and writing delegated permission grants
+    /// (GET/POST /v1.0/oauth2PermissionGrants). Deliberately absent from
+    /// <see cref="RequiredClientAppPermissions"/>: #409 removed it to keep the custom app
+    /// least-privilege, so flows needing it authenticate as Graph Command Line Tools instead.
+    /// </summary>
+    public const string DelegatedPermissionGrantReadWriteAllScope = "DelegatedPermissionGrant.ReadWrite.All";
+
+    /// <summary>
+    /// Fixed scope set for 'develop-mcp grant-agents-access'; one cache entry means one sign-in per run.
+    /// </summary>
+    public static readonly string[] McpAgentAccessScopes = new[]
+    {
+        ApplicationReadAllScope,                     // GET /applications and /servicePrincipals lookups
+        AgentIdentityReadAllScope,                   // GET /beta/servicePrincipals/microsoft.graph.agentIdentity
+        DelegatedPermissionGrantReadWriteAllScope,   // GET/POST /oauth2PermissionGrants
+    };
+
+    /// <summary>
     /// Required delegated permissions for the custom client app used by a365 CLI.
     /// These permissions enable the CLI to manage Entra ID applications and agent blueprints.
     /// All permissions require admin consent.

@@ -13,17 +13,18 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 /// <summary>
 /// Tests for <see cref="PublishCommandExecutor"/> dry-run output. The dry-run log must mirror the
 /// real Entra app naming scheme (derived from <c>ServerName</c>) so users can predict what will be
-/// created — the <c>{ServerName}-PublicClients</c> app.
+/// created — the <c>{ServerName}-PublicClients</c> and <c>{ServerName}-A365Proxy</c> apps.
 /// </summary>
 public class PublishCommandExecutorDryRunTests
 {
     /// <summary>
-    /// The dry-run log must (a) name only the Public Clients app — derived from <c>ServerName</c>,
-    /// not <c>Alias</c> — (b) describe a PPMI-scope-only back-fill (no redirect-URI back-fill), and
-    /// (c) skip the platform publish call entirely.
+    /// The dry-run log must (a) name the Public Clients app — derived from <c>ServerName</c>,
+    /// not <c>Alias</c> — and (b) describe the full post-publish configuration: PPMI-scope back-fill,
+    /// the A365 proxy app's API permission and redirect URI, and its removal when no connector is
+    /// created. It must also (c) skip the platform publish call entirely.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_DryRun_NamesPublicClientsApp_AndBackfillsPpmiScopeOnly()
+    public async Task ExecuteAsync_DryRun_NamesPublicClientsApp_AndDescribesProxyConfiguration()
     {
         var logger = Substitute.For<ILogger>();
         var toolingService = Substitute.For<IAgent365ToolingService>();
@@ -58,13 +59,14 @@ public class PublishCommandExecutorDryRunTests
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
 
-        // The back-fill line now mentions only PPMI scope, not redirect URI.
+        // The back-fill line now also describes the proxy app's permission, redirect URI, and cleanup.
         logger.Received(1).Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
             Arg.Is<object>(o =>
-                o.ToString()!.Contains("back-fill PPMI scope") &&
-                !o.ToString()!.Contains("redirect URI")),
+                o.ToString()!.Contains("PPMI scope") &&
+                o.ToString()!.Contains("A365 proxy app") &&
+                o.ToString()!.Contains("redirect URI")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
 
@@ -99,6 +101,50 @@ public class PublishCommandExecutorDryRunTests
         await executor.ExecuteAsync(args, CancellationToken.None);
 
         // Dry-run short-circuits before the platform publish call regardless of publisher.
+        await toolingService.DidNotReceiveWithAnyArgs().PublishServerAsync(default!, default!, default!, default);
+    }
+
+    /// <summary>
+    /// Dry-run for a first-party Dataverse server must describe only the Public Clients app and make
+    /// clear no A365 proxy app/secret/connector is created, so the preview matches classify-first
+    /// behavior. It must not claim it will forward proxy credentials, and must skip the platform call.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DryRun_FirstPartyDataverseServer_DescribesPublicClientsOnly_NoProxy()
+    {
+        var logger = Substitute.For<ILogger>();
+        var toolingService = Substitute.For<IAgent365ToolingService>();
+
+        var args = new RawPublishArgs(
+            EnvironmentId: "00000000-0000-0000-0000-000000000000",
+            ServerName: "msdyn_DataverseMCPServer",
+            Alias: "myAlias",
+            DisplayName: "Test Display",
+            PublisherName: null,
+            Yes: false,
+            DryRun: true);
+
+        var executor = new PublishCommandExecutor(logger, toolingService, graphApiService: null);
+
+        await executor.ExecuteAsync(args, CancellationToken.None);
+
+        logger.Received(1).Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o =>
+                o.ToString()!.Contains("first-party Dataverse MCP server") &&
+                o.ToString()!.Contains("msdyn_DataverseMCPServer-PublicClients")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
+        // Must NOT claim it will forward proxy credentials — that line is only for custom servers.
+        logger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("forward the A365 proxy app credentials")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+
         await toolingService.DidNotReceiveWithAnyArgs().PublishServerAsync(default!, default!, default!, default);
     }
 }

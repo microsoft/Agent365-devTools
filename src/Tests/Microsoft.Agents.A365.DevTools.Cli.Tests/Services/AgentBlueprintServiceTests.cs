@@ -788,6 +788,37 @@ public class AgentBlueprintServiceTests
         }
     }
 
+    /// <summary>
+    /// The agent-access token carries a fixed scope set that cannot include
+    /// AgentIdUser.ReadWrite.All, so this flow must never issue the agentUser query.
+    /// </summary>
+    [Fact]
+    public async Task GetAgentInstancesForBlueprintForAgentAccessAsync_NeverQueriesAgentUsers()
+    {
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            const string blueprintId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    value = new[]
+                    {
+                        new { id = "sp-obj-1", displayName = "Instance A", agentIdentityBlueprintId = blueprintId }
+                    }
+                }))
+            });
+
+            var instances = await service.GetAgentInstancesForBlueprintForAgentAccessAsync("tenant-id", blueprintId);
+
+            instances.Should().HaveCount(1);
+            handler.SentRequests.Should().NotContain(r => r.Url.Contains("agentUser", StringComparison.OrdinalIgnoreCase),
+                because: "the agent-access token cannot carry AgentIdUser.ReadWrite.All, so issuing that " +
+                         "query would 403 the whole command for a value grant-agents-access never reads");
+        }
+    }
+
     [Fact]
     public async Task GetAgentInstancesForBlueprintAsync_ReturnsEmpty_WhenNoneFound()
     {

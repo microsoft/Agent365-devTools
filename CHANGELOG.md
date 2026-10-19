@@ -8,9 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade Notes
 
-#### Agents exporting through the delegated (OBO) route: grant Observability API permissions
+#### Agents that still need Observability API permissions
 
-Agents that export telemetry through the delegated (OBO) route need `Agent365.Observability.OtelWrite` granted as both a **delegated** and an **application** permission on the blueprint app. Requires Global Administrator.
+`a365 setup all` no longer requests `Agent365.Observability.OtelWrite` for blueprint agents (#501) or AI Teammates (#510). Agents that export telemetry with an app-only token through the S2S endpoint don't need it: the service authorizes a blueprint agent by its agent registration and an AI Teammate by its blueprint's registration. Grant it manually on the blueprint app (requires Global Administrator) only when:
+
+- the agent exports through the delegated (OBO) route: grant the **delegated** permission.
+- app-only exports return 403 `insufficient_scope`: grant the **application** permission, which agent identities inherit.
 
 **Option A — Entra portal** (existing blueprints that already have the Observability inheritable-permission entry):
 
@@ -20,13 +23,11 @@ Agents that export telemetry through the delegated (OBO) route need `Agent365.Ob
    - GCC Moderate: `2c672ad5-b104-44ed-8069-bb68dd138546`
    - GCC High: `009c6bd0-82e4-4466-95b3-4c996521f3d7`
    - DoD: `a9e04047-c6a7-430b-a7ae-faf8f8eed1b7`
-3. **Delegated permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
-4. Repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
+3. Delegated route: **Delegated permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
+4. 403 `insufficient_scope`: repeat step 2 > **Application permissions** > select `Agent365.Observability.OtelWrite` > **Add permissions**
 5. **Grant admin consent for \<tenant\>** > confirm
 
-**Option B — CLI**: `a365 setup admin` has been removed in this release. For blueprint agents created after this release, run `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud, from step 2> --scopes Agent365.Observability.OtelWrite` to stamp the inheritable permission and request consent. For AI Teammates, the `a365 setup all` summary also prints the PowerShell steps for the application permission.
-
-Blueprint agents that export telemetry through the app-only S2S endpoint don't need these permissions, and `a365 setup all` no longer requests them for blueprint agents (#501).
+**Option B — CLI**: `a365 setup admin` has been removed in this release. For blueprints that lack the inheritable-permission entry, including those created after this release, run `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud, from step 2> --scopes Agent365.Observability.OtelWrite` to stamp it and request consent for the delegated permission. The CLI does not grant the application permission; use Option A for it.
 
 #### Existing agents: grant Defender API permissions
 
@@ -35,7 +36,7 @@ Agents provisioned before this release should have a Global Administrator re-run
 ### Added
 
 - `a365 setup all` now grants the Defender API `RealtimeProtection.Evaluate.All` permission according to `--authmode` for blueprint agents (delegated for `obo`, application for `s2s`, both for `both`) and as both delegated and application for AI Teammates (#485).
-- `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server, and prompts you to select which ones to grant it to (#500).
+- `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server and prompts you to select which ones to grant it to, requiring administrator consent on the first run in a tenant (#500).
 - When more than one Entra application shares the MCP server's name, `a365 develop-mcp grant-agents-access` now lists them all and asks which one to use instead of failing (#500).
 - `a365 develop-mcp grant-agents-access --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere (#500).
 - `--device-code` option on `a365 develop-mcp grant-agents-access` — signs in with a device code instead of the browser or Windows sign-in dialog, for embedded and remote terminals (#500).
@@ -73,6 +74,9 @@ Agents provisioned before this release should have a Global Administrator re-run
 - `--secret-lifetime-months <N>` option (and matching `secretLifetimeMonths` field in the `--input-file` JSON) on `develop-mcp register-external-mcp-server` — controls the lifetime of the client secrets created on the A365Proxy and RemoteProxy Entra apps. Valid range `1-24`; omit to use the Graph default (~2 years). Calendar-aware (uses `DateTimeOffset.AddMonths`, so Jan 31 + 1 month → Feb 28/29). Added so tenants with an `appManagementPolicies` cap on client-secret lifetime — previously a hard failure inside `CreateEntraAppsAsync` with a generic "Failed to create secret" message — can fit registration inside their tenant's policy. When Graph rejects the requested (or default) lifetime with a tenant-policy error, the CLI now emits an actionable error naming the flag and the attempted value (e.g. `Tenant Entra ID policy rejected the requested 12-month lifetime ... Pass --secret-lifetime-months N with a smaller value (e.g. --secret-lifetime-months 3) that fits inside your tenant's appManagementPolicies cap.`) instead of the previous generic failure.
 - `--publisher-name` / `-p` option on `develop-mcp publish` — sets the publisher name written into the published MCP server's package metadata. Required for custom (user-created) MCP servers; ignored for 1p Microsoft-owned servers (e.g. `msdyn_DataverseMCPServer`), which always publish as "Microsoft". Prompted interactively when omitted.
 - `--yes` / `-y` option on `develop-mcp publish` — skips the interactive "Proceed with publish? (y/N)" confirmation.
+- `a365 develop-mcp publish` now provisions an A365 proxy Entra app for custom (non-Dataverse) MCP servers and forwards its credentials so the Power Platform connector is created at publish time; first-party Dataverse servers skip it (#499).
+- `--service-tree-id` option on `a365 develop-mcp publish` — stamps the ServiceTree ID on the Entra apps publish creates, required in Microsoft corporate tenants (#499).
+- `--secret-lifetime-months <N>` / `-l` option on `a365 develop-mcp publish` — caps the A365 proxy app's client-secret lifetime (1-24 months) for tenants with an `appManagementPolicies` cap (#499).
 - `a365 develop get-token --device-code` — forces device code auth for Microsoft Graph scopes the Windows WAM broker rejects (e.g. Exchange `MailboxSettings.ReadWrite`, `ExchangeMessageTrace.Read.All`).
 
 ### Fixed
@@ -94,6 +98,7 @@ Agents provisioned before this release should have a Global Administrator re-run
 - `a365 publish` no longer crashes when `manifest.json` has a non-string `name.short` value (#478).
 - `setup all --agent-registration-only` now exits non-zero and reports errors when the requested agent registration step fails (#478).
 - `a365 setup all` now exits with code 1 when blueprint-agent registration fails or cannot be verified, including `--agent-registration-only` runs with unverifiable existing registrations (#501).
+- Non-admin `a365 setup all` runs now include the Observability API in the combined admin consent URL when `customBlueprintPermissions` adds it back (#510).
 - `a365 develop-mcp grant-agents-access --device-code` no longer prompts repeatedly within a single command, and no longer fails in embedded or remote terminals where the sign-in prompt could not be displayed (#500).
 - Setup no longer fails to detect the Agent 365 CLI application in tenants where it is not yet provisioned, and reports lookup errors instead of silently switching your configured client app (#489).
 - The first-party Agent 365 CLI app now uses device code authentication when Windows Account Manager is unavailable, avoiding unsupported browser-response errors in WSL, macOS, and Linux (#489).
@@ -141,7 +146,10 @@ Agents provisioned before this release should have a Global Administrator re-run
 ### Changed
 
 - `a365 setup all` no longer requests Observability API permissions for blueprint agents; registered agents that export telemetry through the app-only S2S endpoint need no admin consent (#501).
+- `a365 setup all` no longer requests Observability API permissions for AI Teammates, and `a365 setup permissions bot` and `a365 create-instance` no longer request them for any agent, because the service authorizes app-only telemetry exports by registration (#510).
 - Hardened token storage: the CLI no longer writes access tokens to a plaintext file — they live only in the OS-protected MSAL cache (DPAPI/Keychain/owner-only file). Any legacy plaintext cache is removed automatically; sign-in prompts are unchanged.
+- Bearer tokens and the agent blueprint client secret are now written only to project files inside the directory that contains `a365.config.json`, never through a symbolic link or junction; when `deploymentProjectPath` points elsewhere the write is skipped, and the warning and `setup` summary explain how to fix it (#509).
+- `a365 develop get-token` no longer includes the bearer token in its guidance output when run without `a365.config.json` (#509).
 - `develop-mcp register-external-mcp-server` now sets `exit code 1` on failure paths (validation errors, tenant detection failure, Graph unavailable, Entra app creation failure, MCP-Platform AddMcpServer failure). Previously these paths logged an error and exited `0`, which made the command's success/failure status undetectable from scripts and CI. Successful dry-run and user-initiated cancellation at the y/N prompt continue to exit `0`.
 - Admin consent canary path (when the caller lacks `DelegatedPermissionGrant.Read.All`) no longer prompts for Enter immediately. The CLI now polls every 5 seconds, prints a friendly progress message at 30 seconds, and responds promptly to Enter or Ctrl+C. The previous jargon-heavy message about `oauth2PermissionGrants` was rewritten in plain English; technical details are demoted to `Debug`.
 - CLI log file now writes a run-start separator line (`====...====`) with the full command and timestamp before each invocation, making it easier to identify individual runs in a shared log file.
@@ -174,7 +182,7 @@ Agents provisioned before this release should have a Global Administrator re-run
 - **`a365 config permissions` removed** — replace with `a365 setup permissions custom --resource-app-id <guid> --scopes <scopes>`.
 - **`--config`/`-c` option removed from all commands** — config file is now always resolved from the current directory (`a365.config.json`). Scripts passing `--config <path>` will receive a parse error; change directory before running the CLI instead.
 - **`--tenant-id` / `-t` removed from `a365 develop-mcp register-external-mcp-server`** — the tenant is now auto-detected from the current `az login` session. Scripts passing `-t <id>` / `--tenant-id <id>` will receive a System.CommandLine parse error; run `az login --tenant <id>` (or `az account set --subscription <id>`) to target a specific tenant instead.
-- **`a365 develop-mcp publish` now creates a `<server-name>-PublicClients` Entra app registration in your tenant** — the publish orchestration runs CLI-side, so after each publish you will see a new app registration named `<server-name>-PublicClients` in your tenant's Entra ID. These are created by the CLI; clean them up with the same name if you unpublish.
+- **`a365 develop-mcp publish` now creates Entra app registrations in your tenant** — every publish creates a `<server-name>-PublicClients` app, and publishing a custom (non-Dataverse) server also creates a `<server-name>-A365Proxy` app (first-party Dataverse servers skip the proxy app). These are created by the CLI; clean them up with the same names if you unpublish (#499).
 - **`a365 develop-mcp publish` now requires the `Application.ReadWrite.All` Microsoft Graph permission** — needed to create the Entra app registration above. Running publish with only read-only Graph permissions will fail. Grant `Application.ReadWrite.All` to the account (or app) running the CLI before publishing.
 - **`--agent-instance-only` renamed to `--agent-registration-only`** on `a365 setup all` — update any scripts using the old flag name.
 - **`setup permissions custom --resource-app-id --scopes` applies permissions directly to Entra ID** — unlike the former `a365 config permissions` which only wrote to `a365.config.json`, this inline mode immediately mutates the live blueprint in Entra and cannot be undone by editing a config file.
