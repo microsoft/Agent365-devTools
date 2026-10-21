@@ -87,9 +87,27 @@ function Assert-A365Access {
 
 function New-A365DeclarationFixture {
     $roleNames = @('CustomSecAttributeAssignment.ReadWrite.All', 'CustomSecAttributeDefinition.Read.All')
+    $agentUserScopeNames = @(
+        'User.Read',
+        'User.Read.All',
+        'User.ReadWrite.All',
+        'Directory.Read.All',
+        'Organization.Read.All',
+        'Application.Read.All',
+        'AgentIdentity.Read.All',
+        'AgentIdentity.ReadWrite.All',
+        'AgentIdUser.ReadWrite.All',
+        'LicenseAssignment.ReadWrite.All',
+        'AppRoleAssignment.ReadWrite.All'
+    )
+    $agentUserScopes = @()
+    for ($i = 0; $i -lt $agentUserScopeNames.Count; $i++) {
+        $agentUserScopes += @{ id = "scope-agent-user-$($i + 1)"; value = $agentUserScopeNames[$i] }
+    }
     return [pscustomobject]@{
         RoleNames = $roleNames
         ScopeNames = $roleNames
+        AgentUserScopeNames = $agentUserScopeNames
         Graph = [pscustomobject]@{
             id = 'graph-sp'
             appRoles = @(
@@ -99,7 +117,7 @@ function New-A365DeclarationFixture {
             oauth2PermissionScopes = @(
                 @{ id = 'scope-a'; value = $roleNames[0] }
                 @{ id = 'scope-b'; value = $roleNames[1] }
-            )
+            ) + $agentUserScopes
         }
         ExistingAccess = @(
             @{ resourceAppId = $graphAppId; resourceAccess = @(
@@ -123,6 +141,7 @@ function New-A365DeclarationFixture {
         PatchFails = $false
         MissingApplication = $false
         MissingPrincipal = $false
+        PublicClientEnabled = $true
     }
 }
 
@@ -131,7 +150,9 @@ function Invoke-A365DeclarationScenario {
         [Parameter(Mandatory)] $State,
         [switch] $DryRun,
         [bool] $SkipConsent = $true,
-        [switch] $WriteReport
+        [switch] $WriteReport,
+        [string] $Scenario = 'AgentIdentity',
+        [string[]] $AdditionalAppRole = @()
     )
 
     function Connect-GraphSession {
@@ -160,8 +181,11 @@ function Invoke-A365DeclarationScenario {
                 "/applications(appId='automation-app')?`$select=id,appId,displayName" {
                     return [pscustomobject]@{ id = 'app-object'; appId = 'automation-app'; displayName = 'Test automation' }
                 }
-                "/applications/app-object?`$select=requiredResourceAccess" {
-                    return [pscustomobject]@{ requiredResourceAccess = $State.ExistingAccess }
+                "/applications/app-object?`$select=requiredResourceAccess,isFallbackPublicClient" {
+                    return [pscustomobject]@{
+                        requiredResourceAccess = $State.ExistingAccess
+                        isFallbackPublicClient = $State.PublicClientEnabled
+                    }
                 }
                 "/servicePrincipals(appId='automation-app')?`$select=id,appId,displayName" {
                     if ($State.MissingPrincipal) { return $null }
@@ -222,7 +246,8 @@ function Invoke-A365DeclarationScenario {
         TenantId = 'test-tenant'
         AppId = 'automation-app'
         DisplayName = 'Test automation'
-        Scenario = 'AgentIdentity'
+        Scenario = $Scenario
+        AdditionalAppRole = @($AdditionalAppRole)
         SkipAppRole = @(
             'AgentIdentity.Create.All', 'AgentIdentity.Read.All', 'AgentIdentity.ReadWrite.All',
             'AgentIdentityBlueprint.Read.All', 'Application.Read.All', 'User.Read.All',
@@ -564,6 +589,30 @@ Test-Case 'Accepted duplicate-only cleanup is Applied and a cleaned second run p
     Assert-A365PermissionNames $next.ScopeNames $rerunJson.delegatedScopesDeclared
 }
 
+Test-Case 'AgentUser scenario requests delegated scopes even when registration delegated scopes are disabled by scenario' {
+    $state = New-A365DeclarationFixture
+    $state.PublicClientEnabled = $false
+    $run = Invoke-A365DeclarationScenario -State $state -Scenario 'AgentUser' -AdditionalAppRole $state.RoleNames[0]
+    $json = $run.Json | ConvertFrom-Json -AsHashtable
+    Assert-True ($json['delegatedScopesRequested'] -is [array]) 'delegatedScopesRequested must serialize as an array.'
+
+    foreach ($scope in $state.AgentUserScopeNames) {
+        Assert-True (@($json.delegatedScopesRequested | Where-Object { $_ -eq $scope }).Count -gt 0) `
+            "AgentUser scenario must request delegated scope '$scope'."
+    }
+    Assert-False (@($json.delegatedScopesRequested | Where-Object {
+                $_ -eq 'DelegatedPermissionGrant.ReadWrite.All'
+            }).Count -gt 0) `
+        'AgentUser declarations must not include a delegated-grant scope that provisioning never uses.'
+
+    $publicClientPatch = @($state.Calls | Where-Object {
+            $_.Method -eq 'PATCH' -and
+            $_.Body.ContainsKey('isFallbackPublicClient')
+        })
+    Assert-Count $publicClientPatch 1 'The automation app must enable public-client flows for device-code authentication.'
+    Assert-True $publicClientPatch[0].Body.isFallbackPublicClient 'Public-client flows must be enabled, not disabled.'
+}
+
 Test-Case 'Native WhatIf keeps existing declarations and planned additions without PATCH or report-file write' {
     $state = New-A365DeclarationFixture
     $run = Invoke-A365DeclarationScenario -State $state -DryRun -WriteReport
@@ -714,11 +763,12 @@ Test-Case 'Declining declarations does not change independent grant semantics or
 Test-Case 'New application declaration reads and writes retry directory replication 404 responses' {
     $state = New-A365DeclarationFixture
     $state.MissingApplication = $true
+    $state.PublicClientEnabled = $false
     Invoke-A365DeclarationScenario -State $state | Out-Null
 
     $declarationRead = @($state.Calls | Where-Object {
             $_.Method -eq 'GET' -and
-            $_.Uri -eq '/applications/app-object?$select=requiredResourceAccess'
+            $_.Uri -eq '/applications/app-object?$select=requiredResourceAccess,isFallbackPublicClient'
         })
     Assert-Count $declarationRead 1
     Assert-True $declarationRead[0].RetryOnNotFound 'The immediate post-create declaration read must tolerate replication lag.'
@@ -726,8 +776,10 @@ Test-Case 'New application declaration reads and writes retry directory replicat
     $declarationWrites = @($state.Calls | Where-Object {
             $_.Method -eq 'PATCH' -and $_.Uri -eq '/applications/app-object'
         })
-    Assert-Count $declarationWrites 1
-    Assert-True $declarationWrites[0].RetryOnNotFound 'The immediate post-create declaration write must tolerate replication lag.'
+    Assert-Count $declarationWrites 2 'Public-client and permission declaration writes must both be exercised.'
+    foreach ($write in $declarationWrites) {
+        Assert-True $write.RetryOnNotFound 'Every immediate post-create declaration write must tolerate replication lag.'
+    }
 }
 
 Test-Case 'Existing application declaration reconciliation does not use creation-only retries' {
@@ -735,7 +787,7 @@ Test-Case 'Existing application declaration reconciliation does not use creation
     Invoke-A365DeclarationScenario -State $state | Out-Null
 
     $declarationCalls = @($state.Calls | Where-Object {
-            $_.Uri -eq '/applications/app-object?$select=requiredResourceAccess' -or
+            $_.Uri -eq '/applications/app-object?$select=requiredResourceAccess,isFallbackPublicClient' -or
             ($_.Method -eq 'PATCH' -and $_.Uri -eq '/applications/app-object')
         })
     Assert-Count $declarationCalls 2

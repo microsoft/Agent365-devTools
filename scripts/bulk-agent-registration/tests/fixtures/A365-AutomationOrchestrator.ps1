@@ -91,7 +91,6 @@ param(
     [string] $CertificatePath,
     [object] $CertificatePassword,
     [switch] $UseManagedIdentity,
-    [object] $AccessToken,
     [switch] $Interactive,
     [switch] $SkipPermissionCheck,
 
@@ -124,6 +123,7 @@ if ($callCapture -and $null -ne $callCapture.Value) {
         PrincipalName            = $AgentUserPrincipalName
         LogCorrelationId         = $LogCorrelationId
         ClientSecretIdentity     = $secretIdentity
+        Interactive              = [bool]$Interactive
     })
 }
 
