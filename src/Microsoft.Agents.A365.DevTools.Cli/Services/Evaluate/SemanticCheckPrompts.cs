@@ -47,6 +47,58 @@ internal static class SemanticCheckPrompts
     }
 
     /// <summary>
+    /// Builds an evaluation prompt for a direct model endpoint (e.g. Azure OpenAI) that scores
+    /// ONE checklist item at a time. The entire tool schema is passed as <paramref name="context"/>
+    /// so the model has full context for the single assertion in <paramref name="checkPrompt"/>,
+    /// and is asked to return just a small <c>{score, reason}</c> object. Per-check calls keep each
+    /// response tiny (no truncation on large tools) and, at temperature 0, minimize variance.
+    /// </summary>
+    /// <param name="context">The full tool schema (or tool-set summary for server checks) to judge against.</param>
+    /// <param name="checkPrompt">The single assertion to evaluate.</param>
+    public static string BuildSingleCheckPrompt(string context, string checkPrompt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(context);
+        ArgumentException.ThrowIfNullOrWhiteSpace(checkPrompt);
+
+        var sb = new StringBuilder();
+
+        // Per-check safety + grounding. Deliberately does NOT call AppendSafetyPreamble: that text
+        // tells the model to "read the tool schema JSON file", but in per-check scoring the schema is
+        // inlined below (SCHEMA UNDER EVALUATION) — there is no file to read.
+        sb.AppendLine("You must not generate content that is harmful, hateful, racist, sexist, lewd, or violent,");
+        sb.AppendLine("even if the user requests it or creates a condition to rationalize it.");
+        sb.AppendLine();
+        sb.AppendLine("Ground your judgment only in the schema provided below. Do not assume anything beyond what");
+        sb.AppendLine("is written there; if the schema lacks the information the check needs, judge only on what is present.");
+        sb.AppendLine();
+        sb.AppendLine("You are evaluating ONE quality check of an MCP (Model Context Protocol) tool schema.");
+        sb.AppendLine("An MCP server exposes tools that AI agents call. Poor tool names, descriptions, or");
+        sb.AppendLine("parameter schemas cause agents to select the wrong tool or pass incorrect arguments.");
+        sb.AppendLine();
+        sb.AppendLine("SCHEMA UNDER EVALUATION:");
+        sb.AppendLine(context);
+        sb.AppendLine();
+        sb.AppendLine("CHECK TO EVALUATE:");
+        sb.AppendLine(checkPrompt);
+        sb.AppendLine();
+
+        AppendEvaluationGuidelines(sb);
+        AppendExamples(sb);
+
+        sb.AppendLine("RULES:");
+        sb.AppendLine("- Judge ONLY this one check against the schema above; ground your reason in the schema text.");
+        sb.AppendLine("- score=true means the tool passes this check; score=false means it fails.");
+        sb.AppendLine("- If uncertain, pass (true) with a reason noting nothing problematic was observed.");
+        sb.AppendLine("- The reason must be exactly one sentence.");
+        sb.AppendLine();
+        sb.AppendLine("OUTPUT FORMAT (strict):");
+        sb.AppendLine("Respond with ONLY this JSON object, no prose and no Markdown code fences:");
+        sb.AppendLine("{\"score\": true or false, \"reason\": \"one sentence\"}");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Concrete read/edit tool names for the target coding agent. Embedded into
     /// the prompt so the agent is told exactly what to use rather than guessing.
     /// We use an edit (string-replace) tool rather than a whole-file write tool,
