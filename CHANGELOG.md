@@ -31,7 +31,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 **Option B — CLI**: `a365 setup admin` has been removed in this release. For blueprints that lack the inheritable-permission entry, including those created after this release, run `a365 setup permissions custom --resource-app-id <Observability app ID for your cloud, from step 2> --scopes Agent365.Observability.OtelWrite` to stamp it and request consent for the delegated permission. The CLI does not grant the application permission; use Option A for it.
 
+#### Existing agents: grant Defender API permissions
+
+Agents provisioned before this release should have a Global Administrator re-run `a365 setup all --authmode <mode>` for blueprint agents (delegated for `obo`, application for `s2s`, or both for `both`) or `a365 setup all` without `--authmode` for AI Teammates (both permission types) to stamp Defender inheritance and grant `RealtimeProtection.Evaluate.All` (#485).
+
 ### Added
+
+- `a365 setup all` now grants the Defender API `RealtimeProtection.Evaluate.All` permission according to `--authmode` for blueprint agents (delegated for `obo`, application for `s2s`, both for `both`) and as both delegated and application for AI Teammates (#485).
 - `a365 develop-mcp grant-agents-access --agent-blueprint-id <GUID> --mcp-server-name <NAME>` reports which agent instances of a blueprint are missing the permission to call a BYO MCP server and prompts you to select which ones to grant it to, requiring administrator consent on the first run in a tenant (#500).
 - When more than one Entra application shares the MCP server's name, `a365 develop-mcp grant-agents-access` now lists them all and asks which one to use instead of failing (#500).
 - `a365 develop-mcp grant-agents-access --help` now lists Microsoft's first-party agent blueprint names and IDs, and the same list is printed when `--agent-blueprint-id` is missing or not a GUID, so you can find the ID without looking it up elsewhere (#500).
@@ -91,6 +97,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `a365 setup permissions mcp --remove-legacy-scopes --dry-run` now shows both what would be removed (shared ATG audience entries) and what would remain after removal, instead of only showing what would be configured
 
 ### Fixed
+- `setup all` now completes application permission grants after provisioning a missing resource service principal and lists manual provisioning before dependent permission grants (#485).
+- Standalone `setup permissions` commands now list missing service principal provisioning and resource-specific consent before dependent permission grants (#485).
+- Successful delegated consent recovery now persists verified grants and removes obsolete provisioning instructions while preserving pending application-role work (#485).
+- AI Teammate and blueprint `--authmode both` setup summaries now report both application and delegated permissions without treating pending or unverified consent as granted (#485).
 - `a365 create-instance` now reports an ambiguous government-cloud environment as a configuration error with guidance to select a specific cloud (#478).
 - Setup now warns before replacing a stale stored blueprint ID with the sole application matching the configured display name (#478).
 - Messaging endpoint create and delete overrides now reject non-HTTPS URLs and URLs containing user information, query strings, or fragments (#478).

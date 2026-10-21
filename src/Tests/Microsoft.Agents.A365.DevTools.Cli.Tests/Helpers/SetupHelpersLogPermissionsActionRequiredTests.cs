@@ -128,6 +128,29 @@ public class SetupHelpersLogPermissionsActionRequiredTests
     }
 
     [Fact]
+    public void MissingSpOnly_EmitsProvisioningAndResourceConsent()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildResults();
+        var createCommand = $"az ad sp create --id {ConfigConstants.DefenderApiAppId}";
+        var consentUrl = SetupHelpers.BuildAdminConsentUrl(
+            TenantId, BlueprintId,
+            [$"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"]);
+        results.MissingSpActions.Add(new MissingSpAction(
+            "Defender API", ConfigConstants.DefenderApiAppId,
+            [ConfigConstants.DefenderApiRealtimeProtectionScope], createCommand, consentUrl));
+
+        SetupHelpers.LogPermissionsActionRequired(logger, results, [], adminConsentUrl: null);
+
+        logger.AllOutput.Should().Contain("Action Required",
+            because: "missing resource provisioning remains actionable even without a combined consent URL or application-role script");
+        logger.AllOutput.Should().Contain(createCommand,
+            because: "the administrator must be given the command to provision the missing service principal");
+        logger.AllOutput.Should().Contain(consentUrl,
+            because: "a resource excluded from combined consent still needs its own delegated-consent handoff");
+    }
+
+    [Fact]
     public void AppRoleSpecs_EmitNewMgServicePrincipalAppRoleAssignment()
     {
         var logger = new CapturingLogger();
