@@ -81,9 +81,6 @@
 .PARAMETER UseManagedIdentity
     Authenticate with the host's managed identity, forwarded unchanged.
 
-.PARAMETER AccessToken
-    A pre-acquired Graph access token. Accepts a string or a SecureString and is forwarded
-    unchanged, for the same reason as -ClientSecret above.
 
 .PARAMETER Interactive
     Sign in as a user instead of running as an application, forwarded unchanged.
@@ -157,7 +154,6 @@ param(
     [string] $CertificatePath,
     [object] $CertificatePassword,
     [switch] $UseManagedIdentity,
-    [object] $AccessToken,
     [switch] $Interactive,
     [switch] $SkipPermissionCheck,
 
@@ -184,7 +180,7 @@ $forwardable = @(
     'RequireOwnerAssignment', 'NewClientSecret', 'GrantAdminConsent'
     'SkipInheritablePermissions', 'ManagedIdentityPrincipalId'
     'ClientId', 'ClientSecret', 'CertificateThumbprint', 'Certificate', 'CertificatePath'
-    'CertificatePassword', 'UseManagedIdentity', 'AccessToken', 'Interactive', 'SkipPermissionCheck'
+    'CertificatePassword', 'UseManagedIdentity', 'Interactive', 'SkipPermissionCheck'
 )
 
 $forward = @{

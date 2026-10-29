@@ -44,21 +44,15 @@
     default, so pointing this script at an ordinary app registration by mistake is refused.
 
 .PARAMETER TenantId
-    Directory (tenant) id. Optional for -Interactive / -UseDeviceCode; required for application
-    authentication.
+    Directory (tenant) id. Optional for -Interactive / -UseManagedIdentity; required for client secret
+    and certificate authentication.
 
 .PARAMETER Interactive
     Sign in as a user in the browser.
 
-.PARAMETER UseDeviceCode
-    Sign in as a user using the device code flow, for hosts with no browser.
-
-.PARAMETER UseExistingConnection
-    Reuse the Connect-MgGraph session already established in this PowerShell process.
-
 .PARAMETER ClientId
-    Application (client) ID to authenticate as. Required with -ClientSecret or
-    -CertificateThumbprint.
+    Application (client) ID to authenticate as. Required with -ClientSecret or certificate
+    authentication.
 
 .PARAMETER ClientSecret
     Client secret, as a SecureString or a plain string. Requires -ClientId and -TenantId.
@@ -67,8 +61,17 @@
     Thumbprint of a certificate to authenticate -ClientId with. Requires -ClientId and
     -TenantId.
 
-.PARAMETER AccessToken
-    A pre-acquired Graph access token, as a SecureString or a plain string.
+.PARAMETER Certificate
+    An X509Certificate2 to authenticate -ClientId with. Requires -ClientId and -TenantId.
+
+.PARAMETER CertificatePath
+    Path to a .pfx file to authenticate -ClientId with. Requires -ClientId and -TenantId.
+
+.PARAMETER CertificatePassword
+    Password for -CertificatePath, as a SecureString or plain string.
+
+.PARAMETER UseManagedIdentity
+    Authenticate with the host's system-assigned managed identity.
 
 .PARAMETER ScriptRoot
     Directory containing Remove-A365AgentUser.ps1 and Remove-A365AgentIdentity.ps1, used by the
@@ -142,16 +145,16 @@ param(
 
     [string]   $TenantId,
     [switch]   $Interactive,
-    [switch]   $UseDeviceCode,
-    [switch]   $UseExistingConnection,
     [string]   $ClientId,
     # [object], not [string]: an omitted [string] binds to '' , which ConvertTo-SecureStringValue
     # reports as "supplied but empty". [object] also lets a SecureString or PSCredential through
     # unconverted, which a [string] would silently stringify to its type name.
     [object]   $ClientSecret,
     [string]   $CertificateThumbprint,
-    [object]   $AccessToken,
-
+    [System.Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,
+    [string]   $CertificatePath,
+    [object]   $CertificatePassword,
+    [switch]   $UseManagedIdentity,
     [string]   $ScriptRoot,
 
     # =====================================================================
@@ -702,21 +705,31 @@ $delegatedScopeSets = @(
 )
 
 $ClientSecret = ConvertTo-SecureStringValue -Value $ClientSecret -Name 'ClientSecret'
-$AccessToken  = ConvertTo-SecureStringValue -Value $AccessToken  -Name 'AccessToken'
+$CertificatePassword = ConvertTo-SecureStringValue -Value $CertificatePassword -Name 'CertificatePassword'
+
+$certificateSourceCount = @(
+    [bool]$CertificateThumbprint,
+    ($null -ne $Certificate),
+    [bool]$CertificatePath
+).Where({ $_ }).Count
+if ($certificateSourceCount -gt 1) {
+    throw 'Supply exactly one certificate source: -CertificateThumbprint, -Certificate, or -CertificatePath.'
+}
+if ($CertificatePassword -and (-not $CertificatePath)) {
+    throw '-CertificatePassword can be used only with -CertificatePath.'
+}
 
 $modes = @()
-if ($UseExistingConnection) { $modes += 'ExistingConnection' }
 if ($Interactive)           { $modes += 'Interactive' }
-if ($UseDeviceCode)         { $modes += 'DeviceCode' }
-if ($AccessToken)           { $modes += 'AccessToken' }
-if ($CertificateThumbprint) { $modes += 'Certificate' }
+if ($UseManagedIdentity)    { $modes += 'ManagedIdentity' }
+if ($CertificateThumbprint -or $Certificate -or $CertificatePath) { $modes += 'Certificate' }
 if ($ClientSecret)          { $modes += 'ClientSecret' }
 
 if ($modes.Count -gt 1) {
     throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one."
 }
 if ($modes.Count -eq 0) {
-    throw 'No authentication method specified. Pass -Interactive (recommended), -UseDeviceCode, -UseExistingConnection, or -ClientId with -ClientSecret / -CertificateThumbprint.'
+    throw 'No authentication method specified. Pass -Interactive (recommended), -UseManagedIdentity, or -ClientId with -ClientSecret / -CertificateThumbprint / -Certificate / -CertificatePath.'
 }
 $mode = $modes[0]
 
@@ -725,35 +738,50 @@ if ($mode -in @('ClientSecret', 'Certificate')) {
     if (-not $TenantId) { throw "-TenantId is required for $mode authentication." }
 }
 
-if ($mode -ne 'ExistingConnection') {
-    $connect = @{ NoWelcome = $true; ErrorAction = 'Stop' }
+$connect = @{ NoWelcome = $true; ErrorAction = 'Stop' }
     switch ($mode) {
         'Interactive' {
             if ($TenantId) { $connect.TenantId = $TenantId }
             if ($ClientId) { $connect.ClientId = $ClientId }
         }
-        'DeviceCode' {
-            $connect.UseDeviceCode = $true
-            if ($TenantId) { $connect.TenantId = $TenantId }
-            if ($ClientId) { $connect.ClientId = $ClientId }
-        }
-        'AccessToken'  { $connect.AccessToken = $AccessToken }
         'ClientSecret' {
             $connect.TenantId               = $TenantId
             $connect.ClientSecretCredential = [pscredential]::new($ClientId, $ClientSecret)
         }
-        'Certificate'  {
-            $connect.TenantId              = $TenantId
-            $connect.ClientId              = $ClientId
-            $connect.CertificateThumbprint = $CertificateThumbprint
+                'Certificate'  {
+            $connect.TenantId = $TenantId
+            $connect.ClientId = $ClientId
+            if ($Certificate) {
+                $connect.Certificate = $Certificate
+            }
+            elseif ($CertificatePath) {
+                if (-not (Test-Path -LiteralPath $CertificatePath)) {
+                    throw "Certificate file not found: $CertificatePath"
+                }
+                $pfx = (Resolve-Path -LiteralPath $CertificatePath).ProviderPath
+                $keyStorageFlags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+                $connect.Certificate = if ($CertificatePassword) {
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword, $keyStorageFlags)
+                }
+                else {
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, [string]::Empty, $keyStorageFlags)
+                }
+            }
+            else {
+                $connect.CertificateThumbprint = $CertificateThumbprint
+            }
+        }
+        'ManagedIdentity' {
+            if ($ClientId) { throw '-ClientId cannot be used with -UseManagedIdentity. Only system-assigned managed identity is supported.' }
+            $connect.Identity = $true
         }
     }
 
-    if ($mode -in @('Interactive', 'DeviceCode')) {
+    if ($mode -eq 'Interactive') {
         # The Agent 365 delegated scopes are preview and do not exist in every tenant. Entra rejects
         # the WHOLE scope string with AADSTS70011 if any single scope is unknown, so fall back to a
         # universally valid set rather than failing outright. Scope validation happens before a
-        # device code is issued, so a failed attempt does not burn a code.
+        # interactive prompt is shown, so a failed attempt does not burn a code.
         $connected = $false
         for ($setIndex = 0; $setIndex -lt $delegatedScopeSets.Count; $setIndex++) {
             $connect.Scopes = $delegatedScopeSets[$setIndex]
@@ -773,11 +801,10 @@ if ($mode -ne 'ExistingConnection') {
     else {
         Connect-MgGraph @connect
     }
-}
 
 $mg = Get-MgContext
 if (-not $mg) {
-    throw 'Connect-MgGraph did not establish a Graph context. If you used -Interactive from a non-interactive host, the browser flow cannot complete - use -UseDeviceCode instead.'
+    throw 'Connect-MgGraph did not establish a Graph context. If you used -Interactive from a non-interactive host, the browser flow cannot complete - use an interactive host or run with app-only authentication.'
 }
 
 $authType    = [string](Get-Value $mg 'AuthType' '')
@@ -948,18 +975,30 @@ if ($dependents -gt 0) {
         }
     }
 
-    $commonArgs = @{ Force = $true }
+    $identityIds = @($identities | ForEach-Object { [string](Get-Value $_ 'id' '') } | Where-Object { $_ })
+    $userIds     = @($agentUsers | ForEach-Object { [string](Get-Value $_ 'id' '') } | Where-Object { $_ })
+
+    if ([string]::IsNullOrWhiteSpace($ctxTenant)) {
+        throw 'The connected Graph context did not provide a tenant ID, so the dependent removal scripts cannot be invoked safely.'
+    }
+    if ($mode -eq 'Interactive' -and $userIds.Count -gt 0 -and [string]::IsNullOrWhiteSpace($ClientId)) {
+        throw '-ClientId is required for an interactive blueprint cascade that removes AgentUsers because the caller-controlled public client must be authorized for the AgentUser preview scopes.'
+    }
+
+    $commonArgs = @{ Force = $true; TenantId = $ctxTenant }
     if ($Permanent)         { $commonArgs.Permanent         = $true }
-    if ($TenantId)          { $commonArgs.TenantId          = $TenantId }
-    # The cascade runs inside this script's Graph session, so it must not try to sign in again.
-    $commonArgs.UseExistingConnection = $true
+    if ($ClientId)          { $commonArgs.ClientId          = $ClientId }
+    if ($Interactive)       { $commonArgs.Interactive       = $true }
+    if ($UseManagedIdentity){ $commonArgs.UseManagedIdentity = $true }
+    if ($ClientSecret)      { $commonArgs.ClientSecret      = $ClientSecret }
+    if ($CertificateThumbprint) { $commonArgs.CertificateThumbprint = $CertificateThumbprint }
+    if ($Certificate)       { $commonArgs.Certificate       = $Certificate }
+    if ($CertificatePath)   { $commonArgs.CertificatePath   = $CertificatePath }
+    if ($CertificatePassword) { $commonArgs.CertificatePassword = $CertificatePassword }
     # Each cascaded script writes its own log file beside this one, under the same correlation id.
     if ($LogPath)           { $commonArgs.LogPath           = $LogPath }
     if ($LogIncludeSecrets) { $commonArgs.LogIncludeSecrets = $true }
     if ($LogCorrelationId)  { $commonArgs.LogCorrelationId  = $LogCorrelationId }
-
-    $identityIds = @($identities | ForEach-Object { [string](Get-Value $_ 'id' '') } | Where-Object { $_ })
-    $userIds     = @($agentUsers | ForEach-Object { [string](Get-Value $_ 'id' '') } | Where-Object { $_ })
 
     if ($PSCmdlet.ShouldProcess("$($identities.Count) agent identities and $($agentUsers.Count) agent users under '$appName'", 'Delete')) {
         if ($userIds.Count -gt 0) {
