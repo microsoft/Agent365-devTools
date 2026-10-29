@@ -433,6 +433,151 @@ public class SetupHelpersDisplaySetupSummaryTests
     }
 
     [Fact]
+    public void DisplaySetupSummary_NonDwAdminConsentPending_PrefersFilteredAdminConsentUrl()
+    {
+        var logger = new CapturingLogger();
+        const string filteredUrl = "https://login.microsoftonline.com/tenant/v2.0/adminconsent?scope=filtered";
+        const string reconstructedUrl = "https://login.microsoftonline.com/tenant/v2.0/adminconsent?scope=includes-missing-defender";
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.Obo,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            AdminConsentUrl = filteredUrl,
+            CombinedConsentUrl = reconstructedUrl,
+        };
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(filteredUrl,
+            because: "the orchestrator URL excludes unresolved service principals and is the only safe primary handoff");
+        logger.AllOutput.Should().NotContain(reconstructedUrl,
+            because: "a reconstructed URL can reintroduce a missing resource and fail the entire consent request");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_NonDwGccS2sPending_UsesPendingCloudSpecificSpec()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.S2s,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+            BlueprintS2SOutcome = Cli.Models.GrantOutcome.Failed,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+        };
+        results.PendingBlueprintAppRoleSpecs.Add(new ResourcePermissionSpec(
+            ConfigConstants.GccObservabilityApiAppId,
+            "Observability API",
+            [],
+            SetInheritable: true,
+            AppRoleScopes: [ConfigConstants.ObservabilityApiOtelWriteScope]));
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(ConfigConstants.GccObservabilityApiAppId,
+            because: "manual S2S recovery must use the cloud-aware resource from the failed permission spec");
+        logger.AllOutput.Should().NotContain(ConfigConstants.ObservabilityApiAppId,
+            because: "GCC recovery must not target the commercial Observability application");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_MissingSp_ProvisioningPrecedesDependentPermissionActions()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            TenantId = TenantId,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+            BlueprintS2SOutcome = Cli.Models.GrantOutcome.Failed,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed,
+            AdminConsentUrl = NoAppRolesConsentUrl,
+        };
+        results.PendingBlueprintAppRoleSpecs.Add(new ResourcePermissionSpec(
+            ConfigConstants.DefenderApiAppId,
+            "Defender API",
+            [],
+            SetInheritable: true,
+            AppRoleScopes: [ConfigConstants.DefenderApiRealtimeProtectionScope]));
+        var createCommand = $"az ad sp create --id {ConfigConstants.DefenderApiAppId}";
+        results.MissingSpActions.Add(new MissingSpAction(
+            "Defender API", ConfigConstants.DefenderApiAppId, [], createCommand, null)
+        {
+            AppRoleScopes = [ConfigConstants.DefenderApiRealtimeProtectionScope],
+        });
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain(createCommand,
+            because: "a missing Defender service principal must have a provisioning action");
+        logger.AllOutput.Should().Contain("New-MgServicePrincipalAppRoleAssignment",
+            because: "provisioning alone does not grant the pending Defender application role");
+        logger.AllOutput.Should().Contain("Permission Grants",
+            because: "provisioning must preserve the delegated consent handoff for other resources");
+        var provisioningIndex = logger.AllOutput.IndexOf(createCommand, StringComparison.Ordinal);
+        provisioningIndex.Should().BeLessThan(
+            logger.AllOutput.IndexOf("New-MgServicePrincipalAppRoleAssignment", StringComparison.Ordinal),
+            because: "numbered recovery steps must provision the resource before assigning its application role");
+        provisioningIndex.Should().BeLessThan(
+            logger.AllOutput.IndexOf("Permission Grants — forward", StringComparison.Ordinal),
+            because: "resource provisioning must precede any dependent delegated consent handoff");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_ApplicationOnlyMissingSp_ShowsProvisioningWithoutConsentUrl()
+    {
+        var logger = new CapturingLogger();
+        var results = new SetupResults
+        {
+            IsNonDwBlueprintFlow = true,
+            BlueprintCreated = true,
+            BlueprintId = BlueprintId,
+            AgentIdentityCreated = true,
+            AgentIdentityId = AgentSpId,
+            TenantId = TenantId,
+            EffectiveAuthMode = Cli.Models.AuthMode.S2s,
+            TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
+            BatchPermissionsPhase1Completed = true,
+            BatchPermissionsPhase2Completed = true,
+        };
+        results.MissingSpActions.Add(new MissingSpAction(
+            "Defender API",
+            ConfigConstants.DefenderApiAppId,
+            [],
+            $"az ad sp create --id {ConfigConstants.DefenderApiAppId}",
+            null)
+        {
+            AppRoleScopes = [ConfigConstants.DefenderApiRealtimeProtectionScope],
+        });
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        logger.AllOutput.Should().Contain($"az ad sp create --id {ConfigConstants.DefenderApiAppId}",
+            because: "application-only recovery must tell the administrator how to provision the missing Defender service principal");
+        logger.AllOutput.Should().Contain($"Application roles pending: {ConfigConstants.DefenderApiRealtimeProtectionScope}",
+            because: "the handoff must identify the Defender app role that can be assigned after provisioning");
+        logger.AllOutput.Should().NotContain("Step 2)",
+            because: "an application-only spec has no delegated scope and must not emit an empty admin-consent URL");
+    }
+
+    [Fact]
     public void DisplaySetupSummary_NonDwAdminConsentPending_NoConsentUrl_FallsBackToPortalWalkthrough()
     {
         var logger = new CapturingLogger();
@@ -754,6 +899,7 @@ public class SetupHelpersDisplaySetupSummaryTests
             BatchPermissionsPhase1Completed = true,
             BatchPermissionsPhase2Completed = true,
             TenantWideConsentOutcome = Cli.Models.GrantOutcome.Unverified,
+            BlueprintS2SOutcome = Cli.Models.GrantOutcome.Granted,
             AdminConsentUrl = "https://login.microsoftonline.com/tenant/adminconsent?client_id=bp-id",
         };
 
@@ -767,6 +913,25 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "Unverified must not claim the grant succeeded — the consent was not directly observed");
         grantsRow!.Should().NotContain("granted  tenant-wide",
             because: "the Unverified row must not use the Granted row text");
+        grantsRow.Should().NotContain("granted  S2S app roles",
+            because: "a successful Defender application grant must not hide unverified tenant-wide delegated consent");
+    }
+
+    [Fact]
+    public void DisplaySetupSummary_DwAdmin_S2SGrantedAndTenantConsentFailed_PermissionGrantsRowShowsPending()
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SVerifiedResults();
+        results.TenantWideConsentOutcome = Cli.Models.GrantOutcome.Failed;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        var grantsRow = System.Array.Find(logger.AllOutput.Split('\n'), line => line.Contains("Blueprint Permission Grants"));
+        grantsRow.Should().NotBeNull();
+        grantsRow!.Should().Contain("PENDING",
+            because: "AI Teammates require delegated consent as well as the Defender application role");
+        grantsRow.Should().NotContain("granted",
+            because: "the permission row must not claim completion while tenant-wide consent is still missing");
     }
 
     [Fact]
@@ -862,6 +1027,8 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the blueprint summary must point to the remaining MCP permissions step");
         logger.AllOutput.Should().Contain("a365 setup permissions bot",
             because: "the blueprint summary must point to the bot permissions step");
+        logger.AllOutput.Should().Contain("Defender",
+            because: "the permissions bot next step configures Defender and must disclose that work");
     }
 
     [Fact]
@@ -1028,21 +1195,53 @@ public class SetupHelpersDisplaySetupSummaryTests
             because: "the 'already granted' wording is reserved for runs that did no work — using it for first-time grants would mislead the user");
     }
 
-    /// <summary>
-    /// S2S parity: when every S2S app role assignment was already in place
-    /// (BlueprintS2SAlreadyAssigned=true), the row must render "already granted  S2S app roles".
-    /// </summary>
-    [Fact]
-    public void DisplaySetupSummary_S2SAllAlreadyAssigned_RendersAlreadyGranted()
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public void DisplaySetupSummary_BothGrantsSucceeded_ReportsBothPermissionTypes(
+        bool isBlueprintBothMode, bool appRolesAlreadyAssigned, bool tenantConsentAlreadyExisted)
     {
         var logger = new CapturingLogger();
-        var results = BuildS2SVerifiedResults();
+        var results = BuildS2SVerifiedResults(isBlueprintBothMode);
+        results.BlueprintS2SAlreadyAssigned = appRolesAlreadyAssigned;
+        results.TenantWideConsentAlreadyExisted = tenantConsentAlreadyExisted;
+
+        SetupHelpers.DisplaySetupSummary(results, logger);
+
+        var grantsRow = System.Array.Find(logger.AllOutput.Split('\n'), line => line.Contains("Blueprint Permission Grants"));
+        grantsRow.Should().NotBeNull();
+        grantsRow!.Should().Contain("granted  S2S app roles + tenant-wide delegated",
+            because: "AI Teammates and blueprint both-mode agents require tenant-wide delegated consent alongside application roles");
+        grantsRow!.Contains("already granted", StringComparison.Ordinal).Should().Be(
+            appRolesAlreadyAssigned && tenantConsentAlreadyExisted,
+            because: "combined grants are already in place only when both application roles and tenant-wide delegated consent predate this run");
+    }
+
+    [Theory]
+    [InlineData(Cli.Models.GrantOutcome.Unverified, "unverified")]
+    [InlineData(Cli.Models.GrantOutcome.Failed, "PENDING")]
+    public void DisplaySetupSummary_BlueprintBothMode_S2SGranted_ReportsUnfinishedTenantConsent(
+        Cli.Models.GrantOutcome tenantConsentOutcome, string expectedStatus)
+    {
+        var logger = new CapturingLogger();
+        var results = BuildS2SVerifiedResults(isBlueprintBothMode: true);
+        results.TenantWideConsentOutcome = tenantConsentOutcome;
         results.BlueprintS2SAlreadyAssigned = true;
 
         SetupHelpers.DisplaySetupSummary(results, logger);
 
-        logger.AllOutput.Should().Contain("already granted  S2S app roles",
-            because: "when every S2S role was already assigned the row must surface that — a future regression that drops the flag would silently report 'granted' on every idempotent re-run");
+        var grantsRow = System.Array.Find(logger.AllOutput.Split('\n'), line => line.Contains("Blueprint Permission Grants"));
+        grantsRow.Should().NotBeNull();
+        grantsRow!.Should().Contain(expectedStatus,
+            because: "blueprint both mode relies on tenant-wide delegated consent, not a per-principal grant recorded only by test fixtures");
+        grantsRow.Should().NotContain("granted",
+            because: "a successful or pre-existing application role must not hide unverified or failed delegated consent");
     }
 
     /// <summary>
@@ -1272,20 +1471,18 @@ public class SetupHelpersDisplaySetupSummaryTests
     };
 
     /// <summary>
-    /// Builds a DW-flow results object on the S2S-granted branch of the Blueprint Permission
-    /// Grants row. DW because the summary's <c>s2sOk</c> gate maps to <c>blueprintS2sGranted</c>
-    /// for DW and <c>agentIdS2sGranted</c> for non-DW — using DW keeps the flag's name aligned
-    /// with the field that drives <c>s2sOk</c> for this test, isolating the
-    /// <see cref="SetupResults.BlueprintS2SAlreadyAssigned"/> toggle from non-DW row mechanics.
+    /// Builds a flow with verified application roles and tenant-wide consent, without a per-principal delegated grant.
     /// </summary>
-    private static SetupResults BuildS2SVerifiedResults() => new()
+    private static SetupResults BuildS2SVerifiedResults(bool isBlueprintBothMode = false) => new()
     {
-        // DW flow — no EffectiveAuthMode, no agent identity row.
-        IsNonDwBlueprintFlow = false,
+        IsNonDwBlueprintFlow = isBlueprintBothMode,
+        EffectiveAuthMode = isBlueprintBothMode ? Cli.Models.AuthMode.Both : null,
+        AgentIdentityS2SOutcome = isBlueprintBothMode ? Cli.Models.GrantOutcome.Granted : Cli.Models.GrantOutcome.NotApplicable,
         BlueprintCreated = true,
         BlueprintId = BlueprintId,
         TenantId = TenantId,
         BlueprintS2SOutcome = Cli.Models.GrantOutcome.Granted,
+        TenantWideConsentOutcome = Cli.Models.GrantOutcome.Granted,
         BatchPermissionsPhase1Completed = true,
         BatchPermissionsPhase2Completed = true,
     };
