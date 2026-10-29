@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Agents.A365.DevTools.Cli.Models.Evaluate;
@@ -114,57 +115,14 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
         // actually did the work (rather than the user's "auto" request).
         EvalEngine? engineUsed = null;
 
-        // Evaluate each tool using extract-evaluate-merge pattern.
-        // The full checklist is ~1MB which is too large for coding agents.
-        // Instead, extract each tool to a small temp file (~25KB), have the
-        // agent evaluate it, then merge the results back into the checklist.
-        for (int i = 0; i < checklist.Tools.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var tool = checklist.Tools[i];
-            var unevaluated = CountUnevaluatedSemanticChecks(tool);
-            if (unevaluated == 0)
-            {
-                continue;
-            }
-
-            // Heartbeat BEFORE the tool runs so the user sees forward motion immediately.
-            // Each tool can take minutes (multi-attempt Copilot/Claude invocations), so
-            // logging only on completion leaves long silent gaps that look like a hang.
-            _logger.LogInformation("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... running",
-                i + 1, checklist.Tools.Count, tool.Name, unevaluated);
-
-            var toolEngine = await EvaluateToolChecks(tool, enginesToTry, cancellationToken);
-            if (toolEngine is not null)
-            {
-                engineUsed ??= toolEngine;
-                _logger.LogInformation("      [{Current}/{Total}] {ToolName} ... ok",
-                    i + 1, checklist.Tools.Count, tool.Name);
-            }
-            else
-            {
-                _logger.LogWarning("      [{Current}/{Total}] {ToolName} ... failed (continuing)",
-                    i + 1, checklist.Tools.Count, tool.Name);
-            }
-        }
-
-        // Evaluate server-level checks (extract server_checks + tool list summary)
-        var serverUnevaluated = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
-        if (serverUnevaluated > 0)
-        {
-            _logger.LogInformation("      server-level checks ({Count} checks) ... running", serverUnevaluated);
-            var serverEngine = await EvaluateServerChecks(checklist, enginesToTry, cancellationToken);
-            if (serverEngine is not null)
-            {
-                engineUsed ??= serverEngine;
-                _logger.LogInformation("      server-level checks ... ok");
-            }
-            else
-            {
-                _logger.LogWarning("      server-level checks ... failed (continuing)");
-            }
-        }
+        // Pick the scoring path from the engine. A per-check judge (Azure OpenAI) evaluates
+        // each assertion independently with the full tool schema as context; subprocess coding
+        // agents edit a whole-tool file. A per-check engine is explicit-only, so when chosen it
+        // is the sole entry in enginesToTry.
+        var primaryLauncher = enginesToTry.Count == 1 ? LauncherFor(enginesToTry[0]) : null;
+        engineUsed = primaryLauncher?.ScoresPerCheck == true
+            ? await EvaluatePerCheck(checklist, primaryLauncher, checklistPath, cancellationToken)
+            : await EvaluatePerTool(checklist, enginesToTry, cancellationToken);
 
         // Write the updated checklist back (with all merged results)
         var updatedJson = JsonSerializer.Serialize(checklist, WriteOptions);
@@ -194,6 +152,209 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             Outcome = remainingUnevaluated == 0 ? EvaluationOutcome.Completed : EvaluationOutcome.CouldNotEvaluate,
             EngineUsed = engineUsed
         };
+    }
+
+    /// <summary>
+    /// Whole-tool scoring path for subprocess coding agents: extract each tool to a sandbox
+    /// file, have the agent edit it, then merge results back. Tools run concurrently up to the
+    /// engine's MaxConcurrency (1 for coding agents). Returns the engine that did the work.
+    /// </summary>
+    private async Task<EvalEngine?> EvaluatePerTool(EvaluationChecklist checklist, List<EvalEngine> enginesToTry, CancellationToken cancellationToken)
+    {
+        if (enginesToTry.Count == 0)
+        {
+            return null;
+        }
+
+        EvalEngine? engineUsed = null;
+
+        // When several engines could be tried via fallthrough, use the most conservative dop.
+        // Each tool writes to its own sandbox and mutates only its own ToolChecklist, so
+        // concurrent iterations don't share state; only engineUsed needs guarding.
+        int dop = enginesToTry.Count == 0
+            ? 1
+            : Math.Max(1, enginesToTry.Min(e => LauncherFor(e)?.MaxConcurrency ?? 1));
+
+        var engineLock = new object();
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, checklist.Tools.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = dop, CancellationToken = cancellationToken },
+            async (i, ct) =>
+            {
+                var tool = checklist.Tools[i];
+                var unevaluated = CountUnevaluatedSemanticChecks(tool);
+                if (unevaluated == 0)
+                {
+                    return;
+                }
+
+                // Heartbeat BEFORE the tool runs so the user sees forward motion immediately.
+                _logger.LogInformation("      [{Current}/{Total}] {ToolName} ({CheckCount} checks) ... running",
+                    i + 1, checklist.Tools.Count, tool.Name, unevaluated);
+
+                var toolEngine = await EvaluateToolChecks(tool, enginesToTry, ct);
+                if (toolEngine is not null)
+                {
+                    lock (engineLock)
+                    {
+                        engineUsed ??= toolEngine;
+                    }
+                    _logger.LogInformation("      [{Current}/{Total}] {ToolName} ... ok",
+                        i + 1, checklist.Tools.Count, tool.Name);
+                }
+                else
+                {
+                    _logger.LogWarning("      [{Current}/{Total}] {ToolName} ... failed (continuing)",
+                        i + 1, checklist.Tools.Count, tool.Name);
+                }
+            });
+
+        var serverUnevaluated = checklist.ServerChecks.Count(c => c.Type == CheckType.Semantic && c.Score is null);
+        if (serverUnevaluated > 0)
+        {
+            _logger.LogInformation("      server-level checks ({Count} checks) ... running", serverUnevaluated);
+            var serverEngine = await EvaluateServerChecks(checklist, enginesToTry, cancellationToken);
+            if (serverEngine is not null)
+            {
+                engineUsed ??= serverEngine;
+                _logger.LogInformation("      server-level checks ... ok");
+            }
+            else
+            {
+                _logger.LogWarning("      server-level checks ... failed (continuing)");
+            }
+        }
+
+        return engineUsed;
+    }
+
+    /// <summary>
+    /// Per-check scoring path for a direct-API judge (Azure OpenAI): score every unscored
+    /// Semantic check independently, passing the FULL tool schema as context for each single
+    /// assertion, fanning out concurrently up to the engine's MaxConcurrency. Failed checks are
+    /// retried up to <see cref="MaxAttempts"/> rounds. Results are collected concurrently then
+    /// applied to the checklist items serially; the checklist is persisted after each round so an
+    /// interrupted run resumes from the scored items rather than re-scoring everything.
+    /// </summary>
+    private async Task<EvalEngine?> EvaluatePerCheck(EvaluationChecklist checklist, ICodingAgentLauncher launcher, string checklistPath, CancellationToken cancellationToken)
+    {
+        var work = new List<(ChecklistItem Item, string Context)>();
+
+        foreach (var tool in checklist.Tools)
+        {
+            var toolContext = BuildToolContext(tool);
+            foreach (var item in tool.Checks.ToolName.Concat(tool.Checks.ToolDescription).Concat(tool.Checks.SchemaStructure))
+            {
+                if (item.Type == CheckType.Semantic && item.Score is null)
+                {
+                    work.Add((item, toolContext));
+                }
+            }
+
+            foreach (var (paramName, paramChecks) in tool.Checks.Parameters)
+            {
+                var paramContext = $"{toolContext}\n\nParameter under evaluation: \"{paramName}\"";
+                foreach (var item in paramChecks.ParamName.Concat(paramChecks.ParamDescription))
+                {
+                    if (item.Type == CheckType.Semantic && item.Score is null)
+                    {
+                        work.Add((item, paramContext));
+                    }
+                }
+            }
+        }
+
+        var serverContext = BuildServerContext(checklist);
+        foreach (var item in checklist.ServerChecks)
+        {
+            if (item.Type == CheckType.Semantic && item.Score is null)
+            {
+                work.Add((item, serverContext));
+            }
+        }
+
+        if (work.Count == 0)
+        {
+            return launcher.Engine;
+        }
+
+        int dop = Math.Max(1, launcher.MaxConcurrency);
+        _logger.LogInformation("      Scoring {Count} check(s) independently — check-by-check, concurrency {Dop}", work.Count, dop);
+
+        int succeeded = 0;
+        var pending = work;
+        for (int attempt = 1; attempt <= MaxAttempts && pending.Count > 0; attempt++)
+        {
+            // Score concurrently but do NOT mutate the shared ChecklistItem objects inside the
+            // parallel body — collect (item, result) pairs, then apply them serially afterward.
+            var scored = new ConcurrentBag<(ChecklistItem Item, CheckEvaluation Result)>();
+            var failed = new ConcurrentBag<(ChecklistItem Item, string Context)>();
+            int doneInRound = 0;
+            int roundTotal = pending.Count;
+            await Parallel.ForEachAsync(
+                pending,
+                new ParallelOptions { MaxDegreeOfParallelism = dop, CancellationToken = cancellationToken },
+                async (w, ct) =>
+                {
+                    var result = await launcher.ScoreCheckAsync(w.Context, w.Item.Prompt, ct);
+                    if (result is not null)
+                    {
+                        scored.Add((w.Item, result));
+                    }
+                    else
+                    {
+                        failed.Add(w);
+                    }
+
+                    var n = Interlocked.Increment(ref doneInRound);
+                    if (n % 50 == 0 || n == roundTotal)
+                    {
+                        _logger.LogInformation("      ... {Done}/{Total} checks scored", n, roundTotal);
+                    }
+                });
+
+            // Apply results serially — no concurrent writes to ChecklistItem fields.
+            foreach (var (item, result) in scored)
+            {
+                item.Score = result.Score;
+                item.Reason = result.Reason;
+            }
+
+            succeeded += scored.Count;
+            pending = failed.ToList();
+
+            // Checkpoint after each round so an interrupted run resumes from the persisted scores
+            // rather than re-scoring everything.
+            await WriteChecklistAsync(checklist, checklistPath, cancellationToken);
+
+            if (pending.Count > 0 && attempt < MaxAttempts)
+            {
+                _logger.LogInformation("      {Count} check(s) failed; retrying (attempt {Next}/{Max})", pending.Count, attempt + 1, MaxAttempts);
+            }
+        }
+
+        if (pending.Count > 0)
+        {
+            _logger.LogWarning("      {Count} check(s) could not be scored after {Max} attempt(s)", pending.Count, MaxAttempts);
+        }
+
+        return succeeded > 0 ? launcher.Engine : null;
+    }
+
+    /// <summary>Full tool schema string passed as per-check context for a tool's checks.</summary>
+    private static string BuildToolContext(ToolChecklist tool)
+    {
+        var schema = tool.InputSchema.HasValue
+            ? JsonSerializer.Serialize(tool.InputSchema.Value, WriteOptions)
+            : "{}";
+        return $"Tool name: {tool.Name}\nTool description: {tool.Description}\nInput schema (JSON):\n{schema}";
+    }
+
+    /// <summary>Tool-set summary passed as per-check context for server-level checks.</summary>
+    private static string BuildServerContext(EvaluationChecklist checklist)
+    {
+        var summary = string.Join("\n", checklist.Tools.Select(t => $"- {t.Name}: {t.Description}"));
+        return $"Evaluate against the full tool set of this MCP server:\n{summary}";
     }
 
     /// <summary>
@@ -540,10 +701,17 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             return [];
         }
 
-        // Auto: detect all available engines, preserving the registered priority order
+        // Auto: detect all available engines, preserving the registered priority order.
+        // Skip explicit-only engines (e.g. a remote API judge) so auto never selects one
+        // the user didn't ask for — those run only via an explicit --eval-engine value.
         var available = new List<EvalEngine>();
         foreach (var launcher in _launchers)
         {
+            if (!launcher.AutoDetectable)
+            {
+                continue;
+            }
+
             if (await launcher.IsAvailableAsync(cancellationToken))
             {
                 _logger.LogDebug("Detected {Engine}", launcher.Engine);
@@ -638,7 +806,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
             if (requested == EvalEngine.Auto)
             {
                 // Built from the registry so a newly added engine appears here automatically.
-                var probed = string.Join(" and ", _launchers.Select(l => $"{l.DisplayName} (`{l.CliCommand}`)"));
+                // Only auto-detectable engines are probed under `auto`, so list just those.
+                var probed = string.Join(" and ", _launchers.Where(l => l.AutoDetectable).Select(l => $"{l.DisplayName} (`{l.CliCommand}`)"));
                 _logger.LogWarning("      No coding agent CLI detected (looked for {Probed}). Run with -v to see why each probe failed.", probed);
             }
             else
@@ -646,8 +815,8 @@ internal sealed class ChecklistEvaluator : IChecklistEvaluator
                 // The user asked for one specific engine; name only that one, not both.
                 var launcher = LauncherFor(requested);
                 var name = launcher?.DisplayName ?? FormatEngineName(requested);
-                var binary = launcher?.CliCommand ?? requested.ToString();
-                _logger.LogWarning("      {Name} CLI not found on PATH (looked for `{Binary}`). Run with -v to see why the probe failed.", name, binary);
+                var hint = launcher?.AvailabilityHint ?? $"`{requested}`";
+                _logger.LogWarning("      {Name} is not available — needs {Hint}. Run with -v for details.", name, hint);
             }
         }
         else if (agentAttempted)

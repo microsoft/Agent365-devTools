@@ -32,6 +32,7 @@
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="Azure.ResourceManager" Version="1.13.2" />
     <PackageVersion Include="Azure.ResourceManager.AppService" Version="1.2.0" />
+    <PackageVersion Include="OpenAI" Version="2.8.0" />
     <!-- Microsoft Graph -->
     <PackageVersion Include="Microsoft.Graph" Version="5.36.0" />
     <!-- Pin the transitive dependency to the version that fixes CVE-2026-44503. -->
