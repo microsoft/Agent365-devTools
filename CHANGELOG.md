@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `a365 network gsa enable|disable|status` turns Global Secure Access on or off for your Agent 365 environment (#497).
+
 ## [2.0.0] - 2026-10-20
 
 ### Upgrade Notes
