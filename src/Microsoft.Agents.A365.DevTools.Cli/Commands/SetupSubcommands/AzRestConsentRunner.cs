@@ -203,6 +203,13 @@ internal static partial class AzRestConsentRunner
         var scopeValue = string.Join(' ', mergedScopes.OrderBy(s => s, StringComparer.OrdinalIgnoreCase));
         if (existingGrantId is not null)
         {
+            // Grant IDs are base64url; anything else must not reach the az command line.
+            if (!SafeScopePattern().IsMatch(existingGrantId))
+            {
+                logger.LogWarning("  '{Name}': existing oauth2PermissionGrant has an unexpected id format - skipping.", spec.ResourceName);
+                return false;
+            }
+
             var patchBody = JsonSerializer.Serialize(new { scope = scopeValue });
             var patched = await ExecuteAzRestWithBodyAsync(
                 executor,

@@ -398,4 +398,56 @@ public class CommandExecutorTests
     }
 
     #endregion
+
+    #region cmd.exe wrapper
+
+    [Fact]
+    public async Task ExecuteAsync_CmdWrappedBatchFile_PassesQuotedAmpersandLiterally()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"cmdwrap_{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var script = Path.Combine(dir, "echoargs.cmd");
+            await File.WriteAllTextAsync(script, "@echo ARGS:%*\r\n");
+
+            var result = await _executor.ExecuteAsync(script, "--url \"https://graph.example/v1.0/sp?$filter=a eq 'b'&$select=id\"", captureOutput: true);
+
+            result.Success.Should().BeTrue();
+            result.StandardOutput.Should().Contain("&$select=id",
+                because: "an '&' inside double quotes must reach the batch file as data, not start a second command");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CmdWrappedBatchFile_PercentExpansionQuoteShift_IsRefusedBeforeStart()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"cmdwrap_{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var script = Path.Combine(dir, "echoargs.cmd");
+            await File.WriteAllTextAsync(script, "@echo ARGS:%*\r\n");
+            var marker = Path.Combine(dir, "marker.txt");
+
+            // %OS:"=% expands to OS with quotes removed, which would leave the '&' outside quotes.
+            var act = () => _executor.ExecuteAsync(script, $"--url \"https://graph.example/x/%OS:\"=%\" & type nul > \"{marker}\" & rem \"\"", captureOutput: true);
+
+            await act.Should().ThrowAsync<ArgumentException>(
+                because: "cmd.exe expands %VAR% before parsing quotes, so the command line must be refused before the process starts");
+            File.Exists(marker).Should().BeFalse(because: "no second command may run");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    #endregion
 }

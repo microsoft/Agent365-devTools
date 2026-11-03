@@ -437,12 +437,20 @@ public static class AdminConsentHelper
                 return false;
             }
 
+            if (!Guid.TryParse(blueprintSpId, out _) || !Guid.TryParse(resourceSpId, out _) ||
+                (!string.IsNullOrWhiteSpace(consentType) && !consentType.All(char.IsAsciiLetter)))
+            {
+                logger.LogDebug("Cannot check consent: service principal IDs must be GUIDs and consentType must be letters only");
+                return false;
+            }
+
+            // Not URL-encoded: the value is passed through cmd.exe, which expands '%' even inside quotes.
             var filter = $"clientId eq '{blueprintSpId}' and resourceId eq '{resourceSpId}'";
             if (!string.IsNullOrWhiteSpace(consentType))
                 filter += $" and consentType eq '{consentType}'";
 
             var grantsResult = await executor.ExecuteAsync("az",
-                $"rest --method GET --url \"{baseUrl}/v1.0/oauth2PermissionGrants?$filter={Uri.EscapeDataString(filter)}\"",
+                $"rest --method GET --url \"{baseUrl}/v1.0/oauth2PermissionGrants?$filter={filter}\"",
                 captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
 
             if (!grantsResult.Success)

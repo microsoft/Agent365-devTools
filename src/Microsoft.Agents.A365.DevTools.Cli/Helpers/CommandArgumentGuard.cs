@@ -23,7 +23,8 @@ public static class CommandArgumentGuard
 
     /// <summary>
     /// Throws if a command line passed to 'cmd.exe /c' could chain or redirect commands.
-    /// Metacharacters are allowed only inside balanced double quotes, where cmd.exe treats them literally.
+    /// Metacharacters are allowed only inside balanced double quotes; '%' is rejected everywhere
+    /// because cmd.exe expands %VAR% (which can add or remove quotes) before it parses quotes.
     /// </summary>
     public static void EnsureSafeForCmd(string commandLine)
     {
@@ -33,6 +34,11 @@ public static class CommandArgumentGuard
             if (c is '\r' or '\n' or '\0')
             {
                 throw new ArgumentException("Command line contains a line break or null character.", nameof(commandLine));
+            }
+
+            if (c == '%')
+            {
+                throw new ArgumentException("Command line contains '%', which cmd.exe expands even inside quotes.", nameof(commandLine));
             }
 
             if (c == '"')

@@ -291,13 +291,14 @@ public class CommandExecutor
     }
 
     /// <summary>
-    /// Builds the 'cmd.exe /c' argument string, refusing command lines that cmd.exe would split into extra commands.
+    /// Builds the 'cmd.exe' argument string, refusing command lines that cmd.exe would split into extra commands.
+    /// Delayed expansion is forced off so '!' stays literal regardless of the user's registry settings.
     /// </summary>
     internal static string BuildCmdWrapperArguments(string command, string arguments)
     {
         var commandLine = $"{command} {arguments}";
         CommandArgumentGuard.EnsureSafeForCmd(commandLine);
-        return $"/c {commandLine}";
+        return $"/v:off /c {commandLine}";
     }
 
     private bool NeedsCmdWrapper(string command)

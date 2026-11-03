@@ -45,11 +45,13 @@ public class CommandArgumentGuardTests
     [InlineData("az ad sp list --filter \"appId eq 'x")]
     [InlineData("az ad user delete --id x\r\nother")]
     [InlineData("az ad user delete --id x\nother")]
+    [InlineData("az rest --url \"https://g/v1.0/grants/%OS:\"=%\" & other & rem \"\"\"")]
+    [InlineData("az rest --url \"https://g/v1.0/grants/%CD%\"")]
     public void EnsureSafeForCmd_UnquotedMetacharacters_Throws(string commandLine)
     {
         var act = () => CommandArgumentGuard.EnsureSafeForCmd(commandLine);
 
-        act.Should().Throw<ArgumentException>(because: "cmd.exe would run a second command or redirect output");
+        act.Should().Throw<ArgumentException>(because: "cmd.exe would run a second command, redirect output, or expand %VAR% and shift the quotes");
     }
 
     // Shapes of the real az command lines the CLI builds; a false positive here breaks setup or cleanup.
@@ -59,7 +61,7 @@ public class CommandArgumentGuardTests
     [InlineData("az ad sp create --id " + SampleGuid)]
     [InlineData("az ad sp list --filter \"appId eq '" + SampleGuid + "'\" --query \"[].{objectId:id,appId:appId,displayName:displayName}\" --output json")]
     [InlineData("az rest --method GET --url \"https://graph.microsoft.com/v1.0/servicePrincipals?$filter=appId eq '" + SampleGuid + "'&$select=id,appRoles\"")]
-    [InlineData("az rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId%20eq%20%27" + SampleGuid + "%27\"")]
+    [InlineData("az rest --method GET --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants?$filter=clientId eq '" + SampleGuid + "' and consentType eq 'AllPrincipals'\"")]
     [InlineData("az rest --method PATCH --url \"https://graph.microsoft.com/v1.0/oauth2PermissionGrants/abc_DEF-123\" --body @\"C:\\Users\\me\\AppData\\Local\\Temp\\tmp1.json\" --headers Content-Type=application/json")]
     [InlineData("az account show --query tenantId -o tsv")]
     [InlineData("az login --tenant " + SampleGuid)]
@@ -75,7 +77,7 @@ public class CommandArgumentGuardTests
     public void BuildCmdWrapperArguments_SafeArguments_PrefixesSlashC()
     {
         CommandExecutor.BuildCmdWrapperArguments("az", "ad user delete --id " + SampleGuid)
-            .Should().Be("/c az ad user delete --id " + SampleGuid);
+            .Should().Be("/v:off /c az ad user delete --id " + SampleGuid, because: "delayed expansion must be off so '!' is never expanded");
     }
 
     [Fact]
