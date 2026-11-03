@@ -800,7 +800,7 @@ public class CleanupCommand
                 if (!string.IsNullOrWhiteSpace(config.AgenticAppId))
                 {
                     logger.LogInformation("Deleting agent identity service principal...");
-                    await executor.ExecuteAsync("az", $"ad app delete --id {config.AgenticAppId}", null, true, false, ct);
+                    await executor.ExecuteAsync("az", $"ad app delete --id {CommandArgumentGuard.RequireGuid(config.AgenticAppId, nameof(config.AgenticAppId))}", null, true, false, ct);
                     logger.LogInformation("Agent identity service principal deleted");
                 }
 
@@ -808,7 +808,7 @@ public class CleanupCommand
                 if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
                 {
                     logger.LogInformation("Deleting agent user...");
-                    await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, ct);
+                    await executor.ExecuteAsync("az", $"ad user delete --id {CommandArgumentGuard.RequireGuid(config.AgenticUserId, nameof(config.AgenticUserId))}", null, true, false, ct);
                     logger.LogInformation("Agent user deleted");
                 }
 
@@ -1111,7 +1111,7 @@ public class CleanupCommand
             if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
             {
                 logger.LogInformation("Deleting agent user...");
-                await executor.ExecuteAsync("az", $"ad user delete --id {config.AgenticUserId}", null, true, false, ct);
+                await executor.ExecuteAsync("az", $"ad user delete --id {CommandArgumentGuard.RequireGuid(config.AgenticUserId, nameof(config.AgenticUserId))}", null, true, false, ct);
                 logger.LogInformation("Agent user deleted");
             }
 

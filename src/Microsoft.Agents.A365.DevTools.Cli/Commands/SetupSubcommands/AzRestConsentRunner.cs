@@ -159,7 +159,7 @@ internal static partial class AzRestConsentRunner
         }
 
         var resourceSpId = TryExtractFirstId(resourceSpResult.StandardOutput);
-        if (string.IsNullOrWhiteSpace(resourceSpId))
+        if (string.IsNullOrWhiteSpace(resourceSpId) || !GuidPattern().IsMatch(resourceSpId))
         {
             logger.LogWarning(
                 "  '{Name}': resource service principal not found in tenant — cannot grant consent.",

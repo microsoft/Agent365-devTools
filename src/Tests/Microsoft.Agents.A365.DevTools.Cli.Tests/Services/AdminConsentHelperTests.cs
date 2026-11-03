@@ -20,7 +20,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
             var logger = Substitute.For<ILogger>();
 
             // Mock service principal lookup
-            var spJson = JsonDocument.Parse("{\"value\":[{\"id\":\"sp-123\"}]}", new JsonDocumentOptions()).RootElement.GetRawText();
+            var spJson = JsonDocument.Parse("{\"value\":[{\"id\":\"33333333-3333-3333-3333-333333333333\"}]}", new JsonDocumentOptions()).RootElement.GetRawText();
             executor.ExecuteAsync("az", Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
                 .Returns(ci => Task.FromResult(new Microsoft.Agents.A365.DevTools.Cli.Services.CommandResult { ExitCode = 0, StandardOutput = spJson }));
 
@@ -31,7 +31,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
 
             var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var result = await AdminConsentHelper.PollAdminConsentAsync(
-                executor, logger, "appId-1", "Test", 10, 1, cts.Token,
+                executor, logger, ValidBlueprintAppId, "Test", 10, 1, cts.Token,
                 graphBaseUrl: "https://graph.example");
 
             result.Should().BeTrue();
@@ -58,7 +58,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
 
             var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
-            Func<Task> act = () => AdminConsentHelper.PollAdminConsentAsync(executor, logger, "appId-1", "Test", 10, 1, cts.Token);
+            Func<Task> act = () => AdminConsentHelper.PollAdminConsentAsync(executor, logger, ValidBlueprintAppId, "Test", 10, 1, cts.Token);
 
             await act.Should().ThrowAsync<OperationCanceledException>(
                 because: "OCE must propagate so Ctrl+C aborts setup via AllSubcommand's OCE handler instead of falling into the az rest delegated-consent fallback prompt with a stale 'permission(s)?' question");
@@ -330,7 +330,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
                     if (args.Contains("servicePrincipals?$filter=appId eq"))
                     {
                         // SP lookup — return a stable object id per appId so the helper threads through.
-                        var spId = args.Contains(ValidBlueprintAppId) ? "bp-sp-id" : "res-sp-id";
+                        var spId = args.Contains(ValidBlueprintAppId) ? "44444444-4444-4444-4444-444444444444" : "55555555-5555-5555-5555-555555555555";
                         return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = $"{{\"value\":[{{\"id\":\"{spId}\"}}]}}" });
                     }
                     if (args.Contains("oauth2PermissionGrants"))
@@ -417,7 +417,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
                 {
                     var args = ci.ArgAt<string>(1);
                     if (args.Contains("servicePrincipals?$filter=appId eq"))
-                        return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[{\"id\":\"sp-id\"}]}" });
+                        return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[{\"id\":\"33333333-3333-3333-3333-333333333333\"}]}" });
                     return Task.FromResult(new CommandResult
                     {
                         ExitCode = 0,
@@ -451,7 +451,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
                 {
                     var args = ci.ArgAt<string>(1);
                     if (args.Contains("servicePrincipals?$filter=appId eq"))
-                        return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[{\"id\":\"sp-id\"}]}" });
+                        return Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = "{\"value\":[{\"id\":\"33333333-3333-3333-3333-333333333333\"}]}" });
                     return Task.FromResult(new CommandResult
                     {
                         ExitCode = 0,

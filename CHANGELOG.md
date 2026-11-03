@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Agent and service principal IDs read from configuration or Microsoft Graph are now validated before they are passed to Azure CLI commands.
+
 ## [2.0.0] - 2026-10-20
 
 ### Upgrade Notes

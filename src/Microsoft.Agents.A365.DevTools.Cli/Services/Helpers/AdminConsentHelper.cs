@@ -84,6 +84,13 @@ public static class AdminConsentHelper
         if (BypassConsentChecksForTests)
             return true;
 
+        // appId and the returned SP id are passed to az command lines, so they must be GUIDs.
+        if (!Guid.TryParse(appId, out _))
+        {
+            logger.LogWarning("Cannot poll for admin consent: app id is not a valid GUID.");
+            return false;
+        }
+
         var start = DateTime.UtcNow;
         var baseUrl = ConfigConstants.NormalizeGraphBaseUrl(graphBaseUrl);
         string? spId = null;
@@ -120,7 +127,8 @@ public static class AdminConsentHelper
                             var value = doc.RootElement.GetProperty("value");
                             if (value.GetArrayLength() > 0)
                             {
-                                spId = value[0].GetProperty("id").GetString();
+                                var candidateSpId = value[0].GetProperty("id").GetString();
+                                spId = Guid.TryParse(candidateSpId, out _) ? candidateSpId : null;
                             }
                         }
                         catch { }
@@ -486,6 +494,9 @@ public static class AdminConsentHelper
     private static async Task<string?> LookupSpObjectIdByAppIdAsync(
         CommandExecutor executor, string appId, string graphBaseUrl, CancellationToken ct)
     {
+        if (!Guid.TryParse(appId, out _))
+            return null;
+
         var spResult = await executor.ExecuteAsync("az",
             $"rest --method GET --url \"{graphBaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{appId}'&$select=id\"",
             captureOutput: true, suppressErrorLogging: true, cancellationToken: ct);
@@ -497,7 +508,8 @@ public static class AdminConsentHelper
         {
             using var doc = JsonDocument.Parse(spResult.StandardOutput);
             var value = doc.RootElement.GetProperty("value");
-            return value.GetArrayLength() > 0 ? value[0].GetProperty("id").GetString() : null;
+            var spId = value.GetArrayLength() > 0 ? value[0].GetProperty("id").GetString() : null;
+            return Guid.TryParse(spId, out _) ? spId : null;
         }
         catch
         {
