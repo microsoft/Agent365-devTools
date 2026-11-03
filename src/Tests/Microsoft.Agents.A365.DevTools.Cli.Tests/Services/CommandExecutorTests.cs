@@ -412,7 +412,8 @@ public class CommandExecutorTests
             var script = Path.Combine(dir, "echoargs.cmd");
             await File.WriteAllTextAsync(script, "@echo ARGS:%*\r\n");
 
-            var result = await _executor.ExecuteAsync(script, "--url \"https://graph.example/v1.0/sp?$filter=a eq 'b'&$select=id\"", captureOutput: true);
+            // Relative to its own directory so a profile path with spaces (or NoDefaultCurrentDirectoryInExePath) does not affect the test.
+            var result = await _executor.ExecuteAsync(@".\echoargs.cmd", "--url \"https://graph.example/v1.0/sp?$filter=a eq 'b'&$select=id\"", workingDirectory: dir, captureOutput: true);
 
             result.Success.Should().BeTrue();
             result.StandardOutput.Should().Contain("&$select=id",
@@ -437,7 +438,8 @@ public class CommandExecutorTests
             var marker = Path.Combine(dir, "marker.txt");
 
             // %OS:"=% expands to OS with quotes removed, which would leave the '&' outside quotes.
-            var act = () => _executor.ExecuteAsync(script, $"--url \"https://graph.example/x/%OS:\"=%\" & type nul > \"{marker}\" & rem \"\"", captureOutput: true);
+            // Quotes are balanced, so only the '%' check can refuse this command line.
+            var act = () => _executor.ExecuteAsync(@".\echoargs.cmd", "--url \"https://graph.example/x/%OS:\"=%\" & type nul > marker.txt & rem \"\"\"", workingDirectory: dir, captureOutput: true);
 
             await act.Should().ThrowAsync<ArgumentException>(
                 because: "cmd.exe expands %VAR% before parsing quotes, so the command line must be refused before the process starts");
