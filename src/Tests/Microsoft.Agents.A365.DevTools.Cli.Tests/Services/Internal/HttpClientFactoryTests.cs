@@ -243,4 +243,54 @@ public class HttpClientFactoryTests
 
         correlationId.Should().Be(clientRequestId, "Both headers should have the same auto-generated correlation ID");
     }
+
+    [Fact]
+    public void CreateAuthenticatedClient_WithASuppliedHandler_LeavesTheHandlerAliveAfterTheClientIsDisposed()
+    {
+        // A supplied handler belongs to the caller, who commonly holds one as a field and builds a
+        // client per request. HttpClient's default ownership would have the first client's disposal
+        // take that handler down, failing every later request with ObjectDisposedException.
+        using var handler = new CountingHttpMessageHandler();
+
+        using (HttpClientFactory.CreateAuthenticatedClient(handler: handler))
+        {
+        }
+
+        handler.DisposeCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void CreateAuthenticatedClient_WithASuppliedHandler_CanBackSeveralClients()
+    {
+        using var handler = new CountingHttpMessageHandler();
+
+        var first = HttpClientFactory.CreateAuthenticatedClient(handler: handler);
+        using var second = HttpClientFactory.CreateAuthenticatedClient(handler: handler);
+
+        first.Should().NotBeSameAs(second);
+
+        // Disposing one client must not take the shared handler, or the other client is already
+        // broken before it sends anything.
+        first.Dispose();
+
+        handler.DisposeCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Counts disposals so a test can pin who owns a supplied handler.
+    /// </summary>
+    private sealed class CountingHttpMessageHandler : HttpMessageHandler
+    {
+        public int DisposeCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("This handler exists only to observe disposal.");
+
+        protected override void Dispose(bool disposing)
+        {
+            DisposeCount++;
+            base.Dispose(disposing);
+        }
+    }
 }

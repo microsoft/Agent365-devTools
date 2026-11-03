@@ -67,4 +67,14 @@ public static class ErrorMessages
 
     #endregion
 
+    public const string GsaPublicCloudOnly =
+        "Global Secure Access commands support public cloud only. No request was sent.";
+
+    public const string GsaStatusMissing =
+        "The platform returned no readable Global Secure Access status. Correlation ID: {CorrelationId}";
+
+    public const string GsaScopeMissing =
+        "The platform rejected the access token's permissions. Required scope: {RequiredScope}. " +
+        "Contact support with the correlation ID.";
+
 }
