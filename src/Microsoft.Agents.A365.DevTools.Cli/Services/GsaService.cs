@@ -251,8 +251,7 @@ public class GsaService : IGsaService
             if (string.Equals(error?.Error, "insufficient_scope", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogError(ErrorMessages.GsaScopeMissing,
-                    error?.RequiredScope ?? (operationName == "read Global Secure Access status"
-                        ? "AgentTools.Gsa.Read.All" : "AgentTools.Gsa.Manage.All"));
+                    error?.RequiredScope ?? "not reported");
             }
             else
             {
