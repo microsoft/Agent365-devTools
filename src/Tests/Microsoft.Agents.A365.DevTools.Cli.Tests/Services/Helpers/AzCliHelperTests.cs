@@ -82,6 +82,66 @@ public class AzCliHelperTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolveLoginHintAsync_ConcurrentCalls_InvokesResolverOnce()
+    {
+        const int followerCount = 8;
+        var callCount = 0;
+        using var resolverEntered = new ManualResetEventSlim();
+        using var releaseResolver = new ManualResetEventSlim();
+        using var followersStarted = new CountdownEvent(followerCount);
+
+        AzCliHelper.LoginHintResolverOverride = () =>
+        {
+            Interlocked.Increment(ref callCount);
+            resolverEntered.Set();
+            releaseResolver.Wait();
+            return Task.FromResult<string?>("concurrent@test.com");
+        };
+
+        var firstCall = StartConcurrentResolve();
+        Task<string?>[] followerCalls = [];
+        try
+        {
+            resolverEntered.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue(
+                because: "the first concurrent resolve must enter the injected resolver");
+
+            followerCalls = Enumerable.Range(0, followerCount)
+                .Select(_ => Task.Factory.StartNew(
+                    () =>
+                    {
+                        followersStarted.Signal();
+                        return AzCliHelper.ResolveLoginHintAsync();
+                    },
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default).Unwrap())
+                .ToArray();
+
+            followersStarted.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue(
+                because: "all follower threads must reach the concurrent cache lookup");
+            await Task.Delay(100);
+
+            Volatile.Read(ref callCount).Should().Be(1,
+                because: "concurrent callers must share one cached az account show subprocess");
+        }
+        finally
+        {
+            releaseResolver.Set();
+        }
+
+        var results = await Task.WhenAll(followerCalls.Append(firstCall));
+        results.Should().OnlyContain(result => result == "concurrent@test.com",
+            because: "all concurrent callers must observe the same cached login hint");
+
+        static Task<string?> StartConcurrentResolve()
+            => Task.Factory.StartNew(
+                AzCliHelper.ResolveLoginHintAsync,
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default).Unwrap();
+    }
+
+    [Fact]
     public async Task ResolveLoginHintAsync_AfterCacheReset_InvokesResolverAgain()
     {
         var callCount = 0;
