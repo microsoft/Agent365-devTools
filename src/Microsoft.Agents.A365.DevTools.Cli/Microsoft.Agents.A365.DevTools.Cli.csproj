@@ -46,6 +46,9 @@
     <PackageReference Include="Azure.ResourceManager" />
     <PackageReference Include="Azure.ResourceManager.AppService" />
 
+    <!-- OpenAI SDK (Azure OpenAI BYO-LLM judge for evaluate) -->
+    <PackageReference Include="OpenAI" />
+
     <!-- Microsoft Graph -->
     <PackageReference Include="Microsoft.Graph" />
   </ItemGroup>
