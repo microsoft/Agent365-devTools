@@ -29,7 +29,7 @@
     AUTHENTICATION
     The script is built to run unattended as an application. Pass -ClientId together with one of
     -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath, or use
-    -UseManagedIdentity / -AccessToken. In that mode permissions come from Microsoft Graph
+    -UseManagedIdentity. In that mode permissions come from Microsoft Graph
     APPLICATION app roles granted to the app registration - delegated scopes are neither requested
     nor honoured - and the script verifies up front that every role it needs is actually granted.
     Use New-A365AutomationApp.ps1 to create that app registration.
@@ -53,7 +53,7 @@
 
 .PARAMETER ClientId
     Application (client) ID to authenticate as. Required for client secret and certificate auth,
-    optional for a user-assigned managed identity or a custom -Interactive app.
+    optional for a custom -Interactive app.
 
 .PARAMETER ClientSecret
     Client secret, as a SecureString or a plain string. May also be supplied through the A365_CLIENT_SECRET
@@ -72,11 +72,7 @@
     Password for -CertificatePath, as a SecureString or a plain string.
 
 .PARAMETER UseManagedIdentity
-    Authenticate with the host's managed identity. Add -ClientId for a user-assigned identity.
-
-.PARAMETER AccessToken
-    A Microsoft Graph access token, as a SecureString or a plain string, for callers that mint
-    tokens themselves.
+    Authenticate with the host's SYSTEM-assigned managed identity.
 
 .PARAMETER Interactive
     Sign in as a user with delegated scopes instead of running as an application.
@@ -349,7 +345,6 @@ param(
     [string]       $CertificatePath,
     [object]       $CertificatePassword,
     [switch]       $UseManagedIdentity,
-    [object]       $AccessToken,
     [switch]       $Interactive,
     [switch]       $SkipPermissionCheck,
 
@@ -1968,7 +1963,6 @@ function Connect-GraphSession {
         [string]       $CertificatePath,
         [object]       $CertificatePassword,
         [switch]       $UseManagedIdentity,
-        [object]       $AccessToken,
         [switch]       $Interactive,
         [string[]]     $DelegatedScope  = @(),
         [string[]]     $RequiredAppRole = @(),
@@ -1993,7 +1987,6 @@ finally {
     # Accept plain strings as well as SecureStrings, and warn about the trade-off once.
     $secretWasPlainText = $ClientSecret -is [string]
     $ClientSecret = ConvertTo-SecureStringValue -Value $ClientSecret -Name 'ClientSecret'
-    $AccessToken  = ConvertTo-SecureStringValue -Value $AccessToken  -Name 'AccessToken'
     $CertificatePassword = ConvertTo-SecureStringValue -Value $CertificatePassword -Name 'CertificatePassword'
 
     # Keeps the secret out of command lines, shell history and transcripts.
@@ -2005,19 +1998,30 @@ finally {
         Write-Warning 'A plain-text -ClientSecret was passed on the command line, where it is visible to shell history and transcripts. Prefer $env:A365_CLIENT_SECRET or a SecureString.'
     }
 
+    $certificateSourceCount = @(
+        [bool]$CertificateThumbprint,
+        ($null -ne $Certificate),
+        [bool]$CertificatePath
+    ).Where({ $_ }).Count
+    if ($certificateSourceCount -gt 1) {
+        throw 'Supply exactly one certificate source: -CertificateThumbprint, -Certificate, or -CertificatePath.'
+    }
+    if ($CertificatePassword -and (-not $CertificatePath)) {
+        throw '-CertificatePassword can be used only with -CertificatePath.'
+    }
+
     $modes = @()
     if ($Interactive)        { $modes += 'Interactive' }
-    if ($AccessToken)        { $modes += 'AccessToken' }
     if ($UseManagedIdentity) { $modes += 'ManagedIdentity' }
     if ($CertificateThumbprint -or $Certificate -or $CertificatePath) { $modes += 'Certificate' }
     if ($ClientSecret)       { $modes += 'ClientSecret' }
 
     if ($modes.Count -gt 1) {
-        throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one of -ClientSecret, -CertificateThumbprint/-Certificate/-CertificatePath, -UseManagedIdentity, -AccessToken or -Interactive."
+        throw "Conflicting authentication options ($($modes -join ', ')). Supply exactly one of -ClientSecret, -CertificateThumbprint/-Certificate/-CertificatePath, -UseManagedIdentity or -Interactive."
     }
     if ($modes.Count -eq 0) {
         $lead = if ($ClientId) { '-ClientId was supplied without a credential.' } else { 'No authentication method was specified.' }
-        throw "$lead To run as an application pass -ClientId with -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath (or use -UseManagedIdentity / -AccessToken). To sign in as a user pass -Interactive."
+        throw "$lead To run as an application pass -ClientId with -ClientSecret, -CertificateThumbprint, -Certificate or -CertificatePath (or use -UseManagedIdentity). To sign in as a user pass -Interactive."
     }
 
     $mode = $modes[0]
@@ -2042,11 +2046,12 @@ finally {
                     throw "Certificate file not found: $CertificatePath"
                 }
                 $pfx = (Resolve-Path -LiteralPath $CertificatePath).ProviderPath
+                $keyStorageFlags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
                 $connect.Certificate = if ($CertificatePassword) {
-                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword)
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $CertificatePassword, $keyStorageFlags)
                 }
                 else {
-                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx)
+                    [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, [string]::Empty, $keyStorageFlags)
                 }
             }
             else {
@@ -2055,10 +2060,9 @@ finally {
         }
         'ManagedIdentity' {
             $connect.Identity = $true
-            if ($ClientId) { $connect.ClientId = $ClientId }   # user-assigned identity
-        }
-        'AccessToken' {
-            $connect.AccessToken = $AccessToken
+            if ($ClientId) {
+                throw '-UseManagedIdentity supports only the system-assigned managed identity; do not pass -ClientId.'
+            }
         }
         'Interactive' {
             $connect.TenantId = $TenantId
@@ -2219,7 +2223,7 @@ $ctx = Connect-GraphSession -TenantId $TenantId `
     -ClientId $ClientId -ClientSecret $ClientSecret `
     -CertificateThumbprint $CertificateThumbprint -Certificate $Certificate `
     -CertificatePath $CertificatePath -CertificatePassword $CertificatePassword `
-    -UseManagedIdentity:$UseManagedIdentity -AccessToken $AccessToken `
+    -UseManagedIdentity:$UseManagedIdentity `
     -Interactive:$Interactive -SkipPermissionCheck:$SkipPermissionCheck `
     -DelegatedScope $delegatedScopes -RequiredAppRole $appRoles
 
