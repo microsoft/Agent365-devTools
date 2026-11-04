@@ -142,6 +142,33 @@ public class CleanupCommandTests
         }
     }
 
+    [Fact]
+    public async Task CleanupInstance_WithNonGuidAgenticUserId_DoesNotRunAzAndFails()
+    {
+        var config = CreateValidConfig();
+        config.AgenticUserId = "00000000-0000-0000-0000-000000000000 & other";
+        _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(config);
+        var command = CleanupCommand.CreateCommand(_mockLogger, _mockConfigService, _mockBackendConfigurator, _mockExecutor, _agentBlueprintService, _mockConfirmationProvider, _federatedCredentialService, _mockAuthValidator);
+
+        var originalIn = Console.In;
+        try
+        {
+            Console.SetIn(new StringReader("y\ny\n"));
+
+            var result = await command.InvokeAsync(new[] { "cleanup", "instance" });
+
+            result.Should().Be(1, because: "a non-GUID agenticUserId must fail cleanup instead of being passed to az");
+            await _mockExecutor.DidNotReceive().ExecuteAsync(
+                Arg.Any<string>(),
+                Arg.Is<string>(a => a.Contains("ad user delete")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+        }
+    }
+
     [Fact(Skip = "Test requires interactive confirmation - cleanup commands now enforce user confirmation instead of --force")]
     public async Task Cleanup_WithoutSubcommand_ShouldExecuteCompleteCleanup()
     {
@@ -543,8 +570,8 @@ public class CleanupCommandTests
             TenantId = "test-tenant-id",
             MessagingEndpoint = "https://test-bot.example.com/api/messages",
             AgentBlueprintId = "test-blueprint-id",
-            AgenticAppId = "test-identity-id",
-            AgenticUserId = "test-user-id",
+            AgenticAppId = "37fc1c47-5eda-46ca-93b2-76baba49e605",
+            AgenticUserId = "6a0f6b0e-5d1c-4c0e-9a3b-2f7d8e9c1b42",
             AgentDescription = "test-agent-description"
         };
     }

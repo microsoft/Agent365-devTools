@@ -568,6 +568,26 @@ public class Agent365ConfigServiceTests : IDisposable
         Assert.Contains(result.Errors, e => e.Contains("TenantId") && e.Contains("GUID"));
     }
 
+    [Theory]
+    [InlineData(nameof(Agent365Config.AgenticUserId))]
+    [InlineData(nameof(Agent365Config.AgentBlueprintId))]
+    public async Task ValidateAsync_RejectsNonGuidAgentIds_FromGeneratedConfig(string fieldName)
+    {
+        var config = new Agent365Config
+        {
+            TenantId = "12345678-1234-1234-1234-123456789012",
+            ClientAppId = "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+            AgentIdentityDisplayName = "Test Agent",
+            DeploymentProjectPath = "./test"
+        };
+        typeof(Agent365Config).GetProperty(fieldName)!.SetValue(config, "00000000-0000-0000-0000-000000000000 & other");
+
+        var result = await _service.ValidateAsync(config);
+
+        result.IsValid.Should().BeFalse(because: "agent IDs are interpolated into az command lines and must be GUIDs");
+        result.Errors.Should().Contain(e => e.Contains(fieldName) && e.Contains("GUID"));
+    }
+
     #endregion
 
     #region Helper Method Tests

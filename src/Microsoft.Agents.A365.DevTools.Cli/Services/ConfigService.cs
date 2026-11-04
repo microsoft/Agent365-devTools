@@ -406,6 +406,17 @@ public class ConfigService : IConfigService
             ValidateGuid(config.AgenticAppId, nameof(config.AgenticAppId), errors);
         }
 
+        // These IDs are passed to az command lines, so they must be GUIDs.
+        if (!string.IsNullOrWhiteSpace(config.AgenticUserId))
+        {
+            ValidateGuid(config.AgenticUserId, nameof(config.AgenticUserId), errors);
+        }
+
+        if (!string.IsNullOrWhiteSpace(config.AgentBlueprintId))
+        {
+            ValidateGuid(config.AgentBlueprintId, nameof(config.AgentBlueprintId), errors);
+        }
+
         if (config.BotId != null)
         {
             ValidateGuid(config.BotId, nameof(config.BotId), errors);
