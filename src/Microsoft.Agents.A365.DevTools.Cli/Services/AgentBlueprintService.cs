@@ -1255,6 +1255,7 @@ public class AgentBlueprintService
     /// <param name="appRoleNames">Names of the app roles to assign (e.g. "Agent365.Observability.OtelWrite").</param>
     /// <param name="requiredScopes">Graph scopes required to perform the operation.</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="knownResourceSpObjectId">Resolved resource SP object ID, avoiding an app-ID lookup during replication.</param>
     /// <returns>
     /// An <see cref="AppRoleGrantResult"/> describing the outcome. <c>AllSucceeded</c> is true when
     /// every role was either successfully assigned or already in place; <c>AllAlreadyAssigned</c>
@@ -1267,7 +1268,8 @@ public class AgentBlueprintService
         string resourceAppId,
         IEnumerable<string> appRoleNames,
         IEnumerable<string>? requiredScopes = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? knownResourceSpObjectId = null)
     {
         // De-dup upfront: duplicate names map to the same role ID and would cause a redundant POST.
         var roleNames = appRoleNames?
@@ -1278,9 +1280,11 @@ public class AgentBlueprintService
 
         try
         {
-            // Resolve the resource service principal.
-            var resourceSpId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
-                tenantId, resourceAppId, ct, requiredScopes);
+            // Reuse the authoritative ID when the app-ID index has not replicated yet (issue #485).
+            var resourceSpId = knownResourceSpObjectId;
+            if (string.IsNullOrWhiteSpace(resourceSpId))
+                resourceSpId = await _graphApiService.LookupServicePrincipalByAppIdAsync(
+                    tenantId, resourceAppId, ct, requiredScopes);
             if (string.IsNullOrWhiteSpace(resourceSpId))
             {
                 _logger.LogWarning("Resource SP not found for app ID {ResourceAppId} — S2S app role assignment skipped.", resourceAppId);

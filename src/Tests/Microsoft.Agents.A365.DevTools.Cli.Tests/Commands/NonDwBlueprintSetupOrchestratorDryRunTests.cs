@@ -145,9 +145,7 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     // ── authMode dry-run output ────────────────────────────────────────────────
 
     /// <summary>
-    /// OBO mode must show delegated (principal-scoped) grants on the agent identity SP.
-    /// authMode controls only the agent-identity grant style; the blueprint step is independent
-    /// and always uses AllPrincipals grants on the blueprint (issue #417).
+    /// OBO mode must show delegated grants without a Defender application-role handoff.
     /// </summary>
     [Fact]
     public void PrintDryRunPlan_AuthModeObo_ShowsDelegatedGrantsOnAgentIdentity()
@@ -158,9 +156,31 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     /// <summary>
+    /// OBO mode requests the Defender delegated permission only.
+    /// </summary>
+    [Theory]
+    [InlineData("obo")]
+    [InlineData(null)]
+    public void PrintDryRunPlan_AuthModeObo_OmitsDefenderApplicationRoleGrant(string? authMode)
+    {
+        NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(
+            BuildConfig(),
+            _logger,
+            authMode: authMode,
+            skipObservabilityPermissions: true);
+
+        AnyLogContains("delegated grants").Should().BeTrue(
+            because: "OBO mode requires the Defender delegated permission");
+        AnyLogContains("S2S app roles").Should().BeFalse(
+            because: "OBO mode must not request the Defender application role");
+        AnyLogContains("Global Administrator required for S2S if 403").Should().BeFalse(
+            because: "OBO mode has no Defender application-role handoff");
+    }
+
+    /// <summary>
     /// S2S mode must show application permissions on the agent identity SP and must not show
     /// delegated grants — there is no user context in S2S so delegated scopes don't apply.
-    /// authMode only affects the agent-identity step; the blueprint step is independent.
+    /// Defender follows authMode on both the blueprint and agent identity.
     /// </summary>
     [Fact]
     public void PrintDryRunPlan_AuthModeS2s_ShowsAppPermsOnAgentIdentity_NoDelegatedGrants()
@@ -172,17 +192,17 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     /// <summary>
-    /// Blueprint agents skip OtelWrite by default, which leaves the S2S half with no app roles to assign.
+    /// Skipping OtelWrite does not remove the Defender application role required for S2S evaluation.
     /// </summary>
     [Fact]
-    public void PrintDryRunPlan_AuthModeS2s_WhenObservabilitySkipped_ShowsNoAppRolesToGrant()
+    public void PrintDryRunPlan_AuthModeS2s_WhenObservabilitySkipped_ShowsDefenderAppRoleGrant()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "s2s", skipObservabilityPermissions: true);
 
-        AnyLogContains("not required  (no S2S app roles to grant)").Should().BeTrue(
-            because: "the dry-run plan must match the real summary when the spec list has no app roles");
-        AnyLogContains("Global Administrator required if 403").Should().BeFalse(
-            because: "there is no S2S grant to perform when blueprint agents skip OtelWrite");
+        AnyLogContains("S2S app roles").Should().BeTrue(
+            because: "RealtimeProtection.Evaluate.All remains required when Observability permissions are skipped");
+        AnyLogContains("Global Administrator required if 403").Should().BeTrue(
+            because: "assigning the Defender application role may require Global Administrator");
     }
 
     [Fact]
@@ -202,8 +222,8 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
 
         AnyLogContains("Observability API not requested").Should().BeFalse(
             because: "a custom Observability permission explicitly opts back into requesting Observability permissions");
-        AnyLogContains("not required  (no S2S app roles to grant)").Should().BeTrue(
-            because: "custom permissions carry delegated scopes only, so there is still no S2S app role to grant");
+        AnyLogContains("S2S app roles").Should().BeTrue(
+            because: "the fixed Defender permission still carries an application role when Observability is configured as a custom delegated permission");
     }
 
     /// <summary>
@@ -220,17 +240,17 @@ public class NonDwBlueprintSetupOrchestratorDryRunTests
     }
 
     /// <summary>
-    /// Both mode still has delegated consent work, but no S2S grant when no spec carries app roles.
+    /// Both mode retains delegated consent work and the Defender S2S app role when OtelWrite is skipped.
     /// </summary>
     [Fact]
-    public void PrintDryRunPlan_AuthModeBoth_WhenObservabilitySkipped_ShowsDelegatedOnly()
+    public void PrintDryRunPlan_AuthModeBoth_WhenObservabilitySkipped_ShowsDelegatedAndDefenderAppRole()
     {
         NonDwBlueprintSetupOrchestrator.PrintDryRunPlan(BuildConfig(), _logger, authMode: "both", skipObservabilityPermissions: true);
 
-        AnyLogContains("delegated grants for the signed-in principal; no S2S app roles to grant").Should().BeTrue(
-            because: "both mode must preserve the delegated half while saying the S2S half has no role to assign");
-        AnyLogContains("Global Administrator required for S2S if 403").Should().BeFalse(
-            because: "there is no S2S grant fallback to describe when blueprint agents skip OtelWrite");
+        AnyLogContains("delegated grants for the signed-in principal + S2S app roles").Should().BeTrue(
+            because: "both mode must preserve delegated grants and the Defender application role when OtelWrite is skipped");
+        AnyLogContains("Global Administrator required for S2S if 403").Should().BeTrue(
+            because: "the Defender S2S app role still needs an administrative fallback");
     }
 
     /// <summary>

@@ -62,6 +62,22 @@ public class SetupHelpersAdminConsentInstructionsTests
     }
 
     [Fact]
+    public void LogNonDwAdminConsentInstructions_OptionA_ShowsDefenderDelegatedPermission()
+    {
+        var logger = new CapturingLogger();
+
+        SetupHelpers.LogNonDwAdminConsentInstructions(logger, BlueprintId);
+
+        var defenderLines = logger.Messages
+            .Where(m => m.Contains("Defender API") && m.Contains(ConfigConstants.DefenderApiRealtimeProtectionScope))
+            .ToList();
+        defenderLines.Should().HaveCount(1,
+            because: "the Defender API delegated scope must appear exactly once so the admin grants it alongside the other platform APIs");
+        defenderLines[0].Should().Contain("Delegated",
+            because: "only delegated grants are needed for OBO — no Application permissions");
+    }
+
+    [Fact]
     public void LogNonDwAdminConsentInstructions_DoesNotEmitOptionBPowerShell()
     {
         var logger = new CapturingLogger();
@@ -144,6 +160,26 @@ public class SetupHelpersAdminConsentInstructionsTests
             .Should().OnlyContain(
                 spec => spec.ResourceAppId == ConfigConstants.GccObservabilityApiAppId,
                 because: "manual GCC consent instructions must target the GCC Observability resource");
+    }
+
+    [Theory]
+    [InlineData("Delegated", true, false)]
+    [InlineData("Application", false, true)]
+    [InlineData("Both", true, true)]
+    public void GetNonDwAdminConsentSpecs_DefenderPermissionsMatchAuthMode(
+        string modeName,
+        bool expectDelegated,
+        bool expectApplication)
+    {
+        var mode = Enum.Parse<DefenderPermissionMode>(modeName);
+        var specs = SetupHelpers.GetNonDwAdminConsentSpecs("prod", mode)
+            .Where(spec => spec.ResourceName == "Defender API")
+            .ToList();
+
+        specs.Any(spec => spec.PermissionType == "Delegated").Should().Be(expectDelegated,
+            because: $"{mode} must include delegated Defender consent exactly when OBO is enabled");
+        specs.Any(spec => spec.PermissionType == "Application").Should().Be(expectApplication,
+            because: $"{mode} must include the Defender app role exactly when S2S is enabled");
     }
 
     [Fact]
