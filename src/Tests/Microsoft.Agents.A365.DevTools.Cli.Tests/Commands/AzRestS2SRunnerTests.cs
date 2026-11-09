@@ -223,6 +223,81 @@ public class AzRestS2SRunnerTests
     }
 
     [Fact]
+    public async Task KnownResourceSpId_PreservesIdempotencyWithoutAppIdLookup()
+    {
+        StubExistingAssignmentsGet(existingResourceId: ResourceSpId, existingAppRoleId: OtelWriteRoleId);
+        StubResourceSpWithAppRolesLookup(returnsEmpty: true);
+        _executor.ExecuteAsync(
+                "az", Arg.Is<string>(args => args.Contains($"https://graph.example/v1.0/servicePrincipals/{ResourceSpId}?$select=id,appRoles")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = $"{{\"id\":\"{ResourceSpId}\",\"appRoles\":[{{\"id\":\"{OtelWriteRoleId}\",\"value\":\"{OtelWriteRole}\"}}]}}",
+            }));
+
+        var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
+            _executor, BlueprintSpId, [ObsSpec()], _logger, ct: default,
+            graphBaseUrl: "https://graph.example",
+            resourceSpObjectIds: new Dictionary<string, string> { [ObsAppId] = ResourceSpId });
+
+        attempted.Should().BeTrue();
+        succeeded.Should().BeTrue(
+            because: "the fallback must reuse the known resource ID when app-ID lookup is still empty");
+        await _executor.DidNotReceive().ExecuteAsync(
+            "az", Arg.Is<string>(args => args.Contains("$filter=appId")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await _executor.DidNotReceive().ExecuteAsync(
+            "az", Arg.Is<string>(args => args.Contains("--method POST")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task KnownResourceSpId_WhenReadFailsOrRoleIsMissing_ReturnsFailed(bool readFails)
+    {
+        StubExistingAssignmentsGet(emptyValue: true);
+        _executor.ExecuteAsync(
+                "az", Arg.Is<string>(args => args.Contains($"/servicePrincipals/{ResourceSpId}?$select=id,appRoles")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult
+            {
+                ExitCode = readFails ? 1 : 0,
+                StandardOutput = $"{{\"id\":\"{ResourceSpId}\",\"appRoles\":[]}}",
+                StandardError = readFails ? "Resource unavailable" : string.Empty,
+            }));
+
+        var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
+            _executor, BlueprintSpId, [ObsSpec()], _logger, ct: default,
+            resourceSpObjectIds: new Dictionary<string, string> { [ObsAppId] = ResourceSpId });
+
+        attempted.Should().BeTrue();
+        succeeded.Should().BeFalse(
+            because: "a recovered resource ID alone cannot count as a successful application-role assignment");
+        await _executor.DidNotReceive().ExecuteAsync(
+            "az", Arg.Is<string>(args => args.Contains("--method POST")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not-a-guid")]
+    [InlineData("22222222-2222-2222-2222-222222222222\" --method DELETE")]
+    public async Task InvalidKnownResourceSpId_ReturnsNotAttempted(string knownSpId)
+    {
+        var (attempted, succeeded) = await AzRestS2SRunner.TryRunAsync(
+            _executor, BlueprintSpId, [ObsSpec()], _logger, ct: default,
+            resourceSpObjectIds: new Dictionary<string, string> { [ObsAppId] = knownSpId });
+
+        attempted.Should().BeFalse(
+            because: "a supplied resource object ID reaches a shell command and must pass GUID validation before any az invocation");
+        succeeded.Should().BeFalse();
+        await _executor.DidNotReceive().ExecuteAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public void TryExtractFirstSpIdAndAppRoles_ValidPayload_ReturnsIdAndRoleMap()
     {
         var json =
@@ -259,6 +334,9 @@ public class AzRestS2SRunnerTests
     [InlineData("not json")]
     [InlineData("{\"value\":[]}")]
     [InlineData("{\"unrelated\":true}")]
+    [InlineData("{\"value\":null}")]
+    [InlineData("{\"value\":[null]}")]
+    [InlineData("[]")]
     public void TryExtractFirstSpIdAndAppRoles_InvalidOrEmpty_ReturnsNullId(string? azOutput)
     {
         var (spId, roles) = AzRestS2SRunner.TryExtractFirstSpIdAndAppRoles(azOutput);

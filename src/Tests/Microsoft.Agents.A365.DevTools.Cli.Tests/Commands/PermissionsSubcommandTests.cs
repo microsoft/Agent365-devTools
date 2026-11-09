@@ -293,6 +293,42 @@ public class PermissionsSubcommandTests : IDisposable
         dryRunOption!.Aliases.Should().Contain("--dry-run");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BotDryRun_WithOrWithoutConfig_MentionsDefender(bool hasConfig)
+    {
+        if (hasConfig)
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromResult(new Agent365Config { TenantId = "tenant-id", AgentBlueprintId = "blueprint-id" }));
+        else
+            _mockConfigService.LoadAsync(Arg.Any<string>(), Arg.Any<string>())
+                .Returns(Task.FromException<Agent365Config>(new FileNotFoundException("Config file not found.")));
+        var root = new RootCommand();
+        root.AddCommand(PermissionsSubcommand.CreateCommand(
+            _mockLogger,
+            _mockAuthValidator,
+            _mockConfigService,
+            _mockExecutor,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            _mockConfirmationProvider));
+
+        var result = await root.InvokeAsync("permissions bot --dry-run");
+
+        result.Should().Be(0,
+            because: "permissions bot must provide a usable preview whether or not a config file is available");
+        var messages = _mockLogger.ReceivedCalls()
+            .Select(call => call.GetArguments()[2]?.ToString() ?? string.Empty)
+            .ToList();
+        messages.Should().Contain(
+            message => message.Contains("Defender", StringComparison.OrdinalIgnoreCase),
+            because: "permissions bot configures Defender and the no-config preview must not omit that user-visible work");
+        messages.Should().NotContain(
+            message => message.Contains("Observability", StringComparison.OrdinalIgnoreCase),
+            because: "permissions bot no longer requests Observability permissions in either preview path");
+    }
+
     [Fact]
     public void BotSubcommand_DescriptionShouldMentionPrerequisites()
     {
@@ -308,6 +344,8 @@ public class PermissionsSubcommandTests : IDisposable
 
         // Assert
         botSubcommand.Description.Should().Contain("Prerequisites");
+        botSubcommand.Description.Should().Contain("Defender",
+            because: "the command description must disclose every fixed platform API that permissions bot configures");
     }
 
     [Fact]
@@ -776,7 +814,7 @@ public class PermissionsSubcommandTests : IDisposable
     #region ConfigureBotPermissionsAsync — Issue 402 Regression Tests
     // Regression tests for the localResults fix: failures must be visible even when setupResults=null.
 
-    private Agent365Config ArrangeAdminPath()
+    private Agent365Config ArrangeAdminPath(bool s2sSucceeds = true)
     {
         var config = new Agent365Config
         {
@@ -804,6 +842,12 @@ public class PermissionsSubcommandTests : IDisposable
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<(bool ok, bool alreadyExists, string? error)>((true, false, null)));
 
+        _mockBlueprintService.GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>(),
+            knownResourceSpObjectId: "resource-sp-id")
+            .Returns(Task.FromResult(new AppRoleGrantResult(AllSucceeded: s2sSucceeds, AllAlreadyAssigned: false)));
+
         _mockGraphApiService.GraphGetAsync(
             Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<CancellationToken>(), Arg.Any<IEnumerable<string>?>())
@@ -826,12 +870,56 @@ public class PermissionsSubcommandTests : IDisposable
         return config;
     }
 
-    /// <summary>
-    /// Telemetry is authorized by registration, so the bot step requests no Observability API permissions. That
-    /// removes the only app role it requested, so an app role grant that would fail is never attempted.
-    /// </summary>
     [Fact]
-    public async Task ConfigureBotPermissionsAsync_AdminPath_RequestsNoObservabilityApiOrAppRoles()
+    public async Task ConfigureBotPermissionsAsync_MissingDefenderSp_EmitsCompleteStandaloneHandoff()
+    {
+        var previousBypass = BatchPermissionsOrchestrator.BypassSpProvisioningForTests;
+        BatchPermissionsOrchestrator.BypassSpProvisioningForTests = false;
+        try
+        {
+            var config = ArrangeAdminPath();
+            _mockGraphApiService.IsCurrentUserAdminAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult(RoleCheckResult.DoesNotHaveRole));
+            _mockGraphApiService.EnsureServicePrincipalForAppIdAsync(
+                    Arg.Any<string>(), ConfigConstants.DefenderApiAppId, Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>(), Arg.Any<bool>())
+                .Returns(Task.FromResult<string?>(null));
+            _mockGraphApiService.LookupServicePrincipalByAppIdAsync(
+                    Arg.Any<string>(), ConfigConstants.DefenderApiAppId, Arg.Any<CancellationToken>(),
+                    Arg.Any<IEnumerable<string>?>())
+                .Returns(Task.FromResult<string?>(null));
+            _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(Task.FromResult(false));
+
+            var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+                "config.json", _mockLogger, _mockConfigService, _mockExecutor, config,
+                _mockGraphApiService, _mockBlueprintService, iSetupAll: false,
+                setupResults: null, confirmationProvider: _mockConfirmationProvider);
+
+            var output = string.Join("\n", _mockLogger.ReceivedCalls()
+                .Where(call => call.GetMethodInfo().Name == nameof(ILogger.Log))
+                .Select(call => call.GetArguments()[2]?.ToString() ?? string.Empty));
+            var createCommand = $"az ad sp create --id {ConfigConstants.DefenderApiAppId}";
+            result.Should().BeFalse(
+                because: "a standalone bot permission command cannot succeed while Defender provisioning and consent remain pending");
+            output.Should().Contain(createCommand,
+                because: "standalone commands have no full setup summary to supply the missing Defender provisioning step");
+            output.Should().Contain(Uri.EscapeDataString(
+                    $"{ConfigConstants.DefenderApiIdentifierUri}/{ConfigConstants.DefenderApiRealtimeProtectionScope}"),
+                because: "Defender is excluded from the combined URL until its service principal exists, so its separate delegated-consent URL is required");
+            output.Should().Contain("New-MgServicePrincipalAppRoleAssignment",
+                because: "provisioning and delegated consent do not grant the required Defender application role");
+            output.IndexOf(createCommand, StringComparison.Ordinal).Should().BeLessThan(
+                output.IndexOf("New-MgServicePrincipalAppRoleAssignment", StringComparison.Ordinal),
+                because: "the administrator must provision the Defender service principal before assigning its application role");
+        }
+        finally
+        {
+            BatchPermissionsOrchestrator.BypassSpProvisioningForTests = previousBypass;
+        }
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_AdminPath_RequestsDefenderButNotObservability()
     {
         // Arrange — admin user, OAuth2 grants succeed.
         var config = ArrangeAdminPath();
@@ -850,7 +938,7 @@ public class PermissionsSubcommandTests : IDisposable
 
         // Assert
         result.Should().BeTrue(
-            because: "with no app role requested there is no S2S grant left that could fail the step");
+            because: "Defender permissions must succeed independently of the skipped Observability permissions");
         await _mockBlueprintService.Received().SetInheritablePermissionsAsync(
             Arg.Any<string>(), Arg.Any<string>(), PowerPlatformConstants.PowerPlatformApiResourceAppId,
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
@@ -858,12 +946,50 @@ public class PermissionsSubcommandTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), ConfigConstants.ObservabilityApiAppId,
             Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
         await _mockBlueprintService.DidNotReceive().GrantAppRoleAssignmentAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), ConfigConstants.ObservabilityApiAppId,
+            Arg.Any<IEnumerable<string>>(), Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>(),
+            knownResourceSpObjectId: Arg.Any<string?>());
+        await _mockBlueprintService.Received().GrantAppRoleAssignmentAsync(
+            Arg.Any<string>(), Arg.Any<string>(), ConfigConstants.DefenderApiAppId,
+            Arg.Is<IEnumerable<string>>(roles => roles.SequenceEqual(new[] { ConfigConstants.DefenderApiRealtimeProtectionScope })),
+            Arg.Any<IEnumerable<string>?>(), Arg.Any<CancellationToken>(),
+            knownResourceSpObjectId: "resource-sp-id");
         _mockLogger.DidNotReceive().Log(
             LogLevel.Warning,
             Arg.Any<EventId>(),
             Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("S2S app role assignment failed")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    public async Task ConfigureBotPermissionsAsync_AdminPath_WhenS2SFailsAndNoExternalSetupResults_ReturnsFalse()
+    {
+        var config = ArrangeAdminPath(s2sSucceeds: false);
+
+        var result = await PermissionsSubcommand.ConfigureBotPermissionsAsync(
+            "config.json",
+            _mockLogger,
+            _mockConfigService,
+            _mockExecutor,
+            config,
+            _mockGraphApiService,
+            _mockBlueprintService,
+            iSetupAll: false,
+            setupResults: null);
+
+        result.Should().BeFalse(
+            because: "a failed Defender application grant must fail the command even without external setup results");
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("S2S app role assignment failed")),
+            Arg.Any<Exception?>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger.DidNotReceive().Log(
+            LogLevel.Information,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => (o.ToString() ?? string.Empty).Contains("configured successfully")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }
@@ -967,7 +1093,15 @@ public class PermissionsSubcommandTests : IDisposable
             setupResults: null);
 
         // Assert
-        result.Should().BeTrue(because: "every permission the bot step requests was granted, so the method must return true");
+        result.Should().BeTrue(because: "all grants and S2S succeed — method must return true");
+        await _mockBlueprintService.Received().GrantAppRoleAssignmentAsync(
+            config.TenantId,
+            config.AgentBlueprintServicePrincipalObjectId!,
+            ConfigConstants.DefenderApiAppId,
+            Arg.Is<IEnumerable<string>>(roles => roles.Contains(ConfigConstants.DefenderApiRealtimeProtectionScope)),
+            Arg.Any<IEnumerable<string>?>(),
+            Arg.Any<CancellationToken>(),
+            knownResourceSpObjectId: "resource-sp-id");
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
@@ -976,11 +1110,13 @@ public class PermissionsSubcommandTests : IDisposable
             Arg.Any<Func<object, Exception?, string>>());
     }
 
-    [Fact]
-    public async Task ConfigureBotPermissionsAsync_WithExternalSetupResults_RecordsNoS2SAttempt()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ConfigureBotPermissionsAsync_WithExternalSetupResults_RecordsDefenderS2SOutcome(bool s2sSucceeds)
     {
         // Arrange — non-null SetupResults passed in (AllSubcommand path).
-        var config = ArrangeAdminPath();
+        var config = ArrangeAdminPath(s2sSucceeds);
         var externalResults = new SetupResults();
 
         // Act
@@ -996,12 +1132,12 @@ public class PermissionsSubcommandTests : IDisposable
             setupResults: externalResults);
 
         // Assert
-        result.Should().BeTrue(
-            because: "the bot step requests no app role, so it cannot fail on an S2S grant");
-        externalResults.BlueprintS2SOutcome.Should().Be(Cli.Models.GrantOutcome.NotApplicable,
-            because: "the caller's summary must not report an S2S grant that this step never requested");
+        result.Should().Be(s2sSucceeds,
+            because: "the command must report whether the required Defender application grant succeeded");
+        externalResults.BlueprintS2SOutcome.Should().Be(
+            s2sSucceeds ? Cli.Models.GrantOutcome.Granted : Cli.Models.GrantOutcome.Failed,
+            because: "the caller's summary must reflect the Defender application grant even when Observability is skipped");
     }
 
     #endregion
 }
-
