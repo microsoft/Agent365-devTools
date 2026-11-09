@@ -437,6 +437,14 @@ public class QueryEntraCommand
                 logger.LogInformation("{IdentityType} ID: {IdentityId}", identityType, agenticAppId);
                 logger.LogInformation("");
 
+                // The ID is passed to an az command line, so it must be a GUID.
+                if (!Guid.TryParse(agenticAppId, out _))
+                {
+                    logger.LogError("{IdentityType} ID in configuration is not a valid GUID.", identityType);
+                    context.ExitCode = 1;
+                    return;
+                }
+
                 // Query Entra ID for the agent identity and OAuth2 grants.
                 logger.LogInformation("Querying Microsoft Entra ID for agent identity and OAuth2 grants...");
 
@@ -483,6 +491,12 @@ public class QueryEntraCommand
                     }
 
                     agentServicePrincipalObjectId = objectIdElement.GetString();
+                    if (!Guid.TryParse(agentServicePrincipalObjectId, out _))
+                    {
+                        logger.LogError("Service principal lookup returned an objectId that is not a valid GUID.");
+                        context.ExitCode = 1;
+                        return;
+                    }
                     if (spElement.TryGetProperty("displayName", out var nameElement) &&
                         nameElement.ValueKind == JsonValueKind.String &&
                         !string.IsNullOrWhiteSpace(nameElement.GetString()))
@@ -550,14 +564,16 @@ public class QueryEntraCommand
                                 var scope = grantElement.TryGetProperty("scope", out var scopeElement) ? scopeElement.GetString() : "Unknown";
                                 var resourceId = grantElement.TryGetProperty("resourceId", out var resourceIdElement) ? resourceIdElement.GetString() : "Unknown";
                                 
-                                // Get the resource display name using Graph API
-                                var resourceResult = await executor.ExecuteAsync("az", 
-                                    $"rest --method GET --url \"{graphApiService.GraphBaseUrl}/v1.0/servicePrincipals/{resourceId}?$select=displayName,appId\" --output json");
+                                // Get the resource display name using Graph API; resourceId comes from Graph and must be a GUID before it reaches the az command line.
+                                var resourceResult = Guid.TryParse(resourceId, out _)
+                                    ? await executor.ExecuteAsync("az",
+                                        $"rest --method GET --url \"{graphApiService.GraphBaseUrl}/v1.0/servicePrincipals/{resourceId}?$select=displayName,appId\" --output json")
+                                    : null;
                                 
                                 string resourceName = "Unknown Resource";
                                 string resourceAppId = "Unknown";
                                 
-                                if (resourceResult.Success)
+                                if (resourceResult?.Success == true)
                                 {
                                     try
                                     {

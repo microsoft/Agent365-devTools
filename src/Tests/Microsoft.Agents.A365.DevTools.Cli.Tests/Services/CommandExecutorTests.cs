@@ -398,4 +398,58 @@ public class CommandExecutorTests
     }
 
     #endregion
+
+    #region cmd.exe wrapper
+
+    [Fact]
+    public async Task ExecuteAsync_CmdWrappedBatchFile_PassesQuotedAmpersandLiterally()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"cmdwrap_{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var script = Path.Combine(dir, "echoargs.cmd");
+            await File.WriteAllTextAsync(script, "@echo ARGS:%*\r\n");
+
+            // Relative to its own directory so a profile path with spaces (or NoDefaultCurrentDirectoryInExePath) does not affect the test.
+            var result = await _executor.ExecuteAsync(@".\echoargs.cmd", "--url \"https://graph.example/v1.0/sp?$filter=a eq 'b'&$select=id\"", workingDirectory: dir, captureOutput: true);
+
+            result.Success.Should().BeTrue();
+            result.StandardOutput.Should().Contain("&$select=id",
+                because: "an '&' inside double quotes must reach the batch file as data, not start a second command");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CmdWrappedBatchFile_PercentExpansionQuoteShift_IsRefusedBeforeStart()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"cmdwrap_{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var script = Path.Combine(dir, "echoargs.cmd");
+            await File.WriteAllTextAsync(script, "@echo ARGS:%*\r\n");
+            var marker = Path.Combine(dir, "marker.txt");
+
+            // %OS:"=% expands to OS with quotes removed, which would leave the '&' outside quotes.
+            // Quotes are balanced, so only the '%' check can refuse this command line.
+            var act = () => _executor.ExecuteAsync(@".\echoargs.cmd", "--url \"https://graph.example/x/%OS:\"=%\" & type nul > marker.txt & rem \"\"\"", workingDirectory: dir, captureOutput: true);
+
+            await act.Should().ThrowAsync<ArgumentException>(
+                because: "cmd.exe expands %VAR% before parsing quotes, so the command line must be refused before the process starts");
+            File.Exists(marker).Should().BeFalse(because: "no second command may run");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    #endregion
 }

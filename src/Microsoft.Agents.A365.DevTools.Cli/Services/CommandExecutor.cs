@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Agents.A365.DevTools.Cli.Helpers;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Services;
@@ -38,7 +39,7 @@ public class CommandExecutor
         {
             _logger.LogTrace("Wrapping command with cmd.exe for Windows batch file");
             fileName = "cmd.exe";
-            fileArguments = $"/c {command} {arguments}";
+            fileArguments = BuildCmdWrapperArguments(command, arguments);
         }
 
         var startInfo = new ProcessStartInfo
@@ -145,7 +146,7 @@ public class CommandExecutor
         {
             _logger.LogTrace("Wrapping command with cmd.exe for Windows batch file");
             fileName = "cmd.exe";
-            fileArguments = $"/c {command} {arguments}";
+            fileArguments = BuildCmdWrapperArguments(command, arguments);
         }
 
         // In interactive mode we keep stdout/err redirected (so we can still display/prefix),
@@ -287,6 +288,17 @@ public class CommandExecutor
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Builds the 'cmd.exe' argument string, refusing command lines that cmd.exe would split into extra commands.
+    /// Delayed expansion is forced off so '!' stays literal regardless of the user's registry settings.
+    /// </summary>
+    internal static string BuildCmdWrapperArguments(string command, string arguments)
+    {
+        var commandLine = $"{command} {arguments}";
+        CommandArgumentGuard.EnsureSafeForCmd(commandLine);
+        return $"/v:off /c {commandLine}";
     }
 
     private bool NeedsCmdWrapper(string command)

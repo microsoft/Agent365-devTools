@@ -227,6 +227,59 @@ public class AzRestConsentRunnerTests
         scope.Should().BeNull();
     }
 
+    [Fact]
+    public async Task NonGuidResourceSpId_DoesNotQueryGrants()
+    {
+        StubResourceSpLookup(returnsEmpty: false, resourceSpId: "not-a-guid");
+
+        var (attempted, succeeded) = await AzRestConsentRunner.TryRunAsync(
+            _executor, BlueprintSpId, new[] { ObsSpec() }, _logger, ct: default);
+
+        attempted.Should().BeTrue();
+        succeeded.Should().BeFalse(because: "a resource SP id from Graph that is not a GUID must not be placed on the az command line");
+        await _executor.DidNotReceive().ExecuteAsync(
+            "az", Arg.Is<string>(s => s.Contains("oauth2PermissionGrants")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task UnsafeExistingGrantId_DoesNotPatch()
+    {
+        StubResourceSpLookup(returnsEmpty: false);
+        StubExistingGrantLookup(existingScope: "SomeOtherScope", grantId: "abc\" & other & \"");
+
+        var (attempted, succeeded) = await AzRestConsentRunner.TryRunAsync(
+            _executor, BlueprintSpId, new[] { ObsSpec() }, _logger, ct: default);
+
+        attempted.Should().BeTrue();
+        succeeded.Should().BeFalse(because: "a grant id outside [A-Za-z0-9._-] must not be placed in the PATCH URL");
+        await _executor.DidNotReceive().ExecuteAsync(
+            "az", Arg.Is<string>(s => s.Contains("--method PATCH") || s.Contains("--method POST")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Base64UrlExistingGrantId_IsPatched()
+    {
+        // Real oauth2PermissionGrant ids are base64url and contain '-' and '_'.
+        const string grantId = "R2gA-_xZ8k6abc_DEF-123";
+        StubResourceSpLookup(returnsEmpty: false);
+        StubExistingGrantLookup(existingScope: "SomeOtherScope", grantId: grantId);
+        _executor
+            .ExecuteAsync("az", Arg.Is<string>(s => s.Contains("--method PATCH")),
+                Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new CommandResult { ExitCode = 0 }));
+
+        var (attempted, succeeded) = await AzRestConsentRunner.TryRunAsync(
+            _executor, BlueprintSpId, new[] { ObsSpec() }, _logger, ct: default);
+
+        attempted.Should().BeTrue();
+        succeeded.Should().BeTrue(because: "base64url grant ids are valid and existing grants must still be updated");
+        await _executor.Received().ExecuteAsync(
+            "az", Arg.Is<string>(s => s.Contains("--method PATCH") && s.Contains($"oauth2PermissionGrants/{grantId}")),
+            Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Test scaffolding
     // ─────────────────────────────────────────────────────────────────────────
@@ -237,11 +290,11 @@ public class AzRestConsentRunnerTests
             new[] { ConfigConstants.ObservabilityApiOtelWriteScope },
             SetInheritable: false);
 
-    private void StubResourceSpLookup(bool returnsEmpty)
+    private void StubResourceSpLookup(bool returnsEmpty, string resourceSpId = ResourceSpId)
     {
         var json = returnsEmpty
             ? "{\"value\":[]}"
-            : $"{{\"value\":[{{\"id\":\"{ResourceSpId}\"}}]}}";
+            : $"{{\"value\":[{{\"id\":\"{resourceSpId}\"}}]}}";
         _executor
             .ExecuteAsync("az",
                 Arg.Is<string>(s => s.Contains("/servicePrincipals?") && s.Contains($"appId eq '{ObsAppId}'")),
@@ -249,7 +302,7 @@ public class AzRestConsentRunnerTests
             .Returns(Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = json }));
     }
 
-    private void StubExistingGrantLookup(string? existingScope = null, bool empty = false)
+    private void StubExistingGrantLookup(string? existingScope = null, bool empty = false, string grantId = ExistingGrantId)
     {
         string json;
         if (empty)
@@ -258,7 +311,7 @@ public class AzRestConsentRunnerTests
         }
         else
         {
-            json = "{\"value\":[{\"id\":\"" + ExistingGrantId + "\",\"scope\":\"" + (existingScope ?? string.Empty) + "\"}]}";
+            json = "{\"value\":[{\"id\":\"" + grantId.Replace("\"", "\\\"") + "\",\"scope\":\"" + (existingScope ?? string.Empty) + "\"}]}";
         }
         _executor
             .ExecuteAsync("az",
