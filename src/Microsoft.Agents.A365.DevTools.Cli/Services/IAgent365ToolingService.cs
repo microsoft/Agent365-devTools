@@ -52,8 +52,11 @@ public interface IAgent365ToolingService
     /// <param name="environmentId">Dataverse environment ID</param>
     /// <param name="serverName">MCP server name to unpublish</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>True if successful, false otherwise</returns>
-    Task<bool> UnpublishServerAsync(
+    /// <returns>
+    /// The unpublish response (including any Entra app registrations the CLI must delete), or null when
+    /// the operation failed.
+    /// </returns>
+    Task<UnpublishMcpServerResponse?> UnpublishServerAsync(
         string environmentId,
         string serverName,
         CancellationToken cancellationToken = default);
