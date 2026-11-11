@@ -74,7 +74,7 @@ public static class ErrorMessages
         "The platform returned no readable Global Secure Access status. Correlation ID: {CorrelationId}";
 
     public const string GsaScopeMissing =
-        "The platform rejected the access token's permissions. Required scope: {RequiredScope}. " +
-        "Contact support with the correlation ID.";
+        "The access token is missing required scope '{RequiredScope}'. " +
+        "Contact support to verify this scope is exposed and preauthorized for the CLI's Microsoft client application.";
 
 }

@@ -17,7 +17,9 @@ platform to apply the change against the environment it resolves for your tenant
 - An `az login --tenant <id> --allow-no-subscriptions` to the tenant you intend to configure;
   no Azure subscription is needed.
 - Public cloud only. Sovereign cloud configurations are rejected before authentication.
-- Existing delegated sign-in to the Agent 365 Tools API; no GSA-specific permissions are required.
+- The Agent 365 Tools API must expose `AgentTools.Gsa.Manage.All` for enable/disable and
+  `AgentTools.Gsa.Read.All` for status, and preauthorize them for the CLI's Microsoft client application.
+  These are platform deployment prerequisites, not permissions an admin can add to Microsoft's app registration.
 
 The `az login` is what selects the tenant. These commands read `az account show` once per run and
 authenticate against the tenant and account it reports, so `az login --tenant <id>` is how you
@@ -92,7 +94,7 @@ a365 network gsa status
 
 | Symptom | Cause |
 | --- | --- |
-| `403`, reporting `insufficient_scope` | An older platform deployment may still require GSA-specific scopes. Contact support with the reported scope and correlation ID. |
+| `403`, reporting `insufficient_scope` | The token lacks the reported scope. Contact support to verify the API exposes it and preauthorizes it for the CLI's Microsoft client application. |
 | Other `403` from the platform | Check the reported error and confirm the caller has the Global Administrator or Power Platform Administrator role. |
 | `409`, reporting a governing policy | A Power Platform policy owns this setting. Change it through that policy; the environment-level value is ignored while the policy applies. |
 | `404`, reporting no environment | The tenant has no Agent 365 environment yet. |

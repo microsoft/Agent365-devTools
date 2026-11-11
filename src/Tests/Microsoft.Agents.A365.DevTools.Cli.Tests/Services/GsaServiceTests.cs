@@ -349,26 +349,6 @@ public class GsaServiceTests
     }
 
     [Fact]
-    public async Task GetStatusAsync_WhenRequiredScopeIsNotReported_DoesNotInventGsaPermission()
-    {
-        var logger = Substitute.For<ILogger<GsaService>>();
-        using var handler = new TestHttpMessageHandler();
-        handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Forbidden)
-        {
-            Content = new StringContent("{\"error\":\"insufficient_scope\"}"),
-        });
-        var svc = new GsaService(logger, FakeAuth(), "prod", handler);
-
-        var result = await svc.GetStatusAsync(Account());
-
-        result.Should().BeNull();
-        var output = string.Join("\n", logger.ReceivedCalls()
-            .Where(c => c.GetMethodInfo().Name == "Log").Select(c => c.GetArguments()[2]?.ToString()));
-        output.Should().NotContain("AgentTools.Gsa.",
-            because: "GSA uses existing delegated authentication and must not invent retired permission requirements");
-    }
-
-    [Fact]
     public async Task GetStatusAsync_SurfacesTheReason()
     {
         using var handler = new TestHttpMessageHandler();
