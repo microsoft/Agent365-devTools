@@ -19,6 +19,7 @@ internal record RawRegisterArgs(
     string? AuthType,
     string? IdpAuthUrl,
     string? IdpTokenUrl,
+    string? IdpRefreshUrl,
     string? IdpScopes,
     string? IdpClientId,
     string? IdpClientSecret,
@@ -57,7 +58,7 @@ internal class RegisterCommandExecutor
         _retryHelper = retryHelper ?? new RetryHelper(logger, maxRetries: 5, baseDelaySeconds: 3);
     }
 
-    private sealed record ResolvedInput
+    internal sealed record ResolvedInput
     {
         public required string ServerName { get; init; }
         public required string ServerUrl { get; init; }
@@ -77,6 +78,7 @@ internal class RegisterCommandExecutor
         public int? SecretLifetimeMonths { get; init; }
         public string? IdpAuthUrl { get; init; }
         public string? IdpTokenUrl { get; init; }
+        public string? IdpRefreshUrl { get; init; }
         public string? IdpScopes { get; init; }
         public string? IdpClientId { get; init; }
         public string? IdpClientSecret { get; init; }
@@ -84,7 +86,7 @@ internal class RegisterCommandExecutor
         public string? ApiKeyName { get; init; }
     }
 
-    private sealed record EntraAppSet(
+    internal sealed record EntraAppSet(
         string A365AppClientId,
         string A365AppSecret,
         string A365AppObjectId,
@@ -191,13 +193,14 @@ internal class RegisterCommandExecutor
         return true;
     }
 
-    private async Task<ResolvedInput?> ResolveInputsAsync(RawRegisterArgs args)
+    internal async Task<ResolvedInput?> ResolveInputsAsync(RawRegisterArgs args)
     {
         var serverName = args.ServerName;
         var serverUrl = args.ServerUrl;
         var authType = args.AuthType;
         var idpAuthUrl = args.IdpAuthUrl;
         var idpTokenUrl = args.IdpTokenUrl;
+        var idpRefreshUrl = args.IdpRefreshUrl;
         var idpScopes = args.IdpScopes;
         var idpClientId = args.IdpClientId;
         var idpClientSecret = args.IdpClientSecret;
@@ -249,6 +252,7 @@ internal class RegisterCommandExecutor
                 {
                     idpAuthUrl ??= inputFileData.ExternalOAuth.AuthorizationUrl;
                     idpTokenUrl ??= inputFileData.ExternalOAuth.TokenUrl;
+                    idpRefreshUrl ??= inputFileData.ExternalOAuth.RefreshUrl;
                     idpScopes ??= inputFileData.ExternalOAuth.Scopes;
                     idpClientId ??= inputFileData.ExternalOAuth.ClientId;
                     idpClientSecret ??= inputFileData.ExternalOAuth.ClientSecret;
@@ -328,6 +332,25 @@ internal class RegisterCommandExecutor
             {
                 _logger.LogError("Invalid auth type '{AuthType}'. Must be 'EntraOAuth', 'ExternalOAuth', 'APIKey', or 'NoAuth'", authType);
                 return null;
+            }
+
+            idpRefreshUrl = string.IsNullOrWhiteSpace(idpRefreshUrl) ? null : idpRefreshUrl.Trim();
+            if (idpRefreshUrl is not null)
+            {
+                if (!isExternalIdp)
+                {
+                    _logger.LogError("--idp-refresh-url or externalOAuth.refreshUrl is supported only with --auth-type ExternalOAuth.");
+                    return null;
+                }
+
+                if (!Uri.TryCreate(idpRefreshUrl, UriKind.Absolute, out var refreshUri)
+                    || refreshUri.Scheme != Uri.UriSchemeHttps
+                    || !string.IsNullOrEmpty(refreshUri.UserInfo)
+                    || !string.IsNullOrEmpty(refreshUri.Fragment))
+                {
+                    _logger.LogError("--idp-refresh-url or externalOAuth.refreshUrl must be an absolute HTTPS URL without user information or a fragment.");
+                    return null;
+                }
             }
 
             if (isExternalIdp)
@@ -502,6 +525,7 @@ internal class RegisterCommandExecutor
             SecretLifetimeMonths = secretLifetimeMonths,
             IdpAuthUrl = idpAuthUrl,
             IdpTokenUrl = idpTokenUrl,
+            IdpRefreshUrl = idpRefreshUrl,
             IdpScopes = idpScopes,
             IdpClientId = idpClientId,
             IdpClientSecret = idpClientSecret,
@@ -545,6 +569,10 @@ internal class RegisterCommandExecutor
         {
             DevelopMcpCommand.WriteLabel("  IDP Auth URL:   "); Console.WriteLine(input.IdpAuthUrl);
             DevelopMcpCommand.WriteLabel("  IDP Token URL:  "); Console.WriteLine(input.IdpTokenUrl);
+            if (input.IdpRefreshUrl is not null)
+            {
+                DevelopMcpCommand.WriteLabel("  IDP Refresh URL: "); Console.WriteLine(input.IdpRefreshUrl);
+            }
             DevelopMcpCommand.WriteLabel("  IDP Scopes:     "); Console.WriteLine(input.IdpScopes);
             DevelopMcpCommand.WriteLabel("  IDP Client ID:  "); Console.WriteLine(input.IdpClientId);
         }
@@ -626,7 +654,7 @@ internal class RegisterCommandExecutor
             PublicClientsAppName: publicClients.AppName);
     }
 
-    private static AddMcpServerRequest BuildRequest(ResolvedInput input, EntraAppSet apps)
+    internal static AddMcpServerRequest BuildRequest(ResolvedInput input, EntraAppSet apps)
     {
         AddMcpServerAuthMetadata authMetadata;
 
@@ -675,6 +703,7 @@ internal class RegisterCommandExecutor
             {
                 AuthorizationUrl = input.IdpAuthUrl,
                 TokenUrl = input.IdpTokenUrl,
+                RefreshUrl = input.IdpRefreshUrl,
                 Scopes = input.IdpScopes,
             } : null,
             ApiKeyDetails = input.IsApiKey ? new ApiKeyDetails

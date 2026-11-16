@@ -139,6 +139,22 @@ a365 develop-mcp list-servers -e "myenv" --verbose
 - Defaults to "prod" when no config file is specified
 - Follows KISS principles to avoid over-engineering common scenarios
 
+#### External OAuth BYO registration
+
+For `ExternalOAuth`, `register-external-mcp-server` accepts an optional refresh
+endpoint through `--idp-refresh-url` or `externalOAuth.refreshUrl` in the
+`--input-file` JSON. The CLI flag takes precedence over the file value.
+
+```powershell
+a365 develop-mcp register-external-mcp-server --input-file registration.json --idp-refresh-url https://idp.example.com/oauth/refresh
+```
+
+The URL must be absolute HTTPS without user information or a fragment. Omitted
+or blank values leave the refresh URL unspecified; the CLI does not infer it from
+the token URL. The value is sent as `externalIdp.refreshUrl` and requires platform
+support for that field. This option configures registration, not token refresh
+execution, and does not repair existing connector definitions.
+
 ### Publish Command
 
 The `publish` command updates manifest IDs from your agent blueprint and packages the manifest files into a zip ready for upload to the Microsoft 365 Admin Center. It uses **embedded templates** for complete portability — no external file dependencies required.

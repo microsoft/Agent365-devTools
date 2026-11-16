@@ -119,6 +119,10 @@ public class RegisterExternalMcpServerInput
         [JsonPropertyName("tokenUrl")]
         public string? TokenUrl { get; set; }
 
+        /// <summary>Optional HTTPS refresh URL for the external OAuth provider.</summary>
+        [JsonPropertyName("refreshUrl")]
+        public string? RefreshUrl { get; set; }
+
         /// <summary>
         /// External OAuth scopes
         /// </summary>

@@ -106,6 +106,11 @@ public class ExternalIdpDetails
     [JsonPropertyName("tokenUrl")]
     public string? TokenUrl { get; set; }
 
+    /// <summary>Optional HTTPS refresh URL for the external OAuth provider.</summary>
+    [JsonPropertyName("refreshUrl")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RefreshUrl { get; set; }
+
     /// <summary>
     /// Scopes for the external IDP
     /// </summary>

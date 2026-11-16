@@ -22,6 +22,7 @@
   "externalOAuth": {
     "authorizationUrl": null,
     "tokenUrl": null,
+    "refreshUrl": null,
     "scopes": null,
     "clientId": null,
     "clientSecret": null

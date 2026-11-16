@@ -8,8 +8,6 @@ using Microsoft.Agents.A365.DevTools.Cli.Services.Evaluate;
 using Microsoft.Agents.A365.DevTools.Cli.Models;
 using NSubstitute;
 using FluentAssertions;
-using System.CommandLine;
-using System.CommandLine.Parsing;
 
 namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Commands;
 
@@ -239,6 +237,8 @@ public class DevelopMcpCommandTests
         optionNames.Should().Contain("auth-type");
         optionNames.Should().Contain("idp-authorization-url");
         optionNames.Should().Contain("idp-token-url");
+        optionNames.Should().Contain("idp-refresh-url",
+            because: "ExternalOAuth registration must accept an explicit refresh endpoint");
         optionNames.Should().Contain("idp-scopes");
         optionNames.Should().Contain("idp-client-id");
         optionNames.Should().Contain("idp-client-secret");
