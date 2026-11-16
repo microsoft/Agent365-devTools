@@ -15,7 +15,7 @@
 # pip-tools to generate. See docs/SECRETS.md for details.
 
 # FastAPI (local development)
-fastapi==0.162.0
+fastapi==0.162.6
 uvicorn==0.54.0
 python-dotenv==1.2.2
 
