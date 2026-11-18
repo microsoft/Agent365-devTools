@@ -143,7 +143,7 @@ For both agent kinds, telemetry wiring is always the app-only S2S exporter descr
    > directly causes **CS0433 type ambiguity** on `AgentDetails`, `CallerDetails`, and
    > `IExporterTokenCache<T>`. Remove any explicit Hosting/Runtime references from the `.csproj`.
    >
-   > **⚠️ TFM requirement:** If the project targets `net8.0`, upgrade to `net9.0` or later.
+   > **⚠️ TFM requirement:** If the project targets `net8.0` or `net9.0`, upgrade to `net10.0` or later.
    > `Microsoft.OpenTelemetry` v1.0.0-beta.1 has a hard runtime dependency on
    > `Microsoft.Extensions.Logging` v10 which is not part of the `net8.0` or `net9.0`
    > framework — it must be a direct reference so the assembly is copied to the output
@@ -852,9 +852,9 @@ dotnet add package Microsoft.Extensions.Logging --version "10.0.4"
 
 > **⚠️ Do NOT use a preview version** (e.g. `10.0.0-*` or `10.0.0-preview.*`). `Microsoft.Agents.A365.Observability.Hosting` already requires `>= 10.0.4` — specifying a lower preview causes a **NU1605 downgrade error** at restore time.
 
-If the project targets `net8.0`, upgrade the TFM to `net9.0`:
+If the project targets `net8.0` or `net9.0`, upgrade the TFM to `net10.0`:
 ```xml
-<TargetFramework>net9.0</TargetFramework>
+<TargetFramework>net10.0</TargetFramework>
 ```
 
 **Status:** This is expected to be resolved when `Microsoft.OpenTelemetry` ships a stable release.

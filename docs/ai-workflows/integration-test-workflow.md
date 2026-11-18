@@ -17,7 +17,7 @@ Before starting the workflow, verify:
 
 - [ ] Azure subscription is active and accessible
 - [ ] Azure CLI (`az`) is installed and authenticated: `az login`
-- [ ] .NET 8.0 SDK is installed: `dotnet --version`
+- [ ] .NET 10.0 SDK is installed: `dotnet --version`
 - [ ] Custom Entra ID client app is registered with required delegated permissions
 - [ ] Admin consent is granted for the custom client app
 - [ ] Test environment variables are ready:

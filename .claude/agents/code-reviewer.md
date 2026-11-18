@@ -231,7 +231,7 @@ When updating comment resolution status, use these values:
 - Be constructive: Explain the "why" behind suggestions, not just the "what"
 - Be practical: Prioritize issues by impact and effort required
 - Be thorough: Don't miss critical issues, but also don't nitpick trivially
-- Be current: Apply the latest C# 12 / .NET 8.0 best practices
+- Be current: Apply the latest C# 14 / .NET 10.0 best practices
 
 ## Decision Framework
 

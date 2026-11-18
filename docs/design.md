@@ -8,7 +8,7 @@ This document provides a high-level overview of the Microsoft Agent 365 DevTools
 
 ## Project Overview
 
-The Microsoft Agent 365 CLI (`a365`) is a .NET 8.0 tool that automates the deployment and management of Microsoft Agent 365 applications on Azure. It provides:
+The Microsoft Agent 365 CLI (`a365`) is a .NET 10.0 tool that automates the deployment and management of Microsoft Agent 365 applications on Azure. It provides:
 
 - **Multiplatform deployment** (.NET, Node.js, Python) with automatic platform detection
 - Agent blueprint and identity creation via Microsoft Graph API

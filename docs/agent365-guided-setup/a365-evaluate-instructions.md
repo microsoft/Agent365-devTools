@@ -90,7 +90,7 @@ a365 --version
 dotnet --version
 ```
 
-Confirm .NET 8.0 or later. If not installed, instruct the user to install .NET 8.0 from https://dotnet.microsoft.com/download.
+Confirm .NET 10.0 or later. If not installed, instruct the user to install .NET 10.0 from https://dotnet.microsoft.com/download.
 
 ### Step 1 completion
 

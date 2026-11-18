@@ -32,7 +32,7 @@ Estimated time: 30-45 minutes
 Prerequisites needed:
 - Azure subscription with admin access
 - Custom Entra ID client app with required permissions
-- .NET 8.0 SDK installed
+- .NET 10.0 SDK installed
 - Azure CLI authenticated
 
 Before we begin, I'll collect necessary information and verify prerequisites.
@@ -66,7 +66,7 @@ Run verification commands:
 ```powershell
 # Check .NET SDK
 dotnet --version
-# Expected: 8.0.x or higher
+# Expected: 10.0.x or higher
 
 # Check Azure CLI
 az --version
@@ -84,7 +84,7 @@ a365 --version
 Document results:
 ```
 "Verification Results:
-✅ .NET SDK: 8.0.xxx
+✅ .NET SDK: 10.0.xxx
 ✅ Azure CLI: 2.xx.x (authenticated as user@domain.com)
 ❌ a365 CLI: Not installed (we'll install it in Section 1)
 
@@ -447,7 +447,7 @@ Generate comprehensive report:
 Generated: 2026-02-05 15:45:23
 Duration: 37m 42s
 Tester: [User name/AI Agent]
-Environment: Windows 11, .NET 8.0.2, Azure CLI 2.57.0
+Environment: Windows 11, .NET 10.0.1, Azure CLI 2.57.0
 
 ## Executive Summary
 ✅ Overall Status: PASS

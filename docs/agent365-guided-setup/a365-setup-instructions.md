@@ -102,7 +102,7 @@ Check if the Agent 365 CLI is installed and up-to-date:
 
 ### Ensure .NET is installed
 
-The Agent 365 CLI is a .NET global tool. Verify that you have .NET 8.0 (or a compatible version) available by running `dotnet --version`. If not, instruct the user to install .NET 8.0 or install it yourself if you have the ability (the CLI cannot run without this).
+The Agent 365 CLI is a .NET global tool. Verify that you have .NET 10.0 (or a compatible version) available by running `dotnet --version`. If not, instruct the user to install .NET 10.0 or install it yourself if you have the ability (the CLI cannot run without this).
 
 ### Install or update the Agent 365 CLI
 
@@ -196,8 +196,8 @@ dotnet --version
 dotnet --list-sdks
 ```
 
-- [ ] Confirm .NET SDK 8.0 or later is installed
-- [ ] If not installed, instruct the user to install .NET 8.0 SDK from https://dotnet.microsoft.com/download
+- [ ] Confirm .NET SDK 10.0 or later is installed
+- [ ] If not installed, instruct the user to install .NET 10.0 SDK from https://dotnet.microsoft.com/download
 
 **For Node.js agents (REQUIRED if package.json exists):**
 
