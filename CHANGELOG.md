@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent and service principal IDs read from configuration or Microsoft Graph are now validated before they are passed to Azure CLI commands (#524).
 
 ### Breaking Changes
-- **The CLI now requires the .NET 10 runtime or later** because .NET 8 and .NET 9 have reached end of support; install [.NET 10](https://dotnet.microsoft.com/download) before updating the tool.
+- **The CLI now requires the .NET 10 runtime or later** because .NET 8 and .NET 9 have reached end of support; install [.NET 10](https://dotnet.microsoft.com/download) before updating the tool (#532).
 
 ## [2.0.0] - 2026-10-20
 
