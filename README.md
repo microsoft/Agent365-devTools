@@ -4,7 +4,7 @@
 [![Downloads](https://img.shields.io/nuget/dt/Microsoft.Agents.A365.DevTools.Cli?label=Downloads&color=green)](https://www.nuget.org/packages/Microsoft.Agents.A365.DevTools.Cli)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-devTools/.github/workflows/ci.yml?branch=main&label=Build&logo=github)](https://github.com/microsoft/Agent365-devTools/actions)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
-[![.NET](https://img.shields.io/badge/.NET-8.0+-512BD4)](https://dotnet.microsoft.com/)
+[![.NET](https://img.shields.io/badge/.NET-10.0+-512BD4)](https://dotnet.microsoft.com/)
 [![Contributors](https://img.shields.io/github/contributors/microsoft/Agent365-devTools?label=Contributors)](https://github.com/microsoft/Agent365-devTools/graphs/contributors)
 
 > **Note:**  
@@ -37,7 +37,7 @@ This project is currently in active development. The CLI is being actively devel
 ### Prerequisites
 
 **System Requirements:**
-- **.NET 8.0 or higher**: The CLI requires .NET 8.0 runtime or any newer version (e.g., .NET 9, 10). [Download .NET](https://dotnet.microsoft.com/download)
+- **.NET 10.0 or higher**: The CLI requires the .NET 10.0 runtime or any newer version. [Download .NET](https://dotnet.microsoft.com/download)
 
 **Entra ID App Registration:**
 

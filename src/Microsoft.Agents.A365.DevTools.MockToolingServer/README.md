@@ -107,7 +107,7 @@ MCP_UPDATE_SNAPSHOTS=true dotnet test --filter "FullyQualifiedName~MockToolSnaps
 # How to mock notifications for custom activities
 
 ## Prerequisites
-- .NET 8 SDK: https://dotnet.microsoft.com/download/dotnet/8.0
+- .NET 10 SDK: https://dotnet.microsoft.com/download/dotnet/10.0
 
 ## Invoke the custom activity
 

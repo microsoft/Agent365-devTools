@@ -12,7 +12,7 @@ Before starting, ensure you have:
 [ ] Azure subscription with admin access
 [ ] Custom Entra ID client app with delegated permissions
 [ ] Admin consent granted for client app
-[ ] .NET 8.0 SDK installed
+[ ] .NET 10.0 SDK installed
 [ ] Azure CLI installed and authenticated
 [ ] PowerShell 7+ (or bash for Linux/macOS)
 [ ] ~45 minutes of uninterrupted time
@@ -38,7 +38,7 @@ Set-Location $testWorkspace
 
 ### Verify Prerequisites
 ```powershell
-dotnet --version        # Should be 8.0.x+
+dotnet --version        # Should be 10.0.x+
 az --version           # Should show version
 az account show        # Should show subscription
 ```

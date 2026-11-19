@@ -4,11 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [3.0.0] - Unreleased
 
 ### Fixed
 
 - Agent and service principal IDs read from configuration or Microsoft Graph are now validated before they are passed to Azure CLI commands (#524).
+
+### Breaking Changes
+- **The CLI now requires the .NET 10 runtime or later** because .NET 8 and .NET 9 have reached end of support; install [.NET 10](https://dotnet.microsoft.com/download) before updating the tool (#532).
 
 ## [2.0.0] - 2026-10-20
 
@@ -278,7 +281,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Microsoft Graph operations using PowerShell `Microsoft.Graph` module
 - Admin consent polling with automatic detection
 
-[Unreleased]: https://github.com/microsoft/Agent365-devTools/compare/v2.0.0...HEAD
+[3.0.0]: https://github.com/microsoft/Agent365-devTools/compare/v2.0.0...HEAD
 [2.0.0]: https://github.com/microsoft/Agent365-devTools/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/microsoft/Agent365-devTools/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/microsoft/Agent365-devTools/releases/tag/v1.0.0
