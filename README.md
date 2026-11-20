@@ -71,7 +71,7 @@ For usage and command reference:
 
 ## Support
 
-For issues, questions, or feedback:
+For issues, questions, or feedback (see [SUPPORT.md](SUPPORT.md) for the support policy):
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-devTools/issues) section
 - **Documentation**: See the [Microsoft Agent 365 CLI Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli)
