@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- External OAuth BYO server registration now accepts an optional refresh URL through `--idp-refresh-url` or the JSON input file.
 - Agent and service principal IDs read from configuration or Microsoft Graph are now validated before they are passed to Azure CLI commands (#524).
 
 ### Breaking Changes

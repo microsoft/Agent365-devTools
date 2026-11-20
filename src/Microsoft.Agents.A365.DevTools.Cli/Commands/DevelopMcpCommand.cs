@@ -572,6 +572,9 @@ public static class DevelopMcpCommand
         var idpTokenUrlOption = new Option<string?>("--idp-token-url", description: "External OAuth token URL (required for ExternalOAuth)");
         command.AddOption(idpTokenUrlOption);
 
+        var idpRefreshUrlOption = new Option<string?>("--idp-refresh-url", description: "Optional external OAuth HTTPS refresh URL (ExternalOAuth only)");
+        command.AddOption(idpRefreshUrlOption);
+
         var idpScopesOption = new Option<string?>("--idp-scopes", description: "External OAuth scopes (required for ExternalOAuth)");
         command.AddOption(idpScopesOption);
 
@@ -623,6 +626,7 @@ public static class DevelopMcpCommand
                 AuthType: context.ParseResult.GetValueForOption(authTypeOption),
                 IdpAuthUrl: context.ParseResult.GetValueForOption(idpAuthUrlOption),
                 IdpTokenUrl: context.ParseResult.GetValueForOption(idpTokenUrlOption),
+                IdpRefreshUrl: context.ParseResult.GetValueForOption(idpRefreshUrlOption),
                 IdpScopes: context.ParseResult.GetValueForOption(idpScopesOption),
                 IdpClientId: context.ParseResult.GetValueForOption(idpClientIdOption),
                 IdpClientSecret: context.ParseResult.GetValueForOption(idpClientSecretOption),
