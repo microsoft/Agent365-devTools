@@ -954,6 +954,120 @@ public class AgentBlueprintServiceTests
     // ── GrantAppRoleAssignmentAsync tests ──────────────────────────────────────
 
     [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WithKnownResourceSpId_UsesItWithoutAppIdLookup()
+    {
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Defender.Evaluate\",\"id\":\"role-id\"}]}")
+            });
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent("{\"id\":\"assignment-id\"}")
+            });
+
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id", ["Defender.Evaluate"],
+                knownResourceSpObjectId: "recovered-resource-sp-id");
+
+            result.AllSucceeded.Should().BeTrue(
+                because: "a known resource SP must be usable even when its app-ID lookup has not replicated");
+            result.AllAlreadyAssigned.Should().BeFalse(
+                because: "a newly created assignment must not be reported as an existing grant");
+            handler.SentRequests.Should().NotContain(request => request.Url.Contains("$filter="),
+                because: "recovery's authoritative object ID must not be discarded in favor of another app-ID lookup");
+            using var body = JsonDocument.Parse(handler.SentRequests.Single(request => request.Method == HttpMethod.Post).Body!);
+            body.RootElement.GetProperty("resourceId").GetString().Should().Be("recovered-resource-sp-id",
+                because: "the app-role assignment must target the recovered resource service principal");
+        }
+    }
+
+    [Fact]
+    public async Task GrantAppRoleAssignmentAsync_WithKnownResourceSpIdAndExistingRole_DoesNotPost()
+    {
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"appRoles\":[{\"value\":\"Defender.Evaluate\",\"id\":\"role-id\"}]}")
+            });
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"resourceId\":\"recovered-resource-sp-id\",\"appRoleId\":\"role-id\"}]}")
+            });
+
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id", ["Defender.Evaluate"],
+                knownResourceSpObjectId: "recovered-resource-sp-id");
+
+            result.AllSucceeded.Should().BeTrue(
+                because: "using a known resource ID must preserve idempotent success for an existing assignment");
+            result.AllAlreadyAssigned.Should().BeTrue(
+                because: "the summary must distinguish existing assignments from newly created grants");
+            handler.SentRequests.Should().NotContain(request => request.Method == HttpMethod.Post,
+                because: "a recovered ID must not cause a duplicate application-role assignment");
+        }
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task GrantAppRoleAssignmentAsync_WithKnownResourceSpId_WhenResourceReadFails_DoesNotGrant(HttpStatusCode status)
+    {
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            handler.QueueResponse(new HttpResponseMessage(status)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"ResourceUnavailable\"}}")
+            });
+
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id", ["Defender.Evaluate"],
+                knownResourceSpObjectId: "recovered-resource-sp-id");
+
+            result.AllSucceeded.Should().BeFalse(
+                because: "successful SP provisioning does not prove an application permission was granted");
+            result.AllAlreadyAssigned.Should().BeFalse(
+                because: "an unreadable resource must not be reported as an existing grant");
+            handler.SentRequests.Should().NotContain(request => request.Method == HttpMethod.Post,
+                because: "the app-role ID must be read successfully before any assignment is attempted");
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task GrantAppRoleAssignmentAsync_WithoutKnownResourceSpId_PreservesAppIdLookup(string? knownSpId)
+    {
+        var (service, handler) = CreateServiceWithFakeHandler();
+        using (handler)
+        {
+            handler.QueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            });
+
+            var result = await service.GrantAppRoleAssignmentAsync(
+                "tenant-id", "blueprint-sp-id", "resource-app-id", ["Defender.Evaluate"],
+                knownResourceSpObjectId: knownSpId);
+
+            result.AllSucceeded.Should().BeFalse(
+                because: "an unresolved resource must still fail explicitly instead of reporting a successful grant");
+            handler.SentRequests.Should().ContainSingle(request => request.Url.Contains("$filter="),
+                because: "callers without a known resource ID must retain the existing app-ID lookup behavior");
+        }
+    }
+
+    [Fact]
     public async Task GrantAppRoleAssignmentAsync_WhenResourceSpNotFound_ReturnsFalse()
     {
         // Arrange

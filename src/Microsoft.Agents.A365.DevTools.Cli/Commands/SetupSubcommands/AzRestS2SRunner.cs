@@ -54,7 +54,8 @@ internal static partial class AzRestS2SRunner
         IReadOnlyList<ResourcePermissionSpec> specs,
         ILogger logger,
         CancellationToken ct,
-        string graphBaseUrl = GraphApiConstants.BaseUrl)
+        string graphBaseUrl = GraphApiConstants.BaseUrl,
+        IReadOnlyDictionary<string, string>? resourceSpObjectIds = null)
     {
         if (!GuidPattern().IsMatch(blueprintSpObjectId))
         {
@@ -75,6 +76,12 @@ internal static partial class AzRestS2SRunner
             if (!GuidPattern().IsMatch(spec.ResourceAppId))
             {
                 logger.LogWarning("az rest S2S runner: spec '{ResourceName}' has invalid ResourceAppId - skipping.", spec.ResourceName);
+                return (false, false);
+            }
+            if (resourceSpObjectIds?.TryGetValue(spec.ResourceAppId, out var knownSpId) == true
+                && !GuidPattern().IsMatch(knownSpId))
+            {
+                logger.LogWarning("az rest S2S runner: spec '{ResourceName}' has invalid resource SP id - skipping.", spec.ResourceName);
                 return (false, false);
             }
             foreach (var role in spec.AppRoleScopes!)
@@ -110,7 +117,9 @@ internal static partial class AzRestS2SRunner
             ct.ThrowIfCancellationRequested();
             try
             {
-                var ok = await AssignOneAsync(executor, blueprintSpObjectId, spec, existingAssignments, baseUrl, logger, ct);
+                string? resourceSpObjectId = null;
+                resourceSpObjectIds?.TryGetValue(spec.ResourceAppId, out resourceSpObjectId);
+                var ok = await AssignOneAsync(executor, blueprintSpObjectId, spec, existingAssignments, baseUrl, logger, ct, resourceSpObjectId);
                 if (!ok) allOk = false;
             }
             catch (OperationCanceledException)
@@ -140,11 +149,15 @@ internal static partial class AzRestS2SRunner
         HashSet<(string ResourceId, string AppRoleId)> existingAssignments,
         string graphBaseUrl,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? knownResourceSpObjectId)
     {
+        var resourcePath = knownResourceSpObjectId is not null
+            ? $"/v1.0/servicePrincipals/{knownResourceSpObjectId}?$select=id,appRoles"
+            : $"/v1.0/servicePrincipals?$filter=appId eq '{spec.ResourceAppId}'&$select=id,appRoles";
         var spResult = await executor.ExecuteAsync(
             "az",
-            $"rest --method GET --url \"{graphBaseUrl}/v1.0/servicePrincipals?$filter=appId eq '{spec.ResourceAppId}'&$select=id,appRoles\"",
+            $"rest --method GET --url \"{graphBaseUrl}{resourcePath}\"",
             captureOutput: true,
             suppressErrorLogging: true,
             cancellationToken: ct);
@@ -320,10 +333,15 @@ internal static partial class AzRestS2SRunner
         try
         {
             using var doc = JsonDocument.Parse(azStandardOutput);
-            if (!doc.RootElement.TryGetProperty("value", out var value)) return (null, rolesByValue);
-            if (value.GetArrayLength() == 0) return (null, rolesByValue);
-
-            var first = value[0];
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return (null, rolesByValue);
+            var first = doc.RootElement;
+            if (first.TryGetProperty("value", out var value))
+            {
+                if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() == 0)
+                    return (null, rolesByValue);
+                first = value[0];
+            }
+            if (first.ValueKind != JsonValueKind.Object) return (null, rolesByValue);
             string? spId = first.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String
                 ? idEl.GetString()
                 : null;
