@@ -81,10 +81,15 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
 
             var engine = ParseEvalEngine(evalEngine);
 
-            // Trust boundary: when an agent will run, the server's tool names and
-            // descriptions are handed to a locally running coding agent. Surface this
-            // once per run. (--eval-engine none keeps everything local, so it doesn't apply.)
-            if (engine != EvalEngine.None)
+            // Trust boundary: when an engine will run, the server's tool names and
+            // descriptions are handed to it for scoring. Surface this once per run, and be
+            // accurate about where the content goes — a locally running coding agent vs a
+            // remote Azure OpenAI endpoint. (--eval-engine none keeps everything local.)
+            if (engine == EvalEngine.AzureOpenAI)
+            {
+                _logger.LogWarning("The server's tool names and descriptions are sent to your configured Azure OpenAI endpoint for scoring. Only evaluate MCP servers you trust.");
+            }
+            else if (engine != EvalEngine.None)
             {
                 _logger.LogWarning("The server's tool names and descriptions are sent to a locally running coding agent for scoring. Only evaluate MCP servers you trust.");
             }
@@ -299,13 +304,14 @@ public sealed class EvaluationPipelineService : IEvaluationPipelineService
             "auto" => EvalEngine.Auto,
             "github-copilot" => EvalEngine.GitHubCopilot,
             "claude-code" => EvalEngine.ClaudeCode,
+            "azure-openai" => EvalEngine.AzureOpenAI,
             "none" => EvalEngine.None,
             _ => throw new EvaluationException(
                 ErrorCodes.EvaluationFailed,
                 $"Unknown eval engine: '{value}'.",
                 mitigationSteps: new List<string>
                 {
-                    "Use one of: auto, github-copilot, claude-code, none"
+                    "Use one of: auto, github-copilot, claude-code, azure-openai, none"
                 })
         };
     }
