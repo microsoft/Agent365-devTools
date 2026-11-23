@@ -67,11 +67,30 @@ internal abstract class CodingAgentLauncherBase : ICodingAgentLauncher
     public abstract string CliCommand { get; }
 
     /// <inheritdoc />
+    /// <remarks>Subprocess agents run one at a time; a direct-API engine overrides this.</remarks>
+    public virtual int MaxConcurrency => 1;
+
+    /// <inheritdoc />
+    /// <remarks>CLI-backed engines are auto-detectable; subclasses that incur remote cost override this.</remarks>
+    public virtual bool AutoDetectable => true;
+
+    /// <inheritdoc />
+    public virtual string AvailabilityHint => $"the {CliCommand} CLI on PATH";
+
+    /// <inheritdoc />
     public Task<bool> IsAvailableAsync(CancellationToken cancellationToken = default)
         => ProbeCommandAsync(CliCommand, "--version", cancellationToken);
 
     /// <inheritdoc />
     public abstract Task<bool> LaunchAsync(string prompt, string workingDirectory, TimeSpan timeout, CancellationToken cancellationToken = default);
+
+    /// <inheritdoc />
+    /// <remarks>Subprocess coding agents edit a whole-tool file; per-check scoring does not apply.</remarks>
+    public virtual bool ScoresPerCheck => false;
+
+    /// <inheritdoc />
+    public virtual Task<CheckEvaluation?> ScoreCheckAsync(string context, string checkPrompt, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException($"{DisplayName} edits a whole-tool checklist file and does not score checks individually.");
 
     /// <summary>
     /// Runs a process and waits for it to complete, capturing stdout/stderr.
