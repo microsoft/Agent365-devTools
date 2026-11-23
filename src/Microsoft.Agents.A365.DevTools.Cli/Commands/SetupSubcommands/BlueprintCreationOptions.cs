@@ -13,4 +13,5 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 /// This is an orchestration flag — it is NOT tied to whether the current user is an admin.
 /// Standalone 'setup blueprint' uses the default value of false so consent runs normally.
 /// </param>
-internal record BlueprintCreationOptions(bool DeferConsent = false);
+/// <param name="ServiceTreeId">Service Tree reference for a new blueprint application; ignored on reuse.</param>
+internal record BlueprintCreationOptions(bool DeferConsent = false, Guid? ServiceTreeId = null);

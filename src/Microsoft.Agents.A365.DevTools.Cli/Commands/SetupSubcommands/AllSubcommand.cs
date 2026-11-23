@@ -134,6 +134,8 @@ internal static class AllSubcommand
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection from 'az account show'.");
 
+        var serviceTreeIdOption = BlueprintSubcommand.CreateServiceTreeIdOption();
+
         var m365Option = new Option<bool>(
             "--m365",
             description: "Treat this agent as an M365 agent. When set, registers the messaging endpoint via MCP Platform. " +
@@ -174,6 +176,7 @@ internal static class AllSubcommand
         command.AddOption(m365Option);
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(serviceTreeIdOption);
         command.AddOption(authModeOption);
         command.AddOption(skipSpProvisioningOption);
         command.AddOption(messagingEndpointOption);
@@ -197,6 +200,7 @@ internal static class AllSubcommand
             var agentRegistrationOnly = context.ParseResult.GetValueForOption(agentRegistrationOnlyOption);
             var agentName = context.ParseResult.GetValueForOption(agentNameOption);
             var tenantIdFlag = context.ParseResult.GetValueForOption(tenantIdOption);
+            var serviceTreeId = context.ParseResult.GetValueForOption(serviceTreeIdOption);
             bool isM365 = context.ParseResult.GetValueForOption(m365Option);
             var authMode = context.ParseResult.GetValueForOption(authModeOption)?.ToLowerInvariant();
             // Distinguish "option omitted" from "option explicitly passed empty" — the latter must be a
@@ -439,6 +443,7 @@ internal static class AllSubcommand
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
                     agentInstanceOnly: agentRegistrationOnly,
+                    serviceTreeId: serviceTreeId,
                     isBootstrap: isBootstrap,
                     isM365: isM365,
                     authMode: authMode ?? nonDwConfig.AuthMode,
@@ -589,6 +594,7 @@ internal static class AllSubcommand
                     federatedCredentialService: federatedCredentialService,
                     clientAppValidator: clientAppValidator,
                     isM365: isM365,
+                    serviceTreeId: serviceTreeId,
                     skipSpProvisioning: skipSpProvisioning,
                     messagingEndpointOverride: messagingEndpointFlag,
                     nonInteractive: Console.IsInputRedirected,
@@ -704,7 +710,7 @@ internal static class AllSubcommand
                 skipEndpointRegistration: true,
                 correlationId: ctx.CorrelationId,
                 cancellationToken: ctx.CancellationToken,
-                options: new BlueprintCreationOptions(DeferConsent: true),
+                options: new BlueprintCreationOptions(DeferConsent: true, ServiceTreeId: ctx.ServiceTreeId),
                 loginHintResolver: ctx.LoginHintResolver);
 
             ctx.Results.BlueprintCreated = result.BlueprintCreated;

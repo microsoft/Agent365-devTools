@@ -67,6 +67,10 @@ a365 setup infrastructure  # Provision Azure only
 a365 setup permissions     # Configure permissions only
 ```
 
+### Service Tree ID (`--service-tree-id`)
+
+If your tenant requires a Service Tree reference for new app registrations, pass its GUID to either `a365 setup all --service-tree-id <guid>` or `a365 setup blueprint --service-tree-id <guid>`. Setup omits the reference when you leave out the option. It does not change the reference on an existing blueprint.
+
 ### Authentication mode (`--authmode`)
 
 The `--authmode` option controls how the agent identity service principal is granted permissions. It is available on `setup all` only.

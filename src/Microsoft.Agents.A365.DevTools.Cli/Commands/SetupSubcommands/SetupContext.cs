@@ -70,6 +70,8 @@ internal sealed class SetupContext
     /// </summary>
     public string? MessagingEndpointOverride { get; }
 
+    public Guid? ServiceTreeId { get; }
+
     /// <summary>Null or "obo" — principal-scoped delegated grants; no admin consent needed.</summary>
     public bool IsOboMode => AuthMode is null || string.Equals(AuthMode, "obo", StringComparison.OrdinalIgnoreCase);
 
@@ -165,7 +167,8 @@ internal sealed class SetupContext
         bool skipSpProvisioning = false,
         string? messagingEndpointOverride = null,
         bool nonInteractive = false,
-        bool skipObservabilityPermissions = false)
+        bool skipObservabilityPermissions = false,
+        Guid? serviceTreeId = null)
     {
         Config = config;
         Results = results;
@@ -184,6 +187,7 @@ internal sealed class SetupContext
         SkipSpProvisioning = skipSpProvisioning;
         NonInteractive = nonInteractive;
         SkipObservabilityPermissions = skipObservabilityPermissions;
+        ServiceTreeId = serviceTreeId;
         ConfigService = configService;
         Executor = executor;
         BackendConfigurator = backendConfigurator;

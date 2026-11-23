@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [3.0.0] - Unreleased
 
+### Added
+
+- `a365 setup all` and `a365 setup blueprint` accept `--service-tree-id <guid>` when creating a blueprint in a tenant that requires a Service Tree reference.
+
 ### Fixed
 
 - External OAuth BYO server registration now accepts an optional refresh URL through `--idp-refresh-url` or the JSON input file.

@@ -112,6 +112,11 @@ internal static class BlueprintSubcommand
     private const int ClientSecretValidationRetryDelayMs = 1000;
     private const int ClientSecretValidationTimeoutSeconds = 10;
 
+    internal static Option<Guid?> CreateServiceTreeIdOption() => new(
+        "--service-tree-id",
+        description: "Service Tree GUID for tenants that require it when creating a blueprint. Does not update existing blueprints.")
+    { Arity = ArgumentArity.ExactlyOne };
+
     public static Command CreateCommand(
         ILogger logger,
         IConfigService configService,
@@ -139,6 +144,8 @@ internal static class BlueprintSubcommand
         var tenantIdOption = new Option<string?>(
             "--tenant-id",
             description: "Azure AD tenant ID. Overrides auto-detection. Use with --agent-name.");
+
+        var serviceTreeIdOption = CreateServiceTreeIdOption();
 
         var verboseOption = new Option<bool>(
             ["--verbose", "-v"],
@@ -184,6 +191,7 @@ internal static class BlueprintSubcommand
 
         command.AddOption(agentNameOption);
         command.AddOption(tenantIdOption);
+        command.AddOption(serviceTreeIdOption);
         command.AddOption(verboseOption);
         command.AddOption(dryRunOption);
         command.AddOption(skipEndpointRegistrationOption);
@@ -442,6 +450,7 @@ internal static class BlueprintSubcommand
                 federatedCredentialService,
                 skipEndpointRegistration,
                 correlationId: correlationId,
+                options: new BlueprintCreationOptions(ServiceTreeId: context.ParseResult.GetValueForOption(serviceTreeIdOption)),
                 confirmationProvider: confirmationProvider,
                 isM365: isM365
                 );
@@ -897,6 +906,30 @@ internal static class BlueprintSubcommand
         }
     }
 
+    internal static JsonObject BuildBlueprintAppManifest(string displayName, string graphBaseUrl, string? sponsorUserId, Guid? serviceTreeId)
+    {
+        var manifest = new JsonObject
+        {
+            ["@odata.type"] = "Microsoft.Graph.AgentIdentityBlueprint",
+            ["displayName"] = displayName,
+            ["signInAudience"] = "AzureADMultipleOrgs",
+            ["managerApplications"] = new JsonArray(AuthenticationConstants.A365ManagerAppId)
+        };
+
+        if (serviceTreeId is Guid id)
+            manifest["serviceManagementReference"] = id.ToString("D");
+
+        // Bind the owner at creation; a later owner assignment is not guaranteed to succeed.
+        if (!string.IsNullOrEmpty(sponsorUserId))
+        {
+            var userUrl = $"{graphBaseUrl}/v1.0/users/{sponsorUserId}";
+            manifest["sponsors@odata.bind"] = new JsonArray(userUrl);
+            manifest["owners@odata.bind"] = new JsonArray(userUrl);
+        }
+
+        return manifest;
+    }
+
     /// <summary>
     /// Creates Agent Blueprint application using Graph API
     /// Implements displayName-first discovery for idempotency: always searches by displayName from a365.config.json (the source of truth).
@@ -1150,29 +1183,7 @@ internal static class BlueprintSubcommand
                 logger.LogWarning("Could not retrieve current user for sponsors field: {Message}", ex.Message);
             }
 
-            // Define the application manifest with @odata.type for Agent Identity Blueprint
-            var appManifest = new JsonObject
-            {
-                ["@odata.type"] = "Microsoft.Graph.AgentIdentityBlueprint", // CRITICAL: Required for Agent Blueprint type
-                ["displayName"] = displayName,
-                ["signInAudience"] = "AzureADMultipleOrgs", // Multi-tenant
-                ["managerApplications"] = new JsonArray(AuthenticationConstants.A365ManagerAppId) // required to enable manageability for A365
-            };
-
-            // Add sponsors and owners fields if we have the current user
-            // IMPORTANT: Setting owners during creation is required to avoid 2-call pattern that will fail due to Entra bug fix
-            // See: https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/create-blueprint?tabs=microsoft-graph-api#create-an-agent-identity-blueprint-1
-            if (!string.IsNullOrEmpty(sponsorUserId))
-            {
-                appManifest["sponsors@odata.bind"] = new JsonArray
-                {
-                    $"{graphApiService.GraphBaseUrl}/v1.0/users/{sponsorUserId}"
-                };
-                appManifest["owners@odata.bind"] = new JsonArray
-                {
-                    $"{graphApiService.GraphBaseUrl}/v1.0/users/{sponsorUserId}"
-                };
-            }
+            var appManifest = BuildBlueprintAppManifest(displayName, graphApiService.GraphBaseUrl, sponsorUserId, options?.ServiceTreeId);
 
             var blueprintLoginHint = loginHintResolver != null
                 ? await loginHintResolver()

@@ -60,6 +60,25 @@ public class BlueprintSubcommandTests
     }
 
     [Fact]
+    public void BuildBlueprintAppManifest_WithServiceTreeId_SendsReferenceAsString()
+    {
+        const string id = "21de4381-61f2-49db-87a8-88dcf08a45a5";
+        var manifest = BlueprintSubcommand.BuildBlueprintAppManifest("Test Blueprint", "https://graph.example", null, Guid.Parse(id));
+
+        ((string?)manifest["serviceManagementReference"]).Should().Be(id,
+            because: "Graph requires the Service Tree GUID as a string on the initial application POST");
+    }
+
+    [Fact]
+    public void BuildBlueprintAppManifest_WithoutServiceTreeId_OmitsReference()
+    {
+        var manifest = BlueprintSubcommand.BuildBlueprintAppManifest("Test Blueprint", "https://graph.example", null, null);
+
+        manifest.ContainsKey("serviceManagementReference").Should().BeFalse(
+            because: "setup must omit the property entirely rather than send an explicit null");
+    }
+
+    [Fact]
     public void CreateCommand_ShouldHaveCorrectName()
     {
         // Act

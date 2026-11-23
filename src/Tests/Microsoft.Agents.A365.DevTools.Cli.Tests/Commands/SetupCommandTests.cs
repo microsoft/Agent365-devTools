@@ -65,6 +65,29 @@ public class SetupCommandTests
         _mockConfirmationProvider.ConfirmAsync(Arg.Any<string>()).Returns(true);
     }
 
+    [Theory]
+    [InlineData("all")]
+    [InlineData("blueprint")]
+    public void Setup_ServiceTreeId_IsOptionalAndRequiresAGuidWhenSpecified(string subcommand)
+    {
+        const string id = "21de4381-61f2-49db-87a8-88dcf08a45a5";
+        var setup = BuildSetupCommand();
+        var option = setup.Subcommands.Single(c => c.Name == subcommand).Options
+            .OfType<Option<Guid?>>().Single(o => o.HasAlias("--service-tree-id"));
+
+        var supplied = setup.Parse($"{subcommand} --service-tree-id {id}");
+        supplied.Errors.Should().BeEmpty();
+        supplied.GetValueForOption(option).Should().Be(Guid.Parse(id));
+
+        var omitted = setup.Parse(subcommand);
+        omitted.Errors.Should().BeEmpty();
+        omitted.GetValueForOption(option).Should().BeNull();
+
+        setup.Parse($"{subcommand} --service-tree-id not-a-guid").Errors.Should().NotBeEmpty();
+        setup.Parse($"{subcommand} --service-tree-id").Errors.Should().NotBeEmpty();
+        setup.Parse(new[] { subcommand, "--service-tree-id", "" }).Errors.Should().NotBeEmpty();
+    }
+
     [Fact]
     public async Task SetupAllCommand_DryRun_ValidConfig_OnlyValidatesConfig()
     {
