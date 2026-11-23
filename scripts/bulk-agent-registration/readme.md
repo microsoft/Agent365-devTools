@@ -251,11 +251,12 @@ Exactly one authentication method must be supplied. Supplying two is refused up 
 | --- | --- | --- | --- |
 | Client secret | `-ClientId -ClientSecret` | Yes | Prefer `$env:A365_CLIENT_SECRET` over passing the value on the command line. |
 | Certificate | `-ClientId -CertificateThumbprint`<br>`-Certificate \| -CertificatePath` | Yes | Recommended for production. `-CertificatePath` also accepts `-CertificatePassword`. |
-| Managed identity | `-UseManagedIdentity` | Yes | For Azure-hosted automation. `-ClientId` selects a user-assigned identity. |
-| Access token | `-AccessToken` | Depends | A pre-obtained Microsoft Graph token. |
-| Interactive | `-Interactive` | No | Signs in as a user. Cannot be used with `-NewAgentUser`. |
+| Managed identity | `-UseManagedIdentity` | Yes | For Azure-hosted automation. System-assigned identity only. |
+| Interactive | `-Interactive` | No | Signs in as a user and uses delegated scopes. AgentUser operations also require `-ClientId` for a caller-controlled public client. |
 
-> **Important: `-NewAgentUser` requires app-only authentication.** `New-A365AgentUser.ps1` supports client secret, certificate and managed identity only — it has no interactive mode. The orchestrator refuses the combination before any phase runs, rather than failing after the blueprint and identity have already been created.
+> **Important:** Interactive runs are delegated, so authorization is the combination of consented scopes and the signed-in user's directory roles. App-only runs are authorized by application roles (`roles` claim) instead.
+>
+> `New-A365AutomationApp.ps1` uses `-AuthCertificateThumbprint`, `-AuthCertificate`, or `-AuthCertificatePath` plus optional `-AuthCertificatePassword` for the credential that authenticates the bootstrap run. Its unprefixed `-CertificateThumbprint` and `-CertificatePath` parameters identify the certificate credential to add to the automation application. When delegated scopes are selected, the script also enables public-client flows so the generated application can be used for interactive device-code authentication.
 
 ### 5.1 Mixed authentication for the registration phase
 
@@ -328,7 +329,7 @@ If the vault still uses access policies rather than RBAC, grant secret set and g
 | `-Certificate / -CertificateThumbprint` | A signed RS256 client assertion — the Graph SDK will not mint a token for another audience |
 | `-UseManagedIdentity` | IMDS, or IDENTITY_ENDPOINT on App Service and Functions |
 | `-Interactive` | A signed-in Azure session (az login or Connect-AzAccount) |
-| `-AccessToken` | Not possible — supply `-KeyVaultAccessToken` |
+| `-Interactive` without an Azure session (`az login` or `Connect-AzAccount`) | Not possible — supply `-KeyVaultAccessToken` |
 
 ### 6.4 What gets stored
 
@@ -345,7 +346,7 @@ The write is confirmed by reading the version back. If the vault write fails for
 
 ## 7. Parameter reference
 
-75 parameters, grouped by the phase they configure. Every setting for a phase carries that phase's prefix, so a parameter that belongs to a phase you did not select is reported as ignored rather than silently doing nothing.
+Parameters are grouped by the phase they configure. Every setting for a phase carries that phase's prefix, so a parameter that belongs to a phase you did not select is reported as ignored rather than silently doing nothing.
 
 ### 7.1 Authentication and connection
 
@@ -359,7 +360,6 @@ The write is confirmed by reading the version back. If the vault write fails for
 | `-CertificatePath` | String | Path to a .pfx file. |
 | `-CertificatePassword` | Object | Password for the .pfx. |
 | `-UseManagedIdentity` | Switch | Authenticate as an Azure managed identity. |
-| `-AccessToken` | Object | A pre-obtained Microsoft Graph bearer token. |
 | `-Interactive` | Switch | Sign in as a user. |
 | `-SkipPermissionCheck` | Switch | Skip the app-role pre-flight check. |
 | `-ScriptRoot` | String | Directory holding the step scripts, if not alongside the orchestrator. |
@@ -407,7 +407,7 @@ The write is confirmed by reading the version back. If the vault write fails for
 
 | Parameter | Purpose |
 | --- | --- |
-| `-NewAgentUser` | Create the agent user. App-only authentication required. |
+| `-NewAgentUser` | Create the agent user using app-only or interactive delegated authentication. |
 | `-UpdateAgentUser <id-or-upn>` | Update an existing agent user. |
 | `-AgentUserPrincipalName` | UPN. Mandatory with `-NewAgentUser`; there is no fallback. |
 | `-AgentUserDisplayName` | Display name. |
@@ -531,7 +531,7 @@ One `-UseExistingAgentIdentity` serves both phases:
 
 ```powershell
 .\A365-AutomationOrchestrator.ps1 `
-    -TenantId <tenant-id> -Interactive `
+    -TenantId <tenant-id> -ClientId <interactive-client-id> -Interactive `
     -RemoveAgentRegistration <T_registration-id> `
     -RemoveAgentUser         <agent-user-objectId> `
     -RemoveAgentIdentity     <agent-identity-objectId> `
@@ -635,7 +635,7 @@ Each takes `-TenantId` and its own object id as the only mandatory parameters, p
 
 Merge behavior differs by attribute, and it is not uniform. Custom security attributes merge per attribute, though a multi-valued attribute that is written is replaced wholesale. Agent identity tags merge — the script reads the current set and writes the union, so adding one tag does not drop the others. Agent identity owners are additive. Registration ownerIds REPLACE the whole collection, so list every owner you want to keep.
 
-Like the step scripts they wrap (section 7.1), `-ClientSecret`, `-CertificatePassword` and `-AccessToken` on all four scripts accept either a plain string or a `SecureString` and are forwarded to the step script unchanged - the exact object bound on the command line is the exact object the step script receives, never re-typed, copied or stringified in between. Plain strings remain supported for compatibility but still produce the step script's own command-line-exposure warning.
+Like the step scripts they wrap (section 7.1), `-ClientSecret` and `-CertificatePassword` on all four scripts accept either a plain string or a `SecureString` and are forwarded to the step script unchanged - the exact object bound on the command line is the exact object the step script receives, never re-typed, copied or stringified in between. Plain strings remain supported for compatibility but still produce the step script's own command-line-exposure warning.
 
 ## 12. Quick start checklist
 
@@ -648,7 +648,8 @@ Like the step scripts they wrap (section 7.1), `-ClientSecret`, `-CertificatePas
 2. **Create the automation application**
 
    ```powershell
-   .\New-A365AutomationApp.ps1 -TenantId <tid> -DisplayName 'A365 Provisioning Automation' -Scenario All -NewClientSecret
+   .\New-A365AutomationApp.ps1 -TenantId <tid> -Interactive `
+       -DisplayName 'A365 Provisioning Automation' -Scenario All -NewClientSecret
    ```
 
 3. **Have an administrator consent the Graph app roles**
@@ -685,7 +686,7 @@ Like the step scripts they wrap (section 7.1), `-ClientSecret`, `-CertificatePas
 
    `summary.consentActionRequired` lists anything an administrator still has to finish. It is empty when the run is complete.
 
-> **Security reminders.** Prefer a certificate or a federated managed identity over a client secret in production. Client secrets created by these scripts are intended for development. If a secret is ever exposed — in a transcript, a chat, a ticket or a screenshot — rotate it immediately: possession of the secret is possession of every permission the application holds.
+> **Security reminders.** Prefer a certificate or a system-assigned managed identity over a client secret in production. Client secrets created by these scripts are intended for development. If a secret is ever exposed — in a transcript, a chat, a ticket or a screenshot — rotate it immediately: possession of the secret is possession of every permission the application holds.
 
 ## 13. Bulk CSV onboarding (A365-BulkOnboarding.ps1)
 
@@ -704,10 +705,10 @@ The orchestrator is invoked in-process with the PowerShell call operator, in the
 | `-ScriptRoot` | Directory containing `A365-AutomationOrchestrator.ps1`. Defaults to this script's own directory - keep the two files together, or pass this explicitly. |
 | `-OutputJsonPath` | Write one aggregate JSON report (`A365BulkProvisioningRunReport`) covering every row (see 13.6). |
 | `-IncludeBlueprintSecretsInOutput` | Include any blueprint client secret in the aggregate report. Off by default, like the orchestrator's own switch of the same name. |
-| `-ClientId`, `-ClientSecret`, `-CertificateThumbprint`, `-Certificate`, `-CertificatePath`, `-CertificatePassword`, `-UseManagedIdentity`, `-AccessToken`, `-Interactive`, `-SkipPermissionCheck` | Authentication, forwarded verbatim to every row's orchestrator call. Exactly one method must be supplied - see section 5 and section 7.1. |
+| `-ClientId`, `-ClientSecret`, `-CertificateThumbprint`, `-Certificate`, `-CertificatePath`, `-CertificatePassword`, `-UseManagedIdentity`, `-Interactive`, `-SkipPermissionCheck` | Authentication, forwarded to every row's orchestrator call. Exactly one method must be supplied; interactive CSVs containing AgentUser rows also require `-ClientId`. See section 5 and section 7.1. |
 | `-LogPath`, `-LogIncludeSecrets`, `-LogCorrelationId` | Logging, forwarded to every row's orchestrator call so every log file produced by the run - the orchestrator's and every step script's - shares one correlation id. A correlation id is generated when omitted, exactly like the orchestrator. |
 
-`A365-BulkOnboarding.ps1` supports `-WhatIf` and `-Confirm` (`ConfirmImpact = 'Medium'`). The CSV is always read and validated first, before the `-WhatIf`/`-Confirm` prompt; under `-WhatIf` (or a declined `-Confirm`), the full dependency plan is printed and no orchestrator call is made. For a real run, authentication is checked once before any row is attempted: exactly one authentication method must be supplied, and a CSV with AgentUser rows is refused unless that method is app-only (client secret, certificate, or managed identity) - the orchestrator would otherwise reject every AgentUser row identically.
+`A365-BulkOnboarding.ps1` supports `-WhatIf` and `-Confirm` (`ConfirmImpact = 'Medium'`). The CSV is always read and validated first, before the `-WhatIf`/`-Confirm` prompt; under `-WhatIf` (or a declined `-Confirm`), the full dependency plan is printed and no orchestrator call is made. For a real run, authentication is checked once before any row is attempted and exactly one supported method must be supplied.
 
 ### 13.3 CSV schema
 

@@ -18,9 +18,8 @@
     The user principal name cannot be changed after creation and is therefore not accepted
     here; the account is identified by -AgentUserId instead.
 
-    APP-ONLY AUTHENTICATION ONLY. New-A365AgentUser.ps1 has no -Interactive and no
-    -SkipPermissionCheck, so those parameters are deliberately absent from this script too
-    rather than being accepted and then failing downstream.
+    The same app-only and interactive delegated authentication methods as
+    New-A365AgentUser.ps1 are supported.
 
     The Graph work itself is done by New-A365AgentUser.ps1, which this script invokes in its
     update mode. That script reports failure by exiting with a non-zero code instead of
@@ -63,7 +62,7 @@
 
 .PARAMETER ClientId
     Application (client) ID to authenticate as. Forwarded unchanged to
-    New-A365AgentUser.ps1, which is app-only - see its help for the full authentication
+    New-A365AgentUser.ps1. See its help for the full app-only and delegated authentication
     reference.
 
 .PARAMETER ClientSecret
@@ -91,12 +90,8 @@
 .PARAMETER UseManagedIdentity
     Authenticate with the host's managed identity, forwarded unchanged.
 
-.PARAMETER ManagedIdentityClientId
-    Client id of a user-assigned managed identity, forwarded unchanged.
-
-.PARAMETER AccessToken
-    A pre-acquired Graph access token. Accepts a string or a SecureString and is forwarded
-    unchanged, for the same reason as -ClientSecret above.
+.PARAMETER Interactive
+    Sign in as a user instead of running as an application, forwarded unchanged.
 
 .PARAMETER StepParameter
     Escape hatch: a hashtable splatted into New-A365AgentUser.ps1 for parameters this wrapper
@@ -122,7 +117,7 @@
     Assign a licence to an agent user that already has a usage location.
 
 .NOTES
-    Requires New-A365AgentUser.ps1 beside this script, and app-only authentication.
+    Requires New-A365AgentUser.ps1 beside this script.
 #>
 
 #requires -Version 7
@@ -148,7 +143,6 @@ param(
     [string] $LicenseSkuPartNumber,
     [string[]] $DisabledPlans,
 
-    # No -Interactive or -SkipPermissionCheck: the step script has neither.
     # Forward credential objects unchanged so SecureString values are not stringified.
     [string] $ClientId,
     [object] $ClientSecret,
@@ -158,8 +152,7 @@ param(
     [string] $CertificatePath,
     [object] $CertificatePassword,
     [switch] $UseManagedIdentity,
-    [string] $ManagedIdentityClientId,
-    [object] $AccessToken,
+    [switch] $Interactive,
 
     # Escape hatch for anything this wrapper does not surface.
     [hashtable] $StepParameter = @{},
@@ -193,7 +186,7 @@ $forwardable = @(
     'AssignLicense', 'LicenseSkuId', 'LicenseSkuPartNumber', 'DisabledPlans'
     'ClientId', 'ClientSecret', 'CertificateThumbprint', 'CertificateStoreLocation'
     'Certificate', 'CertificatePath', 'CertificatePassword', 'UseManagedIdentity'
-    'ManagedIdentityClientId', 'AccessToken'
+    'Interactive'
 )
 
 $forward = @{
