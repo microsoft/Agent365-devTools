@@ -52,7 +52,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands
                 "  a365 setup requirements              Validate prerequisites\n" +
                 "  a365 setup blueprint                 Create the agent blueprint (Entra app)\n" +
                 "  a365 setup permissions mcp           MCP server permissions (when using MCP tools)\n" +
-                "  a365 setup permissions bot           Bot API + Power Platform\n" +
+                "  a365 setup permissions bot           Bot API + Defender + Power Platform\n" +
                 "  a365 setup permissions custom        Inline custom resource permission (--resource-app-id, --scopes)\n" +
                 "  a365 setup permissions copilotstudio Copilot Studio agent permissions\n\n" +
                 "Roles required:\n" +

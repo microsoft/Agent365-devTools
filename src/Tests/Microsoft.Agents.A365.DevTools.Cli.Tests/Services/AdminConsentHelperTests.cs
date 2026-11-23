@@ -42,6 +42,164 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Tests.Services
         }
 
         [Fact]
+        public async Task PollAdminConsentAsync_DoesNotCompleteOnUnrelatedExistingGrant()
+        {
+            var executor = Substitute.For<CommandExecutor>(Substitute.For<ILogger<CommandExecutor>>());
+            var logger = Substitute.For<ILogger>();
+            executor.ExecuteAsync(
+                    "az",
+                    Arg.Is<string>(args => args.Contains("servicePrincipals")),
+                    Arg.Any<string?>(),
+                    Arg.Any<bool>(),
+                    Arg.Any<bool>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult(new CommandResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = """{"value":[{"id":"blueprint-sp"}]}""",
+                }));
+
+            var unrelatedGrant = """
+            {
+              "value": [
+                {
+                  "resourceId": "graph-sp",
+                  "consentType": "AllPrincipals",
+                  "scope": "User.Read"
+                }
+              ]
+            }
+            """;
+            var completeGrantSet = """
+            {
+              "value": [
+                {
+                  "resourceId": "graph-sp",
+                  "consentType": "AllPrincipals",
+                  "scope": "User.Read"
+                },
+                {
+                  "resourceId": "defender-sp",
+                  "consentType": "AllPrincipals",
+                  "scope": "RealtimeProtection.Evaluate.All"
+                }
+              ]
+            }
+            """;
+            executor.ExecuteAsync(
+                    "az",
+                    Arg.Is<string>(args => args.Contains("oauth2PermissionGrants")),
+                    Arg.Any<string?>(),
+                    Arg.Any<bool>(),
+                    Arg.Any<bool>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(
+                    Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = unrelatedGrant }),
+                    Task.FromResult(new CommandResult { ExitCode = 0, StandardOutput = completeGrantSet }));
+
+            var requirements = new[]
+            {
+                new AdminConsentRequirement(
+                    "Defender API",
+                    "86a21212-634e-4553-b3d6-e477e4c9d9ec",
+                    ["RealtimeProtection.Evaluate.All"],
+                    "defender-sp"),
+            };
+
+            var result = await AdminConsentHelper.PollAdminConsentAsync(
+                executor,
+                logger,
+                "11111111-1111-1111-1111-111111111111",
+                "All permissions",
+                timeoutSeconds: 10,
+                intervalSeconds: 0,
+                CancellationToken.None,
+                requiredGrants: requirements);
+
+            result.Should().BeTrue(
+                because: "polling must wait until the requested Defender grant appears instead of completing on the pre-existing Graph grant");
+            await executor.Received(2).ExecuteAsync(
+                "az",
+                Arg.Is<string>(args => args.Contains("oauth2PermissionGrants")),
+                Arg.Any<string?>(),
+                Arg.Any<bool>(),
+                Arg.Any<bool>(),
+                Arg.Any<CancellationToken>());
+        }
+
+        [Fact]
+        public void GrantsSatisfyRequirements_RejectsPrincipalAndUnrelatedGrants()
+        {
+            using var grants = JsonDocument.Parse("""
+            {
+              "value": [
+                {
+                  "resourceId": "graph-sp",
+                  "consentType": "AllPrincipals",
+                  "scope": "RealtimeProtection.Evaluate.All"
+                },
+                {
+                  "resourceId": "defender-sp",
+                  "consentType": "Principal",
+                  "scope": "RealtimeProtection.Evaluate.All"
+                }
+              ]
+            }
+            """);
+            var requirements = new[]
+            {
+                new AdminConsentRequirement(
+                    "Defender API",
+                    "86a21212-634e-4553-b3d6-e477e4c9d9ec",
+                    ["RealtimeProtection.Evaluate.All"],
+                    "defender-sp"),
+            };
+
+            var result = AdminConsentHelper.GrantsSatisfyRequirements(
+                grants.RootElement.GetProperty("value"),
+                requirements);
+
+            result.Should().BeFalse(
+                because: "only an AllPrincipals grant on the requested Defender resource may complete tenant-wide consent polling");
+        }
+
+        [Fact]
+        public void GrantsSatisfyRequirements_AggregatesScopesAcrossGrantRows()
+        {
+            using var grants = JsonDocument.Parse("""
+            {
+              "value": [
+                {
+                  "resourceId": "resource-sp",
+                  "consentType": "AllPrincipals",
+                  "scope": "Scope.One"
+                },
+                {
+                  "resourceId": "resource-sp",
+                  "consentType": "AllPrincipals",
+                  "scope": "Scope.Two"
+                }
+              ]
+            }
+            """);
+            var requirements = new[]
+            {
+                new AdminConsentRequirement(
+                    "Contoso API",
+                    "22222222-2222-2222-2222-222222222222",
+                    ["Scope.One", "Scope.Two"],
+                    "resource-sp"),
+            };
+
+            var result = AdminConsentHelper.GrantsSatisfyRequirements(
+                grants.RootElement.GetProperty("value"),
+                requirements);
+
+            result.Should().BeTrue(
+                because: "incremental Entra consent can split required scopes across multiple AllPrincipals grant rows");
+        }
+
+        [Fact]
         public async Task PollAdminConsentAsync_PropagatesCancellation_WhenTokenCanceled()
         {
             // Requirement: Ctrl+C during admin-consent polling must propagate the

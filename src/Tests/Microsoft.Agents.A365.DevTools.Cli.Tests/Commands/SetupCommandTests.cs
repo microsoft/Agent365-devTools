@@ -165,6 +165,19 @@ public class SetupCommandTests
     }
 
     [Fact]
+    public async Task SetupHelp_BotPermissions_MentionsDefender()
+    {
+        var parser = new CommandLineBuilder(BuildSetupCommand()).UseDefaults().Build();
+        var console = new TestConsole();
+
+        var result = await parser.InvokeAsync("--help", console);
+
+        result.Should().Be(0);
+        console.Out.ToString().Should().Contain("Bot API + Defender + Power Platform",
+            because: "the top-level setup help must disclose Defender alongside the other permissions configured by permissions bot");
+    }
+
+    [Fact]
     public void SetupCommand_PermissionsSubcommand_HasMcpAndBotSubcommands()
     {
         // Arrange & Act
@@ -732,14 +745,16 @@ public class SetupCommandTests
     }
 
     /// <summary>
-    /// The S2S endpoint authorizes registered agents without OtelWrite whatever the auth mode (validated live), so
-    /// s2s and both — from the flag or from a365.config.json — must not request Observability API permissions either.
+    /// The S2S endpoint authorizes registered agents without OtelWrite, while Defender still
+    /// contributes an application role for s2s and both modes.
     /// </summary>
     [Theory]
     [InlineData("--authmode s2s", null)]
     [InlineData("--authmode both", null)]
     [InlineData("", "both")]
-    public async Task SetupAll_BlueprintAgent_AppRoleAuthModes_OmitObservabilityApi(string args, string? configAuthMode)
+    public async Task SetupAll_BlueprintAgent_AppRoleAuthModes_OmitObservabilityAndKeepDefenderAppRole(
+        string args,
+        string? configAuthMode)
     {
         var config = new Agent365Config
         {
@@ -772,7 +787,9 @@ public class SetupCommandTests
         _mockLogger.Received().Log(
             LogLevel.Information,
             Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint Permission Grants") && o.ToString()!.Contains("no S2S app roles to grant")),
+            Arg.Is<object>(o => o.ToString()!.Contains("Blueprint Permission Grants") &&
+                                o.ToString()!.Contains("S2S app roles") &&
+                                !o.ToString()!.Contains("no S2S app roles to grant")),
             Arg.Any<Exception?>(),
             Arg.Any<Func<object, Exception?, string>>());
     }

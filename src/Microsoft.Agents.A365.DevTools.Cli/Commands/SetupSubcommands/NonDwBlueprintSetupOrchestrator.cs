@@ -20,7 +20,7 @@ namespace Microsoft.Agents.A365.DevTools.Cli.Commands.SetupSubcommands;
 ///   1. Requirements validation
 ///   2. Blueprint creation (shared with DW)
 ///   3. Batch permissions on the blueprint (shared with DW pipeline; non-DW spec set:
-///      Power Platform API and custom; Observability API is not requested). MAC reads
+///      Defender API, Power Platform API, custom, and optionally Observability API). MAC reads
 ///      from the blueprint, so stamping here gives the same set visibility there.
 ///   4. Agent Identity creation via POST /beta/servicePrincipals/Microsoft.Graph.AgentIdentity
 ///   5. Agent Identity permission grants (same spec set as step 3) — OBO or S2S
@@ -36,6 +36,16 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static void PrintDryRunPlan(Agent365Config config, ILogger logger, bool isBootstrap = false, string[]? rawArgs = null, bool skipRequirements = false, bool isM365 = false, bool agentRegistrationOnly = false, string? authMode = null, string? messagingEndpointOverride = null, bool skipObservabilityPermissions = false)
     {
         var sub = new string(' ', SetupHelpers.DryRunValCol);
+        var selectedAuthMode = authMode ?? config.AuthMode;
+        var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
+            ? "obo"
+            : selectedAuthMode.Trim().ToLowerInvariant();
+        var defenderPermissionMode = effectiveMode switch
+        {
+            "s2s" => DefenderPermissionMode.Application,
+            "both" => DefenderPermissionMode.Both,
+            _ => DefenderPermissionMode.Delegated,
+        };
         var observabilityPermissionsEffectivelySkipped =
             skipObservabilityPermissions && !SetupHelpers.CustomPermissionsRequestObservability(config);
         // Dry-run S2S work comes only from fixed specs today; MCP and custom specs carry delegated scopes.
@@ -43,7 +53,8 @@ internal static class NonDwBlueprintSetupOrchestrator
             setInheritable: true,
             isM365,
             config.Environment,
-            includeObservability: !skipObservabilityPermissions)
+            includeObservability: !skipObservabilityPermissions,
+            defenderPermissionMode)
             .Any(s => s.AppRoleScopes is { Length: > 0 });
         // --messaging-endpoint flag (if supplied) wins over the init-only config value for the plan.
         var plannedEndpoint = !string.IsNullOrWhiteSpace(messagingEndpointOverride)
@@ -126,20 +137,17 @@ internal static class NonDwBlueprintSetupOrchestrator
             logger.LogInformation(sub + "create managed identity");
         }
 
-        // 3. Inheritable Permissions — non-DW spec set (Power Platform API and custom; Observability API is
-        //    not requested) stamped on the blueprint via SetInheritablePermissionsAsync so MAC and other
-        //    dependent systems can see them. The same set is applied to the agent identity SP in step 5.
-        var selectedAuthMode = authMode ?? config.AuthMode;
-        var effectiveMode = string.IsNullOrWhiteSpace(selectedAuthMode)
-            ? "obo"
-            : selectedAuthMode.Trim().ToLowerInvariant();
+        // 3. Inheritable Permissions — the non-DW spec set is stamped on the blueprint so MAC and
+        //    dependent systems can see it. The same set is applied to the agent identity SP in step 5.
         logger.LogInformation(SetupHelpers.DryRunRow(3, "Inheritable Permissions") + "configure for {Resources} (Global Administrator required; consent URL printed if absent)",
-            skipObservabilityPermissions ? "Power Platform API and custom permissions" : "Observability API, Power Platform API, and custom permissions");
+            skipObservabilityPermissions
+                ? "Defender API, Power Platform API, and custom permissions"
+                : "Observability API, Defender API, Power Platform API, and custom permissions");
         if (observabilityPermissionsEffectivelySkipped)
             logger.LogInformation(sub + "Observability API not requested (registered agents export telemetry with an app-only token)");
 
-        // 4. Blueprint Permission Grants — per authMode. The consent URL targets the blueprint
-        //    app, and S2S app-role assignments are persisted as grants flowing from the blueprint;
+        // 4. Blueprint Permission Grants — Defender follows authMode; other permission specs retain
+        //    their configured grant types.
         //    grouping here keeps all blueprint-side rows (2 Blueprint, 3 Inheritable Permissions,
         //    4 Blueprint Permission Grants) contiguous.
         if (effectiveMode is "obo")
@@ -282,6 +290,11 @@ internal static class NonDwBlueprintSetupOrchestrator
     public static async Task<int> ExecuteAsync(SetupContext ctx)
     {
         ctx.Results.IsNonDwBlueprintFlow = true;
+        ctx.Results.EffectiveAuthMode = ctx.IsBothMode
+            ? Models.AuthMode.Both
+            : ctx.IsS2sMode
+                ? Models.AuthMode.S2s
+                : Models.AuthMode.Obo;
         ctx.Results.ObservabilityPermissionsSkipped = ctx.ObservabilityPermissionsEffectivelySkipped;
         ctx.Results.TenantId = ctx.Config.TenantId;
         // Bootstrap already printed the "Running..." banner before auth steps; skip here to avoid duplication.
@@ -465,9 +478,14 @@ internal static class NonDwBlueprintSetupOrchestrator
         // Skipped when --agent-registration-only: identity result flags are pre-set by the caller.
         if (!skipIdentityAndPermissions)
         {
-            // Record the auth mode and whether any S2S app role is requested before identity creation,
-            // so the summary stays accurate when the identity step fails.
-            ctx.Results.EffectiveAuthMode = ctx.IsBothMode ? Models.AuthMode.Both : ctx.IsS2sMode ? Models.AuthMode.S2s : Models.AuthMode.Obo;
+            // Keep direct callers of this phase aligned with the top-level orchestrator.
+            ctx.Results.EffectiveAuthMode = ctx.IsBothMode
+                ? Models.AuthMode.Both
+                : ctx.IsS2sMode
+                    ? Models.AuthMode.S2s
+                    : Models.AuthMode.Obo;
+            // Record whether the selected auth mode produced application permissions before
+            // identity creation so the summary stays accurate when that step fails.
             if (ctx.IsS2sMode || ctx.IsBothMode)
                 ctx.Results.NoS2SAppRolesToGrant = !specs.Any(s => s.AppRoleScopes is { Length: > 0 });
 
@@ -722,8 +740,8 @@ internal static class NonDwBlueprintSetupOrchestrator
         List<ResourcePermissionSpec> specs)
     {
         var hasS2sSpecs = specs.Any(s => s.AppRoleScopes is { Length: > 0 });
-        // Blueprint agents no longer request OtelWrite, the only app role setup requested, so this
-        // step usually has nothing to grant. Record that so the summary does not report a delegated grant.
+        // Record whether the selected auth mode produced any application permissions so the
+        // summary can distinguish "no S2S work" from a failed grant.
         ctx.Results.NoS2SAppRolesToGrant = !hasS2sSpecs;
         if (hasS2sSpecs && AgentIdentityInheritsBlueprintAppRoles(ctx.Results))
         {
