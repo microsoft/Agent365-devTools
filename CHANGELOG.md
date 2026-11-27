@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Breaking Changes
 - **The CLI now requires the .NET 10 runtime or later** because .NET 8 and .NET 9 have reached end of support; install [.NET 10](https://dotnet.microsoft.com/download) before updating the tool (#532).
 
+### Added
+- `a365 network gsa enable|disable|status` turns Global Secure Access on or off for your Agent 365 environment (#497).
+
 ## [2.0.0] - 2026-10-20
 
 ### Upgrade Notes

@@ -18,4 +18,5 @@ public static class CommandNames
     public const string Develop = "develop";
     public const string CreateInstance = "create-instance";
     public const string Logs = "logs";
+    public const string Network = "network";
 }
